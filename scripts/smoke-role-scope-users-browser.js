@@ -25,6 +25,7 @@ const DEBUG_PORT = Number(process.env.SMOKE_CHROME_DEBUG_PORT || 9236);
 const ADMIN_USERNAME = 'role_scope_browser_admin';
 const TEACHER_USERNAME = 'role_scope_browser_teacher';
 const NATIONAL_USERNAME = 'role_scope_browser_national';
+const SCHOOL_ADMIN_USERNAME = 'role_scope_browser_school_admin';
 
 // A school in sts_smoke with a full province/district/sub_district chain so the
 // scope editor can resolve the real school NAME (not "โรงเรียน 1 แห่ง").
@@ -475,6 +476,7 @@ async function main() {
   let adminId;
   let teacherId;
   let nationalId;
+  let schoolAdminId;
 
   try {
     const adminHash = await passwordService.hash(adminPassword);
@@ -492,6 +494,18 @@ async function main() {
     nationalId = await upsertUser(dataSource, {
       username: NATIONAL_USERNAME, role: 'DIRECTOR', dataScope: { global: true },
       permissions: [], passwordHash: nationalHash, personId: '1000000000003',
+    });
+
+    const schoolAdminPassword = `Role-${suffix}-SchoolAdmin`;
+    const [schoolAdminGroup] = await dataSource.query(
+      `SELECT default_permissions FROM roles WHERE name = $1`,
+      [`S${SCHOOL.id}_BASE_ADMIN`],
+    );
+    assert(schoolAdminGroup, `S${SCHOOL.id}_BASE_ADMIN is missing from the smoke DB`);
+    schoolAdminId = await upsertUser(dataSource, {
+      username: SCHOOL_ADMIN_USERNAME, role: `S${SCHOOL.id}_BASE_ADMIN`, dataScope: TEACHER_SCOPE,
+      permissions: schoolAdminGroup.default_permissions,
+      passwordHash: await passwordService.hash(schoolAdminPassword), personId: '1000000000004',
     });
 
     const session = await login(ADMIN_USERNAME, adminPassword);
@@ -739,6 +753,97 @@ async function main() {
     ]);
     assert(nationalRow?.data_scope?.global === true, 'Nationwide account lost its scope');
 
+    // --- Test C: a school admin adds a user only inside its own school ---
+    // Owner, 2026-09-28: no national group next to the school's own (two
+    // ผู้อำนวยการ), and no area outside the admin's scope.
+    const schoolSession = await login(SCHOOL_ADMIN_USERNAME, schoolAdminPassword);
+    const nationalDirectorAttempt = await fetch(`${BACKEND_URL}/api/users`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        cookie: `${schoolSession.cookieName}=${schoolSession.cookieValue}`,
+      },
+      body: JSON.stringify({
+        username: `rs_national_${Date.now().toString(36)}`,
+        password: `Role-${suffix}-Blocked1`,
+        FirstName: 'Role',
+        LastName: 'Scope Smoke',
+        PersonID_Onec: '1000000000005',
+        email: 'blocked.role-scope@example.invalid',
+        phone: '0812345678',
+        role: 'DIRECTOR',
+        roles: ['DIRECTOR'],
+        permissions: ['home'],
+        data_scope: TEACHER_SCOPE,
+      }),
+    });
+    assert(
+      nationalDirectorAttempt.status === 403,
+      `School admin handing out the national DIRECTOR group returned ${nationalDirectorAttempt.status}: ${(await nationalDirectorAttempt.text()).slice(0, 200)}`,
+    );
+    await client.call('Network.setCookie', {
+      name: schoolSession.cookieName,
+      value: schoolSession.cookieValue,
+      url: BACKEND_URL,
+      httpOnly: true,
+      sameSite: 'Lax',
+    });
+    await evaluate(
+      client,
+      `localStorage.setItem('sts_user', ${JSON.stringify(JSON.stringify(schoolSession.user))});
+       localStorage.removeItem('sts_school_filter'); true`,
+    );
+    await navigate(client, `${FRONTEND_URL}/manage-users/new?schoolId=${SCHOOL.id}`);
+    await waitFor(
+      async () =>
+        (await comboboxValue(client, 'scope-school')) === SCHOOL.name &&
+        (await evaluate(
+          client,
+          `document.querySelectorAll('[role="radiogroup"] input[type="radio"]').length`,
+        )) > 0,
+      async () =>
+        `School admin add form did not render its school scope: ${(await bodyText(client)).slice(0, 300)}`,
+    );
+    const groupLabels = await evaluate(
+      client,
+      `JSON.stringify([...document.querySelectorAll('[role="radiogroup"] input[type="radio"]')].map((r) => r.getAttribute('aria-label')))`,
+    );
+    const labels = JSON.parse(groupLabels);
+    assert(
+      new Set(labels).size === labels.length,
+      `School admin form lists a group twice: ${groupLabels}`,
+    );
+    const scopeFields = await evaluate(
+      client,
+      `JSON.stringify(['scope-province', 'scope-district', 'scope-sub-district', 'scope-school'].map((id) => {
+        const input = document.getElementById(id);
+        return [id, input?.value ?? null, Boolean(input?.disabled)];
+      }))`,
+    );
+    assert(
+      scopeFields ===
+        JSON.stringify([
+          ['scope-province', SCHOOL.province, true],
+          ['scope-district', SCHOOL.district, true],
+          ['scope-sub-district', SCHOOL.sub_district, true],
+          ['scope-school', SCHOOL.name, true],
+        ]),
+      `School admin scope was not pinned to its own school: ${scopeFields}`,
+    );
+    await capture(client, '/tmp/sts-role-scope-school-admin-add.png');
+    // Back to the nationwide admin for the rest of the run.
+    await client.call('Network.setCookie', {
+      name: session.cookieName,
+      value: session.cookieValue,
+      url: BACKEND_URL,
+      httpOnly: true,
+      sameSite: 'Lax',
+    });
+    await evaluate(
+      client,
+      `localStorage.setItem('sts_user', ${JSON.stringify(JSON.stringify(session.user))}); true`,
+    );
+
     // --- Mobile render ---
     await client.call('Emulation.setDeviceMetricsOverride', {
       width: 390, height: 844, deviceScaleFactor: 1, mobile: true,
@@ -778,7 +883,7 @@ async function main() {
     await clickButton(client, 'ยกเลิก');
 
     console.log(
-      'role/scope browser smoke passed (school groups offered, Thai permission catalog, invalid field focused, retired permission cleanup, real scope names, preserve-scope save, council edit of a nationwide account, desktop/mobile)',
+      'role/scope browser smoke passed (school groups offered, Thai permission catalog, invalid field focused, retired permission cleanup, real scope names, preserve-scope save, council edit of a nationwide account, school admin kept to its own school and groups, desktop/mobile)',
     );
   } finally {
     await closeChrome(chrome);
@@ -789,6 +894,7 @@ async function main() {
     await disableUser(dataSource, teacherId, TEACHER_USERNAME);
     await disableUser(dataSource, nationalId, NATIONAL_USERNAME);
     await disableUser(dataSource, adminId, ADMIN_USERNAME);
+    await disableUser(dataSource, schoolAdminId, SCHOOL_ADMIN_USERNAME);
     await app.close();
   }
 }
