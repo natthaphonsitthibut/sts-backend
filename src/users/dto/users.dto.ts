@@ -479,6 +479,13 @@ export class RoleCatalogQueryDto {
   @IsString()
   @MaxLength(100)
   subDistrict?: string;
+
+  /** The school whose own groups (S<id>_BASE_…) a school account may take. */
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  schoolId?: number;
 }
 
 export class RoleGroupListQueryDto extends PaginatedSearchQueryDto {

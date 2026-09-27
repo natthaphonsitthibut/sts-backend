@@ -48,6 +48,8 @@ describe('SchoolStructureController access', () => {
         'import-data',
         // The school picker is also reachable from จัดการกลุ่มเมนู and จัดการข้อมูลครู.
         ...(method === 'listSchools' ? ['manage-role-groups', 'teachers'] : []),
+        // ...and from the manage-teachers form and the ห้องเรียน page itself.
+        ...(method === 'listSchools' ? ['manage-teachers', 'classrooms'] : []),
         // the view-only ห้องเรียน page (directors) lists classrooms too
         ...(method === 'listClassrooms' ? ['classrooms'] : []),
       ]);

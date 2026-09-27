@@ -125,6 +125,7 @@ export class UsersController {
       province: query.province?.trim() || undefined,
       district: query.district?.trim() || undefined,
       subDistrict: query.subDistrict?.trim() || undefined,
+      schoolId: query.schoolId,
     });
   }
 
