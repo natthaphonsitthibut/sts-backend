@@ -270,6 +270,36 @@ describe('AuditLogService', () => {
     expect(queries[0].params).toContain('42');
   });
 
+  it('sorts the whole result on the server, newest first by default', async () => {
+    const queries: string[] = [];
+    const queryRunner = {
+      connect: jest.fn().mockResolvedValue(undefined),
+      release: jest.fn().mockResolvedValue(undefined),
+      query: jest.fn((sql: string) => {
+        queries.push(sql);
+        return { records: [], affected: 0 };
+      }),
+    };
+    const service = new AuditLogService({ createQueryRunner: jest.fn(() => queryRunner) } as never);
+    const cases = { ...actor, permissions: ['dashboard'] };
+
+    await service.list(cases, { domain: 'cases', page: 1, limit: 20 });
+    await service.list(cases, { domain: 'cases', page: 1, limit: 20, sortOrder: 'asc' });
+    await service.list(cases, {
+      domain: 'cases',
+      page: 1,
+      limit: 20,
+      sortBy: 'actor',
+      sortOrder: 'asc',
+    });
+
+    expect(queries[0]).toContain('ORDER BY a.created_at DESC, a.id DESC');
+    expect(queries[1]).toContain('ORDER BY a.created_at ASC, a.id ASC');
+    expect(queries[2]).toContain(
+      "ORDER BY COALESCE(a.actor_label, '') ASC, a.created_at DESC, a.id DESC",
+    );
+  });
+
   it('filters case history by case id across case and referral events', async () => {
     const caseActor: AuthenticatedRequestUser = {
       ...actor,

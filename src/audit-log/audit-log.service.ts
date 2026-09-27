@@ -16,7 +16,7 @@ import {
 } from '../common/pagination/pagination.util';
 import { queryDataSource } from '../database/sql-query';
 import { getBangkokDayBounds } from '../common/utils/date.util';
-import type { AuditLogDomain, AuditLogTaskType } from './dto/audit-log.dto';
+import type { AuditLogDomain, AuditLogSortKey, AuditLogTaskType } from './dto/audit-log.dto';
 import type { AuditAction } from './dto/audit-log.dto';
 
 export type { AuditAction } from './dto/audit-log.dto';
@@ -38,6 +38,72 @@ export interface AuditLogRecordInput {
   ip?: string | null;
 }
 
+/**
+ * A readable name for the record an event points at, so the history pages show
+ * "นักเรียน: ชื่อ" instead of a table name and a uuid. Each branch checks the id's
+ * shape before casting, since target_id is free text written by many callers.
+ */
+const UUID_PATTERN_SQL = `'^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'`;
+const AUDIT_TARGET_NAME_SQL = `
+  COALESCE(CASE
+    WHEN a.target_type IN ('student', 'student_term', 'classroom_student_comments')
+      AND a.target_id ~ ${UUID_PATTERN_SQL}
+      THEN (
+        SELECT NULLIF(TRIM(CONCAT_WS(' ', target_student."FirstName_Onec", target_student."LastName_Onec")), '')
+        FROM student_term target_student
+        WHERE target_student.student_uuid = a.target_id::uuid
+        LIMIT 1
+      )
+    WHEN a.target_type = 'case' AND a.target_id ~ '^[0-9]{1,9}$'
+      THEN (SELECT target_case.student_name FROM cases target_case WHERE target_case.id = a.target_id::int)
+    WHEN a.target_type = 'task' AND a.target_id ~ ${UUID_PATTERN_SQL}
+      THEN (
+        SELECT target_case.student_name
+        FROM tasks target_task
+        JOIN cases target_case ON target_case.id = target_task.case_id
+        WHERE target_task.id = a.target_id::uuid
+      )
+    WHEN a.target_type IN ('task_link', 'task_links') AND a.target_id ~ ${UUID_PATTERN_SQL}
+      THEN (
+        SELECT target_case.student_name
+        FROM task_links target_link
+        JOIN tasks target_task ON target_task.id = target_link.task_id
+        JOIN cases target_case ON target_case.id = target_task.case_id
+        WHERE target_link.id = a.target_id::uuid
+      )
+    WHEN a.target_type = 'teachers' AND a.target_id ~ '^[0-9]{1,18}$'
+      THEN (
+        SELECT NULLIF(TRIM(CONCAT_WS(' ', target_teacher.first_name, target_teacher.last_name)), '')
+        FROM teachers target_teacher
+        WHERE target_teacher.id = a.target_id::bigint
+      )
+    WHEN a.target_type IN ('schools', 'school_period_times') AND a.target_id ~ '^[0-9]{1,9}$'
+      THEN (SELECT target_school.name FROM schools target_school WHERE target_school.id = a.target_id::int)
+    WHEN a.target_type = 'school_classrooms' AND a.target_id ~ '^[0-9]{1,18}$'
+      THEN (
+        SELECT COALESCE(
+          NULLIF(TRIM(target_classroom.room_name), ''),
+          CONCAT(target_grade.label, '/', target_classroom.legacy_room_number)
+        )
+        FROM school_classrooms target_classroom
+        LEFT JOIN grade_levels target_grade ON target_grade.id = target_classroom.grade_level_id
+        WHERE target_classroom.id = a.target_id::bigint
+      )
+    WHEN a.target_type = 'role_group'
+      THEN (SELECT target_role.label FROM roles target_role WHERE target_role.name = a.target_id)
+  END,
+  -- Events about one student (risk signals, observations…) name them in the
+  -- metadata even when the target row itself is gone.
+  CASE
+    WHEN a.metadata ->> 'studentUuid' ~ ${UUID_PATTERN_SQL}
+      THEN (
+        SELECT NULLIF(TRIM(CONCAT_WS(' ', meta_student."FirstName_Onec", meta_student."LastName_Onec")), '')
+        FROM student_term meta_student
+        WHERE meta_student.student_uuid = (a.metadata ->> 'studentUuid')::uuid
+        LIMIT 1
+      )
+  END)`;
+
 interface AuditActionDefinition {
   domain: AuditLogDomain;
   label: string;
@@ -51,6 +117,7 @@ interface AuditLogRow extends Record<string, unknown> {
   target_type: string | null;
   target_id: string | null;
   target_username: string | null;
+  target_name?: string | null;
   school_name: string | null;
   metadata: Record<string, unknown> | null;
   created_at: Date | string;
@@ -80,6 +147,8 @@ interface AuditLogListFilters {
   caseId?: number;
   page?: number;
   limit?: number;
+  sortBy?: AuditLogSortKey;
+  sortOrder?: 'asc' | 'desc';
 }
 
 export interface AuditLogEntryResponse {
@@ -991,16 +1060,21 @@ export class AuditLogService {
   }
 
   /**
-   * The affected record's readable name (the target account's username) so the
-   * list can show it in the target column instead of a bare numeric id. The
-   * username is recorded in the event metadata by the write path.
+   * The affected record's readable name so the history shows it instead of a
+   * bare id: the target account's username (recorded in the event metadata by
+   * the write path), else the student/teacher/school it points at.
    */
   private extractTargetLabel(row: AuditLogRow): string | null {
     if (typeof row.target_username === 'string' && row.target_username.trim()) {
       return row.target_username;
     }
     const username = row.metadata?.['username'];
-    return typeof username === 'string' && username.trim() ? username : null;
+    if (typeof username === 'string' && username.trim()) {
+      return username;
+    }
+    return typeof row.target_name === 'string' && row.target_name.trim()
+      ? row.target_name.trim()
+      : null;
   }
 
   async list(actor: AuthenticatedRequestUser, filters: AuditLogListFilters) {
@@ -1129,6 +1203,7 @@ export class AuditLogService {
           a.target_type,
           a.target_id,
           tu.username AS target_username,
+          ${AUDIT_TARGET_NAME_SQL} AS target_name,
           audit_school.name AS school_name,
           a.metadata,
           a.created_at,
@@ -1140,7 +1215,7 @@ export class AuditLogService {
           ON NULLIF(a.metadata ->> 'schoolId', '') ~ '^[0-9]+$'
          AND audit_school.id = (a.metadata ->> 'schoolId')::int
         WHERE ${conditions.join(' AND ')}
-        ORDER BY a.created_at DESC, a.id DESC
+        ORDER BY ${this.buildListOrderSql(filters)}
         LIMIT ${limitParam}
         OFFSET ${offsetParam}
       `,
@@ -1152,6 +1227,20 @@ export class AuditLogService {
       data: result.rows.map((row) => this.toAuditLogEntry(row)),
       meta: buildPaginationMeta(page, limit, totalCount),
     };
+  }
+
+  /** Whitelisted columns only; newest first breaks ties so paging stays stable. */
+  private buildListOrderSql(filters: Pick<AuditLogListFilters, 'sortBy' | 'sortOrder'>): string {
+    const direction = filters.sortOrder === 'asc' ? 'ASC' : 'DESC';
+    const column: Record<AuditLogSortKey, string> = {
+      time: 'a.created_at',
+      action: 'a.action',
+      actor: "COALESCE(a.actor_label, '')",
+    };
+    const sortBy = filters.sortBy ?? 'time';
+    return sortBy === 'time'
+      ? `a.created_at ${direction}, a.id ${direction}`
+      : `${column[sortBy]} ${direction}, a.created_at DESC, a.id DESC`;
   }
 
   async getById(actor: AuthenticatedRequestUser, id: string) {
@@ -1170,6 +1259,7 @@ export class AuditLogService {
             a.target_type,
             a.target_id,
             tu.username AS target_username,
+            ${AUDIT_TARGET_NAME_SQL} AS target_name,
             audit_school.name AS school_name,
             a.metadata,
             a.created_at,
@@ -1215,6 +1305,7 @@ export class AuditLogService {
             a.target_type,
             a.target_id,
             tu.username AS target_username,
+            ${AUDIT_TARGET_NAME_SQL} AS target_name,
             audit_school.name AS school_name,
             a.metadata,
             a.created_at,
