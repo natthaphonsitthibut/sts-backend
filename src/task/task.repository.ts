@@ -695,8 +695,14 @@ export class TaskRepository {
         ) AS student_name,
         COALESCE(case_school.name, c.student_school) AS student_school,
         c.student_address,
-        c.student_lat,
-        c.student_lng,
+        -- The case's own pin (set when it opened, or corrected by a follow-up
+        -- submission) wins; a case opened before the student had one falls back
+        -- to the location saved on the student since. Taken as a pair so a pin
+        -- never mixes two sources.
+        CASE WHEN c.student_lat IS NOT NULL AND c.student_lng IS NOT NULL
+          THEN c.student_lat ELSE student.address_latitude END AS student_lat,
+        CASE WHEN c.student_lat IS NOT NULL AND c.student_lng IS NOT NULL
+          THEN c.student_lng ELSE student.address_longitude END AS student_lng,
         c.reason_flagged,
         c.status,
         case_status.label_th AS status_label,
@@ -1185,8 +1191,11 @@ export class TaskRepository {
         c.address_district,
         c.address_sub_district,
         c.postal_code,
-        c.student_lat,
-        c.student_lng,
+        -- Case pin first, else the student's saved location (see findCaseDetailById).
+        CASE WHEN c.student_lat IS NOT NULL AND c.student_lng IS NOT NULL
+          THEN c.student_lat ELSE enrollment.address_latitude END AS student_lat,
+        CASE WHEN c.student_lat IS NOT NULL AND c.student_lng IS NOT NULL
+          THEN c.student_lng ELSE enrollment.address_longitude END AS student_lng,
         c.reason_flagged,
         c.status,
         c.workflow_phase_code,
