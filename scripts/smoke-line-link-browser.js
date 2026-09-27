@@ -167,7 +167,8 @@ async function main() {
     await browser.clickText('Google');
     await waitFor(
       async () => (await browser.evaluate(`document.body.innerText`)).includes('ไม่สำเร็จ'),
-      'unknown Google identity did not land on a failure result',
+      async () =>
+        `unknown Google identity did not land on a failure result @ ${await browser.evaluate('location.href')}: ${(await browser.evaluate('document.body.innerText')).slice(0, 400)}`,
     );
 
     googleEmail = teacher.email;

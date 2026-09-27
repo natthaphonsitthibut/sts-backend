@@ -112,6 +112,9 @@ export const AUDIT_LOG_TASK_TYPES = ['VISIT', 'ASSIST'] as const;
 
 export type AuditLogTaskType = (typeof AUDIT_LOG_TASK_TYPES)[number];
 
+export const AUDIT_LOG_SORT_KEYS = ['time', 'action', 'actor'] as const;
+export type AuditLogSortKey = (typeof AUDIT_LOG_SORT_KEYS)[number];
+
 export class GetAuditLogQueryDto extends PaginationQueryDto {
   @IsIn(AUDIT_LOG_DOMAINS)
   domain!: AuditLogDomain;
@@ -169,6 +172,15 @@ export class GetAuditLogQueryDto extends PaginationQueryDto {
   @IsInt()
   @Min(1)
   caseId?: number;
+
+  /** Sorted over every matching row, not just the page on screen. */
+  @IsOptional()
+  @IsIn(AUDIT_LOG_SORT_KEYS)
+  sortBy?: AuditLogSortKey;
+
+  @IsOptional()
+  @IsIn(['asc', 'desc'])
+  sortOrder?: 'asc' | 'desc';
 }
 
 export class GetAuditLogActionsQueryDto {

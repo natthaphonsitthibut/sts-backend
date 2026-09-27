@@ -160,13 +160,21 @@ export class AttendanceController {
     return await this.exceptionAttendanceService.submit(checkInActor, sessionId, body);
   }
 
+  // Grade/school/room/term lookups feed the scope pickers of every page that
+  // offers one, so each of those pages' permission reaches them (a page's
+  // permission covers the controls on it). The data scope still decides which
+  // schools, rooms and terms come back.
   @Get('grade-levels')
   @UseGuards(PermissionsGuard)
   @RequireAnyPermission(
     'attendance',
     'students',
+    'manage-students',
     'manage-school-structure',
     'manage-classroom-links',
+    'manage-users-list',
+    'dashboard',
+    'import-data',
     'export-data',
   )
   async getGradeLevels() {
@@ -178,7 +186,9 @@ export class AttendanceController {
   @RequireAnyPermission(
     'attendance',
     'students',
+    'manage-students',
     'manage-school-structure',
+    'manage-users-list',
     'import-data',
     'export-data',
   )
@@ -229,7 +239,15 @@ export class AttendanceController {
 
   @Get('rooms')
   @UseGuards(PermissionsGuard)
-  @RequireAnyPermission('attendance', 'students', 'export-data')
+  @RequireAnyPermission(
+    'attendance',
+    'students',
+    'manage-students',
+    'manage-users-list',
+    'dashboard',
+    'import-data',
+    'export-data',
+  )
   async getRooms(
     @Query() query: GetRoomsQueryDto,
     @CurrentUser() actor?: AuthenticatedRequestUser,
@@ -246,6 +264,7 @@ export class AttendanceController {
   @RequireAnyPermission(
     'classrooms',
     'attendance',
+    'dashboard',
     'manage-school-structure',
     'manage-classroom-links',
     'manage-subjects',

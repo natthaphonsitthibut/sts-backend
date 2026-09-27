@@ -1,7 +1,10 @@
+import { APP_PAGES } from './page-registry.constants';
 import {
+  AREA_ROLE_TEMPLATES,
   hasPermission,
   isRestrictedExecutive,
   PERMISSION_CATALOG,
+  SCHOOL_ROLE_TEMPLATES,
   SYSTEM_ROLE_DEFINITIONS,
 } from './permissions.constants';
 
@@ -35,11 +38,36 @@ describe('hasPermission', () => {
     expect(isRestrictedExecutive({ roles: ['EXECUTIVE', 'DIRECTOR'] })).toBe(false);
   });
 
-  it('gives ADMIN every grantable permission', () => {
+  it('gives ADMIN every grantable permission except the opt-in pages', () => {
     const admin = SYSTEM_ROLE_DEFINITIONS.find((role) => role.name === 'ADMIN');
-    const expected = PERMISSION_CATALOG.map((permission) => permission.id);
+    const optIn = new Set(
+      APP_PAGES.filter((page) => page.defaultPolicy === 'opt-in').map((page) => page.id),
+    );
+    const expected = PERMISSION_CATALOG.map((permission) => permission.id).filter(
+      (id) => !optIn.has(id),
+    );
 
+    expect(optIn.has('attendance')).toBe(true);
     expect(admin?.default_permissions).toEqual(expected);
+  });
+
+  it('keeps opt-in pages out of every default group', () => {
+    const optIn = APP_PAGES.filter((page) => page.defaultPolicy === 'opt-in').map(
+      (page) => page.id,
+    );
+    const defaults = [
+      ...SYSTEM_ROLE_DEFINITIONS,
+      ...SCHOOL_ROLE_TEMPLATES,
+      ...AREA_ROLE_TEMPLATES,
+    ].map((role) => role.default_permissions as readonly string[]);
+
+    for (const permissions of defaults) {
+      for (const id of optIn) expect(permissions).not.toContain(id);
+    }
+    // Still a page a school can add to its own group.
+    expect(PERMISSION_CATALOG.map((permission) => permission.id)).toEqual(
+      expect.arrayContaining(optIn),
+    );
   });
 
   it('publishes master-data as a global-only ADMIN page', () => {

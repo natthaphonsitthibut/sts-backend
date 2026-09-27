@@ -8,7 +8,12 @@ import { TaskRepository } from './task.repository';
 import { TaskStatsService } from './task-stats.service';
 import { TaskSubmissionService } from './task-submission.service';
 import type { CaseListFilters } from './task.repository';
-import type { ActorContext, RiskDashboardFilters } from './task.types';
+import type {
+  ActorContext,
+  FollowUpAreaFilters,
+  ReferralDrilldownFilters,
+  RiskDashboardFilters,
+} from './task.types';
 
 @Injectable()
 export class TaskService {
@@ -128,12 +133,17 @@ export class TaskService {
     return await this.taskStatsService.getOverviewStats(actor);
   }
 
-  async getFollowUpSummary(actor?: ActorContext) {
-    return await this.taskStatsService.getFollowUpSummary(actor);
+  async getFollowUpSummary(actor?: ActorContext, filters: FollowUpAreaFilters = {}) {
+    return await this.taskStatsService.getFollowUpSummary(actor, filters);
   }
 
-  async getReferralDrilldown(actor?: ActorContext, page?: number, limit?: number) {
-    return await this.taskStatsService.getReferralDrilldown(actor, page, limit);
+  async getReferralDrilldown(
+    actor?: ActorContext,
+    filters: ReferralDrilldownFilters = {},
+    page?: number,
+    limit?: number,
+  ) {
+    return await this.taskStatsService.getReferralDrilldown(actor, filters, page, limit);
   }
 
   async getRiskDashboard(actor?: ActorContext, filters: RiskDashboardFilters = {}) {

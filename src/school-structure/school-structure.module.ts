@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { NotificationsModule } from '../notifications/notifications.module';
 import { RiskProfileModule } from '../risk-profile/risk-profile.module';
 import { SchoolStructureController } from './school-structure.controller';
 import { SchoolAdminController } from './school-admin.controller';
@@ -6,7 +7,7 @@ import { SchoolStructureRepository } from './school-structure.repository';
 import { SchoolStructureService } from './school-structure.service';
 
 @Module({
-  imports: [RiskProfileModule],
+  imports: [RiskProfileModule, NotificationsModule],
   controllers: [SchoolStructureController, SchoolAdminController],
   providers: [SchoolStructureRepository, SchoolStructureService],
   // The teacher link reads the same classroom history through this repository, so

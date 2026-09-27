@@ -23,11 +23,13 @@ import type { ClassroomCommentListRow, StudentClassroomCommentRow } from './teac
 /**
  * The pages a teacher comment is read from. Holding any of them is what opens
  * the read — เช็กชื่อ shows the comment on its roster tab, so its permission
- * belongs here exactly as much as the student pages do. The controllers guard
- * with this same list, so the two can never disagree.
+ * belongs here exactly as much as the student pages do, and the student profile
+ * shows (and writes) them under จัดการข้อมูลนักเรียน as well. The controllers
+ * guard with this same list, so the two can never disagree.
  */
 export const CLASSROOM_COMMENT_READER_PERMISSIONS = [
   'students',
+  'manage-students',
   'classrooms',
   'manage-school-structure',
   'attendance',

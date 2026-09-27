@@ -1179,17 +1179,24 @@ export class UsersService {
    */
   async getRoles(
     actor?: ActorContext,
-    area: { province?: string; district?: string; subDistrict?: string } = {},
+    area: { province?: string; district?: string; subDistrict?: string; schoolId?: number } = {},
   ) {
     if (!actor) {
       return await this.usersPolicyService.getRoleDefinitions();
     }
 
     const actorScope = this.usersPolicyService.normalizeScope(actor.data_scope);
+    // A single-school actor always sees its own school's groups. Anyone else
+    // (a council admin managing a school's accounts) may ask for one school's
+    // groups by id, but only for a school inside its own scope.
+    const requestedSchoolId =
+      area.schoolId && (await this.usersRepository.isSchoolInScope(area.schoolId, actorScope))
+        ? area.schoolId
+        : null;
     const ownedSchoolId =
       actorScope.global !== true && actorScope.school_ids.length === 1
         ? Number(actorScope.school_ids[0])
-        : null;
+        : requestedSchoolId;
 
     let areaCodes: RoleOwnerAreaCodes | null = null;
     if (area.province && actorScope.school_ids.length === 0) {

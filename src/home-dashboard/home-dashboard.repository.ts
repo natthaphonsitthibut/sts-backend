@@ -11,7 +11,8 @@ import type {
   HomeDashboardFilterOptions,
   HomeDashboardFilters,
   HomeDashboardFollowUpCoverage,
-  HomeDashboardGradeRiskPoint,
+  HomeDashboardGradeRiskDimension,
+  HomeDashboardGradeRiskDistribution,
   HomeDashboardLabelCount,
   HomeDashboardOption,
   HomeDashboardProblemAreaRow,
@@ -1471,15 +1472,22 @@ export class HomeDashboardRepository {
     };
   }
 
-  /** ระดับความเสี่ยงแยกรายชั้น — มุมมองแทนแผนที่เมื่อขอบเขตเหลือโรงเรียนเดียว */
+  /**
+   * ระดับความเสี่ยงแยกรายชั้น — มุมมองแทนแผนที่เมื่อขอบเขตเหลือโรงเรียนเดียว.
+   * Once a ชั้น is picked the bars become that ชั้น's ห้อง; a picked ห้อง stays
+   * one bar among its siblings (the page highlights it) rather than the only one.
+   */
   async getGradeRiskDistribution(
     actor: HomeDashboardActor,
     filters: HomeDashboardFilters,
-  ): Promise<HomeDashboardGradeRiskPoint[]> {
-    const scope = this.buildStudentScopeQuery(actor, filters);
-    const whereSql = [scope.sql, `NULLIF(BTRIM(gl.label), '') IS NOT NULL`]
+  ): Promise<HomeDashboardGradeRiskDistribution> {
+    const dimension: HomeDashboardGradeRiskDimension = filters.grade ? 'ROOM' : 'GRADE';
+    const scope = this.buildStudentScopeQuery(actor, { ...filters, room: undefined });
+    const groupColumn = dimension === 'ROOM' ? `s."RoomID_Onec"::text` : 'gl.label';
+    const whereSql = [scope.sql, `NULLIF(BTRIM(${groupColumn}), '') IS NOT NULL`]
       .filter(Boolean)
       .join(' AND ');
+    const orderSql = dimension === 'ROOM' ? `MIN(s."RoomID_Onec") ASC` : 'MIN(gl.id) ASC';
     const result = await this.query<{
       key: string;
       HIGH: number | string;
@@ -1489,7 +1497,7 @@ export class HomeDashboardRepository {
     }>(
       `
         SELECT
-          gl.label AS key,
+          ${groupColumn} AS key,
           COUNT(*) FILTER (WHERE COALESCE(profile.risk_tier, 'NORMAL') = 'HIGH')::int AS "HIGH",
           COUNT(*) FILTER (WHERE COALESCE(profile.risk_tier, 'NORMAL') = 'WATCH')::int AS "WATCH",
           COUNT(*) FILTER (WHERE COALESCE(profile.risk_tier, 'NORMAL') = 'NORMAL')::int AS "NORMAL",
@@ -1500,19 +1508,22 @@ export class HomeDashboardRepository {
         LEFT JOIN grade_levels gl ON gl.id = s."GradeLevelID_Onec"
         LEFT JOIN student_risk_profiles profile ON profile.student_uuid = s.student_uuid
         WHERE ${whereSql}
-        GROUP BY gl.label
-        ORDER BY MIN(gl.id) ASC
+        GROUP BY ${groupColumn}
+        ORDER BY ${orderSql}
       `,
       scope.params,
     );
-    return result.rows.map((row) => ({
-      key: String(row.key),
-      label: String(row.key),
-      HIGH: toNumber(row.HIGH),
-      WATCH: toNumber(row.WATCH),
-      NORMAL: toNumber(row.NORMAL),
-      total: toNumber(row.total),
-    }));
+    return {
+      dimension,
+      points: result.rows.map((row) => ({
+        key: String(row.key),
+        label: String(row.key),
+        HIGH: toNumber(row.HIGH),
+        WATCH: toNumber(row.WATCH),
+        NORMAL: toNumber(row.NORMAL),
+        total: toNumber(row.total),
+      })),
+    };
   }
 
   async getSchoolName(schoolId: number): Promise<string | null> {

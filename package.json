@@ -63,6 +63,8 @@
     "smoke:settings-browser": "DB_NAME=sts_smoke SMOKE_BACKEND_URL=http://127.0.0.1:3001 SMOKE_FRONTEND_URL=http://127.0.0.1:5174 node scripts/smoke-settings-browser.js",
     "smoke:home-overview-browser": "DB_NAME=sts_smoke SMOKE_BACKEND_URL=http://127.0.0.1:3001 SMOKE_FRONTEND_URL=http://127.0.0.1:5174 node scripts/smoke-home-overview-browser.js",
     "smoke:home-dashboard": "DB_NAME=sts_smoke node scripts/smoke-home-dashboard.js",
+    "smoke:report-tabs-and-roles": "DB_NAME=sts_smoke node scripts/smoke-report-tabs-and-roles.js",
+    "smoke:report-tabs-browser": "DB_NAME=sts_smoke SMOKE_BACKEND_URL=http://localhost:3001 SMOKE_FRONTEND_URL=http://localhost:5175 node scripts/smoke-report-tabs-browser.js",
     "smoke:home-dashboard-browser": "DB_NAME=sts_smoke SMOKE_BACKEND_URL=http://127.0.0.1:3001 SMOKE_FRONTEND_URL=http://127.0.0.1:5174 node scripts/smoke-home-overview-browser.js",
     "smoke:queue-runtime": "REDIS_URL=${REDIS_URL:-redis://localhost:6379} node scripts/smoke-queue-runtime.js",
     "smoke:risk-dashboard-browser": "DB_NAME=sts_smoke SMOKE_BACKEND_URL=http://127.0.0.1:3001 SMOKE_FRONTEND_URL=http://127.0.0.1:5174 node scripts/smoke-risk-dashboard-browser.js",

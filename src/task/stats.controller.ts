@@ -7,6 +7,7 @@ import {
   type AuthenticatedRequestUser,
 } from '../auth';
 import {
+  FollowUpSummaryQueryDto,
   GetCasesQueryDto,
   GetReferralDrilldownQueryDto,
   GetRiskDashboardQueryDto,
@@ -52,8 +53,18 @@ export class StatsController {
   @Get('dashboard/follow-up-summary')
   @UseGuards(AuthGuard, PermissionsGuard)
   @RequirePermission('dashboard')
-  async getFollowUpSummary(@CurrentUser() actor?: AuthenticatedRequestUser) {
-    return await this.taskService.getFollowUpSummary(actor);
+  async getFollowUpSummary(
+    @Query() query: FollowUpSummaryQueryDto,
+    @CurrentUser() actor?: AuthenticatedRequestUser,
+  ) {
+    return await this.taskService.getFollowUpSummary(actor, {
+      province: query.province?.trim() || undefined,
+      district: query.district?.trim() || undefined,
+      subDistrict: query.subDistrict?.trim() || undefined,
+      schoolId: query.schoolId,
+      grade: query.grade?.trim() || undefined,
+      room: query.room?.trim() || undefined,
+    });
   }
 
   @Get('dashboard/referrals')
@@ -63,7 +74,21 @@ export class StatsController {
     @Query() query: GetReferralDrilldownQueryDto,
     @CurrentUser() actor?: AuthenticatedRequestUser,
   ) {
-    return await this.taskService.getReferralDrilldown(actor, query.page, query.limit);
+    return await this.taskService.getReferralDrilldown(
+      actor,
+      {
+        province: query.province?.trim() || undefined,
+        district: query.district?.trim() || undefined,
+        subDistrict: query.subDistrict?.trim() || undefined,
+        schoolId: query.schoolId,
+        grade: query.grade?.trim() || undefined,
+        room: query.room?.trim() || undefined,
+        statusCode: query.statusCode?.trim() || undefined,
+        searchTerm: query.searchTerm?.trim() || undefined,
+      },
+      query.page,
+      query.limit,
+    );
   }
 
   @Get('dashboard/risk-watchlist')

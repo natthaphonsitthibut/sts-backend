@@ -42,22 +42,35 @@ describe('AttendanceController access', () => {
     expect(Reflect.getMetadata(ANY_PERMISSIONS_KEY, handler('getSchools'))).toEqual([
       'attendance',
       'students',
+      'manage-students',
       'manage-school-structure',
+      'manage-users-list',
       'import-data',
       'export-data',
     ]);
     expect(Reflect.getMetadata(ANY_PERMISSIONS_KEY, handler('getGradeLevels'))).toEqual([
       'attendance',
       'students',
+      'manage-students',
       'manage-school-structure',
       'manage-classroom-links',
+      'manage-users-list',
+      'dashboard',
+      'import-data',
       'export-data',
     ]);
     expect(Reflect.getMetadata(ANY_PERMISSIONS_KEY, handler('getRooms'))).toEqual([
       'attendance',
       'students',
+      'manage-students',
+      'manage-users-list',
+      'dashboard',
+      'import-data',
       'export-data',
     ]);
+    // A page's own permission reaches the pickers on it.
+    expect(guard.canActivate(contextWithPermissions('getSchools', ['manage-students']))).toBe(true);
+    expect(guard.canActivate(contextWithPermissions('getRooms', ['dashboard']))).toBe(true);
     expect(guard.canActivate(contextWithPermissions('getSchools', ['import-data']))).toBe(true);
     expect(guard.canActivate(contextWithPermissions('getRooms', ['students']))).toBe(true);
     expect(() => guard.canActivate(contextWithPermissions('getRooms', ['home']))).toThrow(
@@ -93,6 +106,7 @@ describe('AttendanceController access', () => {
       // the view-only ห้องเรียน page (directors) needs the term picker
       'classrooms',
       'attendance',
+      'dashboard',
       'manage-school-structure',
       'manage-classroom-links',
       'manage-subjects',

@@ -234,7 +234,15 @@ async function loginInBrowser(client, user, sessionCookie) {
 }
 
 async function upsertActor(dataSource, passwordHash) {
-  const permissions = ['home', 'dashboard', 'students', 'import-data', 'export-data', 'manage-school-structure'];
+  const permissions = [
+    'home',
+    'dashboard',
+    'students',
+    'manage-students',
+    'import-data',
+    'export-data',
+    'manage-school-structure',
+  ];
   const [existing] = await dataSource.query(`SELECT id FROM users WHERE username = $1`, [USERNAME]);
   if (existing) {
     await dataSource.query(
@@ -334,35 +342,63 @@ async function main() {
         FirstName: 'Data Export',
         LastName: 'Browser Smoke',
         roles: ['ADMIN'],
-        permissions: ['home', 'dashboard', 'students', 'import-data', 'export-data', 'manage-school-structure'],
+        permissions: [
+          'home',
+          'dashboard',
+          'students',
+          'manage-students',
+          'import-data',
+          'export-data',
+          'manage-school-structure',
+        ],
         data_scope: { global: true },
         must_change_password: false,
       },
       sessionCookie,
     );
 
-    await navigate(client, `${FRONTEND_URL}/cases`);
+    // The filtered-export shortcut now lives on จัดการข้อมูลนักเรียน (the old
+    // case list and its export button were retired); it carries the picked
+    // school into the export page.
+    await evaluate(
+      client,
+      `localStorage.setItem('sts_school_filter', ${JSON.stringify(
+        JSON.stringify({
+          province: '',
+          district: '',
+          subDistrict: '',
+          schoolId: String(classroomContext.schoolId),
+          schoolName: '',
+          userId,
+        }),
+      )}); true`,
+    );
+    await navigate(client, `${FRONTEND_URL}/manage-students`);
     await waitFor(
       async () =>
         Boolean(
           await evaluate(
             client,
-            `Array.from(document.querySelectorAll('button')).some((button) => button.textContent.includes('ส่งออกตามตัวกรองนี้'))`,
+            `Array.from(document.querySelectorAll('button')).some((button) => button.innerText.includes('ส่งออกตามตัวกรองนี้') && !button.disabled)`,
           ),
         ),
-      'Cases export action did not render',
+      'Student list export action did not render',
     );
     await evaluate(
       client,
       `Array.from(document.querySelectorAll('button'))
-        .find((button) => button.textContent.includes('ส่งออกตามตัวกรองนี้'))?.click()`,
+        .find((button) => button.innerText.includes('ส่งออกตามตัวกรองนี้'))?.click()`,
     );
     await waitFor(
       async () => {
         const url = new URL(await evaluate(client, 'window.location.href'));
-        return url.pathname === '/data-exports' && url.searchParams.get('dataset') === 'case_summary';
+        return (
+          url.pathname === '/data-exports' &&
+          url.searchParams.get('dataset') === 'student_roster_basic' &&
+          url.searchParams.get('schoolId') === String(classroomContext.schoolId)
+        );
       },
-      'Cases export action did not preserve its export context',
+      'Student list export action did not preserve its export context',
     );
 
     await navigate(client, `${FRONTEND_URL}/data-exports`);
@@ -433,31 +469,32 @@ async function main() {
     await navigate(client, contextUrl.toString());
     try {
       await waitFor(async () => {
+        // Area and school come from the header filter; the card only carries
+        // ชั้น/ห้อง, summarised on its scope trigger (owner, 2026-09-25).
         const values = await evaluate(
           client,
           `({
             text: document.body.innerText,
-            schoolId: document.querySelector('#export-student_roster_basic-schoolId')?.value,
-            grade: document.querySelector('#export-student_roster_basic-grade')?.value,
-            room: document.querySelector('#export-student_roster_basic-room')?.value
+            triggers: [...document.querySelectorAll('[data-scope-filter-trigger]')].map((t) => t.innerText),
           })`,
         );
         return (
           values.text.includes('นำตัวกรองจากหน้าต้นทางมาแล้ว') &&
-          // Combobox renders the selected label, not its persisted option value.
-          // The completed job assertion below remains the source of truth for IDs.
-          Boolean(values.schoolId) &&
-          values.grade === classroomContext.grade &&
-          values.room === `ห้อง ${classroomContext.room}`
+          values.triggers.some(
+            (trigger) =>
+              // Summarised as a class label, e.g. "อ.1/1".
+              trigger.includes(`${classroomContext.grade}/${classroomContext.room}`),
+          )
         );
       }, 'Typed source context did not populate the export form');
     } catch (error) {
       const values = await evaluate(
         client,
         `({
-          schoolId: document.querySelector('#export-student_roster_basic-schoolId')?.value,
-          grade: document.querySelector('#export-student_roster_basic-grade')?.value,
-          room: document.querySelector('#export-student_roster_basic-room')?.value
+          url: location.href,
+          filter: localStorage.getItem('sts_school_filter'),
+          triggers: [...document.querySelectorAll('[data-scope-filter-trigger]')].map((t) => t.innerText),
+          text: document.body.innerText.slice(0, 400)
         })`,
       );
       throw new Error(`${errorMessage(error)}; values=${JSON.stringify(values)}`);
@@ -466,8 +503,7 @@ async function main() {
     const clicked = await evaluate(
       client,
       `(() => {
-        const input = document.querySelector('#export-student_roster_basic-schoolId');
-        const card = input?.closest('[data-export-dataset-code="student_roster_basic"]');
+        const card = document.querySelector('[data-export-dataset-code="student_roster_basic"]');
         const button = [...(card?.querySelectorAll('button') || [])]
           .find((candidate) => candidate.textContent?.includes('สร้างงานส่งออก'));
         if (!button) return false;

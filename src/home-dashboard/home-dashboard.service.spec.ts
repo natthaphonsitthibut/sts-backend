@@ -50,7 +50,7 @@ function createRepositoryMock(): jest.Mocked<
     getHighRiskAreaRanking: jest
       .fn()
       .mockResolvedValue([{ key: 'เชียงใหม่', label: 'เชียงใหม่', count: 5 }]),
-    getGradeRiskDistribution: jest.fn().mockResolvedValue([]),
+    getGradeRiskDistribution: jest.fn().mockResolvedValue({ dimension: 'GRADE', points: [] }),
     getFollowUpCoverage: jest.fn().mockResolvedValue({
       atRiskStudents: 5,
       followedUpStudents: 2,

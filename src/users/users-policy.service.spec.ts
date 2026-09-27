@@ -412,6 +412,48 @@ describe('UsersPolicyService functional roles and data scope', () => {
     ).toBe(false);
   });
 
+  it("keeps a school admin to its own school's groups", async () => {
+    const schoolDirector: RoleDefinition = {
+      ...definitions[1],
+      id: 42,
+      name: 'S10010002_BASE_DIRECTOR',
+      is_system: false,
+      school_id: 10010002,
+    };
+    const map = new Map([...roleMap, [schoolDirector.name, schoolDirector]]);
+    const payload = (role: string) => ({
+      role,
+      roles: [role],
+      permissions: ['home'],
+      data_scope: { ...scopedAdmin.data_scope },
+    });
+
+    await expect(
+      service.assertAssignablePayload(
+        scopedAdmin,
+        payload('DIRECTOR'),
+        { allowEqualRole: true },
+        map,
+      ),
+    ).rejects.toBeInstanceOf(ForbiddenException);
+    await expect(
+      service.assertAssignablePayload(
+        scopedAdmin,
+        payload('DIRECTOR'),
+        { allowEqualRole: true, currentRole: 'DIRECTOR' },
+        map,
+      ),
+    ).resolves.toBeUndefined();
+    await expect(
+      service.assertAssignablePayload(
+        scopedAdmin,
+        { ...payload('S10010002_BASE_DIRECTOR'), permissions: ['home'] },
+        { allowEqualRole: true },
+        map,
+      ),
+    ).resolves.toBeUndefined();
+  });
+
   it('rejects assigning a wider scope than the actor but allows a narrower class scope', async () => {
     await expect(
       service.assertAssignablePayload(
@@ -422,7 +464,7 @@ describe('UsersPolicyService functional roles and data scope', () => {
           permissions: ['home'],
           data_scope: { provinces: ['ชลบุรี'], districts: ['เมืองชลบุรี'] },
         },
-        { allowEqualRole: true },
+        { allowEqualRole: true, currentRole: 'TEACHER' },
         roleMap,
       ),
     ).rejects.toBeInstanceOf(ForbiddenException);
@@ -443,7 +485,7 @@ describe('UsersPolicyService functional roles and data scope', () => {
             room_ids: [1],
           },
         },
-        { allowEqualRole: true },
+        { allowEqualRole: true, currentRole: 'TEACHER' },
         roleMap,
       ),
     ).resolves.toBeUndefined();

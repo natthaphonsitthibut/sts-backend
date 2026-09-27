@@ -31,6 +31,12 @@ export interface AppPageDefinition {
    * held-only; this marks the council pages that are not global-only.
    */
   grantPolicy?: 'held-only';
+  /**
+   * `opt-in`: in no default group, council or school — a school adds it to its
+   * own group when it wants one. เช็กชื่อ is used by teachers through their
+   * classroom links, not by admin accounts (owner, 2026-09-26).
+   */
+  defaultPolicy?: 'opt-in';
 }
 
 export const APP_PAGE_GROUPS = {
@@ -46,7 +52,7 @@ export const APP_PAGES: AppPageDefinition[] = [
   { id: 'classrooms', title: 'ห้องเรียนทั้งหมด', group: null },
   { id: 'teachers', title: 'รายชื่อคุณครู', group: null },
   { id: 'students', title: 'รายชื่อนักเรียน', group: null },
-  { id: 'attendance', title: 'เช็กชื่อ', group: null },
+  { id: 'attendance', title: 'เช็กชื่อ', group: null, defaultPolicy: 'opt-in' },
   { id: 'manage-users-list', title: 'จัดการผู้ใช้งาน', group: APP_PAGE_GROUPS.users },
   { id: 'manage-role-groups', title: 'จัดการกลุ่มเมนู', group: APP_PAGE_GROUPS.users },
   {

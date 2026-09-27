@@ -83,9 +83,15 @@ export const VALID_PERMISSION_IDS = PERMISSION_CATALOG.map((item) => item.id);
 // 20260821090000-CollapsePermissionsToPages. Keeping a second copy here as an
 // exported constant nothing reads would only give the two a way to disagree.
 
+/** Pages no default group starts with; a group gets them only when edited to. */
+const OPT_IN_PAGE_IDS: ReadonlySet<string> = new Set(
+  APP_PAGES.filter((page) => page.defaultPolicy === 'opt-in').map((page) => page.id),
+);
+
 // Council ผู้ดูแลระบบ holds every page — "แอดมินสภาก็คงทำได้ทุกอย่าง" (owner,
-// 2026-09-25) — so it can build any school's accounts and menu groups.
-const ADMIN_DEFAULT_PERMISSIONS = VALID_PERMISSION_IDS;
+// 2026-09-25) — so it can build any school's accounts and menu groups. Opt-in
+// pages (เช็กชื่อ) are the exception: no default group has them (owner, 2026-09-26).
+const ADMIN_DEFAULT_PERMISSIONS = VALID_PERMISSION_IDS.filter((id) => !OPT_IN_PAGE_IDS.has(id));
 
 /**
  * The four default menu groups, one per sidebar mockup the owner supplied on
@@ -139,7 +145,7 @@ export const SCHOOL_ROLE_TEMPLATES = [
  * with BA, 2026-09-25). An area's ผู้ดูแลระบบ holds every page except the
  * national ones (`global-only`): those stay with the national council.
  */
-export const AREA_ADMIN_DEFAULT_PERMISSIONS = VALID_PERMISSION_IDS.filter(
+export const AREA_ADMIN_DEFAULT_PERMISSIONS = ADMIN_DEFAULT_PERMISSIONS.filter(
   (id) => !APP_PAGES.some((page) => page.id === id && page.scopePolicy === 'global-only'),
 );
 

@@ -464,6 +464,15 @@ export class UsersPolicyService {
       requestedRole !== options.currentRole
     ) {
       throw new ForbiddenException('ผู้ใช้งานระดับพื้นที่ต้องใช้กลุ่มเมนูของพื้นที่นั้น');
+    } else if (
+      // A school's admin hands out its own school's groups only; the national
+      // ones are no school's to give (owner, 2026-09-25). An account already
+      // on one keeps it on save.
+      requestedDefinition.school_id == null &&
+      this.normalizeScope(actor.data_scope).school_ids.length > 0 &&
+      requestedRole !== options.currentRole
+    ) {
+      throw new ForbiddenException('ผู้ดูแลโรงเรียนกำหนดได้เฉพาะกลุ่มเมนูของโรงเรียนตัวเอง');
     }
 
     if (

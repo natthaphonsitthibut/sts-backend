@@ -142,6 +142,14 @@ export interface HomeDashboardGradeRiskPoint {
   total: number;
 }
 
+/** What each bar of the grade-risk chart is: a ชั้น, or a ห้อง of the picked ชั้น. */
+export type HomeDashboardGradeRiskDimension = 'GRADE' | 'ROOM';
+
+export interface HomeDashboardGradeRiskDistribution {
+  dimension: HomeDashboardGradeRiskDimension;
+  points: HomeDashboardGradeRiskPoint[];
+}
+
 export interface HomeDashboardTrends {
   success: true;
   data: {
@@ -157,7 +165,7 @@ export interface HomeDashboardTrends {
     } | null;
     casePipeline: HomeDashboardCasePipeline | null;
     caseMovement: HomeDashboardCaseMovementPoint[] | null;
-    gradeRiskDistribution: HomeDashboardGradeRiskPoint[] | null;
+    gradeRiskDistribution: HomeDashboardGradeRiskDistribution | null;
   };
 }
 

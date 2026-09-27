@@ -6,7 +6,7 @@ export interface NotificationRow extends Record<string, unknown> {
   body: string | null;
   student_person_uuid: string | null;
   case_id: number | null;
-  case_status_code: string;
+  case_status_code: string | null;
   student_name_snapshot: string | null;
   reason_text: string | null;
   ref_entity: string | null;
@@ -14,6 +14,8 @@ export interface NotificationRow extends Record<string, unknown> {
   seen_at: string | Date | null;
   read_at: string | Date | null;
   created_at: string | Date;
+  student_uuid?: string | null;
+  concern_level_code?: string | null;
   total_count?: number | string;
 }
 
@@ -52,7 +54,8 @@ export interface NotificationFanOutInput {
   title: string;
   body?: string | null;
   caseId?: number | null;
-  caseStatusCode: string;
+  /** Required for a case notification; absent for one about a student only. */
+  caseStatusCode?: string | null;
   studentUuid?: string | null;
   studentNameSnapshot?: string | null;
   reasonText?: string | null;

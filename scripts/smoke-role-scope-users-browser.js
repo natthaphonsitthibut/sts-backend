@@ -25,6 +25,7 @@ const DEBUG_PORT = Number(process.env.SMOKE_CHROME_DEBUG_PORT || 9236);
 const ADMIN_USERNAME = 'role_scope_browser_admin';
 const TEACHER_USERNAME = 'role_scope_browser_teacher';
 const NATIONAL_USERNAME = 'role_scope_browser_national';
+const SCHOOL_ADMIN_USERNAME = 'role_scope_browser_school_admin';
 
 // A school in sts_smoke with a full province/district/sub_district chain so the
 // scope editor can resolve the real school NAME (not "โรงเรียน 1 แห่ง").
@@ -42,7 +43,9 @@ const TEACHER_SCOPE = {
   school_ids: [SCHOOL.id],
 };
 // TEACHER default permissions -> Thai catalog labels shown in the review dialog.
-const TEACHER_PERMISSION_LABELS = ['หน้าหลัก', 'รายชื่อนักเรียน', 'เช็กชื่อ'];
+// A school account uses its school's own group now (S<id>_BASE_…); these are
+// pages that group starts with.
+const TEACHER_PERMISSION_LABELS = ['หน้าหลัก', 'รายชื่อนักเรียน', 'ห้องเรียนทั้งหมด'];
 const ALL_PERMISSIONS = [...VALID_PERMISSION_IDS];
 
 function assert(condition, message) {
@@ -71,7 +74,8 @@ async function waitFor(check, message, timeoutMs = 20_000) {
     }
     await new Promise((resolve) => setTimeout(resolve, 150));
   }
-  throw new Error(lastError ? `${message}: ${errorMessage(lastError)}` : message);
+  const text = typeof message === 'function' ? await message() : message;
+  throw new Error(lastError ? `${text}: ${errorMessage(lastError)}` : text);
 }
 
 class CdpClient {
@@ -206,6 +210,8 @@ async function upsertUser(dataSource, { username, role, dataScope, permissions, 
          SET password = $2, status = 'ACTIVE', role = $3, permissions = $4::jsonb,
              data_scope = $5::jsonb, "PersonID_Onec" = $6, "FirstName" = 'Role', "LastName" = 'Scope Smoke',
              data_origin_code = 'AUTOMATED_TEST', must_change_password = FALSE,
+             -- email and phone are required on the account form now.
+             email = $1::text || '.role-scope@example.invalid', phone = '0812345678',
              deactivated_at = NULL, deactivated_by = NULL,
              deactivation_reason_code = NULL, deactivation_note = NULL
          WHERE id = $1
@@ -220,9 +226,9 @@ async function upsertUser(dataSource, { username, role, dataScope, permissions, 
     await dataSource.query(
       `INSERT INTO users
          (username, password, "FirstName", "LastName", "PersonID_Onec", status, permissions, role,
-          data_scope, must_change_password, data_origin_code)
+          data_scope, must_change_password, data_origin_code, email, phone)
        VALUES ($1, $2, 'Role', 'Scope Smoke', $3, 'ACTIVE', $4::jsonb, $5,
-               $6::jsonb, FALSE, 'AUTOMATED_TEST')
+               $6::jsonb, FALSE, 'AUTOMATED_TEST', $1 || '.role-scope@example.invalid', '0812345678')
        RETURNING id`,
       [username, passwordHash, personId, JSON.stringify(permissions), role, JSON.stringify(dataScope)],
     ),
@@ -265,6 +271,14 @@ async function comboboxValue(client, id) {
   return await evaluate(client, `document.getElementById(${JSON.stringify(id)})?.value ?? ''`);
 }
 
+// The menu group is a radio list now (RoleGroupSelector), not a combobox.
+async function selectedRoleGroup(client) {
+  return await evaluate(
+    client,
+    `document.querySelector('[role="radiogroup"] input[type="radio"]:checked')?.getAttribute('aria-label') ?? ''`,
+  );
+}
+
 async function waitForEditForm(client, roleLabel) {
   // The role/scope pickers are `<input>`-backed Comboboxes, so the selected
   // label lives in the input's `value`, not in the page text.
@@ -272,11 +286,16 @@ async function waitForEditForm(client, roleLabel) {
     const text = await bodyText(client);
     return (
       String(await evaluate(client, 'location.pathname')).includes('/edit') &&
-      text.includes('สิทธิ์การใช้งาน') &&
-      text.includes('ขอบเขตข้อมูล') &&
-      (await comboboxValue(client, 'role')) === roleLabel
+      text.includes('กำหนดสิทธิ์การเข้าถึง') &&
+      (await selectedRoleGroup(client)) === roleLabel
     );
-  }, `Edit form did not render for role ${roleLabel}`);
+  }, `Edit form did not render for role ${roleLabel}`).catch(async (error) => {
+    throw new Error(
+      `${error.message}; path=${await evaluate(client, 'location.pathname')} role=${JSON.stringify(
+        await selectedRoleGroup(client),
+      )} text=${(await bodyText(client)).slice(0, 300)} radios=${await evaluate(client, `JSON.stringify([...document.querySelectorAll('[role="radiogroup"] input[type="radio"]')].map((r) => [r.getAttribute('aria-label'), r.checked]))`)} filter=${await evaluate(client, `localStorage.getItem('sts_school_filter')`)}`,
+    );
+  });
 }
 
 async function clickSaveButton(client) {
@@ -294,26 +313,33 @@ async function clickSaveButton(client) {
 }
 
 async function clickButton(client, label) {
-  const result = await evaluate(
-    client,
-    `(() => {
-      const buttons = [...document.querySelectorAll('button')];
-      const button = buttons
-        .find((candidate) => candidate.textContent.trim() === ${JSON.stringify(label)});
-      if (!button) {
-        return {
-          clicked: false,
-          labels: buttons.map((candidate) => candidate.textContent.trim()).filter(Boolean),
-        };
-      }
-      button.click();
-      return { clicked: true, labels: [] };
-    })()`,
-  );
-  assert(
-    result?.clicked,
-    `Button "${label}" was not found (available: ${JSON.stringify(result?.labels ?? [])})`,
-  );
+  // Waits for the page to finish rendering, and matches innerText: a Button
+  // keeps its (hidden) loading label beside the idle one in textContent.
+  let lastLabels = [];
+  try {
+    await waitFor(async () => {
+      const result = await evaluate(
+        client,
+        `(() => {
+          const buttons = [...document.querySelectorAll('button')];
+          const button = buttons
+            .find((candidate) => (candidate.innerText || '').trim() === ${JSON.stringify(label)});
+          if (!button) {
+            return {
+              clicked: false,
+              labels: buttons.map((candidate) => (candidate.innerText || '').trim()).filter(Boolean),
+            };
+          }
+          button.click();
+          return { clicked: true, labels: [] };
+        })()`,
+      );
+      lastLabels = result?.labels ?? [];
+      return Boolean(result?.clicked);
+    }, `Button "${label}" was not found`);
+  } catch {
+    throw new Error(`Button "${label}" was not found (available: ${JSON.stringify(lastLabels)})`);
+  }
 }
 
 async function selectComboboxOption(client, ariaLabel, optionLabel) {
@@ -383,7 +409,11 @@ async function waitForReviewDialog(client, isEdit) {
         `Boolean([...document.querySelectorAll('h2')]
           .find((node) => node.textContent.includes(${JSON.stringify(title)})))`,
       ),
-    `Review dialog "${title}" did not open`,
+    async () =>
+      `Review dialog "${title}" did not open; field errors=${await evaluate(
+        client,
+        `JSON.stringify({ errors: [...document.querySelectorAll('[id$="-form-item-message"], p.text-danger, [role="alert"], .text-danger')].map((n) => n.innerText.trim()).filter(Boolean).slice(0, 8), prompts: document.body.innerText.split('\\n').filter((line) => line.includes('กรุณา') || line.includes('ไม่ถูกต้อง') || line.includes('ต้อง')).slice(0, 8), h2: [...document.querySelectorAll('h2')].map((n) => n.innerText.trim()), submits: [...document.querySelectorAll('button[type="submit"]')].map((b) => [b.innerText.trim(), b.disabled]) })`,
+      )}`,
   );
 }
 
@@ -416,6 +446,25 @@ async function clickDialogButton(client, label) {
   );
 }
 
+// The school is picked in the header's shared filter now, not on the page.
+async function pickHeaderSchool(client, school, userId) {
+  await evaluate(
+    client,
+    `localStorage.setItem('sts_school_filter', ${JSON.stringify(
+      JSON.stringify({
+        province: '',
+        district: '',
+        subDistrict: '',
+        schoolId: String(school.id),
+        schoolName: school.name,
+        userId,
+      }),
+    )}); true`,
+  );
+  const path = await evaluate(client, 'location.pathname + location.search');
+  await navigate(client, `${FRONTEND_URL}${path}`);
+}
+
 async function main() {
   const app = await NestFactory.createApplicationContext(AppModule, { logger: false, abortOnError: false });
   const dataSource = app.get(DataSource);
@@ -427,6 +476,7 @@ async function main() {
   let adminId;
   let teacherId;
   let nationalId;
+  let schoolAdminId;
 
   try {
     const adminHash = await passwordService.hash(adminPassword);
@@ -438,12 +488,24 @@ async function main() {
       permissions: ALL_PERMISSIONS, passwordHash: adminHash, personId: '1000000000001',
     });
     teacherId = await upsertUser(dataSource, {
-      username: TEACHER_USERNAME, role: 'DIRECTOR', dataScope: TEACHER_SCOPE,
+      username: TEACHER_USERNAME, role: `S${SCHOOL.id}_BASE_DIRECTOR`, dataScope: TEACHER_SCOPE,
       permissions: [], passwordHash: teacherHash, personId: '1000000000002',
     });
     nationalId = await upsertUser(dataSource, {
       username: NATIONAL_USERNAME, role: 'DIRECTOR', dataScope: { global: true },
       permissions: [], passwordHash: nationalHash, personId: '1000000000003',
+    });
+
+    const schoolAdminPassword = `Role-${suffix}-SchoolAdmin`;
+    const [schoolAdminGroup] = await dataSource.query(
+      `SELECT default_permissions FROM roles WHERE name = $1`,
+      [`S${SCHOOL.id}_BASE_ADMIN`],
+    );
+    assert(schoolAdminGroup, `S${SCHOOL.id}_BASE_ADMIN is missing from the smoke DB`);
+    schoolAdminId = await upsertUser(dataSource, {
+      username: SCHOOL_ADMIN_USERNAME, role: `S${SCHOOL.id}_BASE_ADMIN`, dataScope: TEACHER_SCOPE,
+      permissions: schoolAdminGroup.default_permissions,
+      passwordHash: await passwordService.hash(schoolAdminPassword), personId: '1000000000004',
     });
 
     const session = await login(ADMIN_USERNAME, adminPassword);
@@ -501,7 +563,7 @@ async function main() {
       },
       'Nationwide admin was not required to select a school',
     );
-    await selectComboboxOption(client, 'กรองตามโรงเรียน', SCHOOL.name);
+    await pickHeaderSchool(client, SCHOOL, adminId);
     await clickButton(client, 'เพิ่มกลุ่มเมนู');
     await waitFor(
       async () => (await bodyText(client)).includes('กำหนดชื่อและเมนูสำหรับ'),
@@ -520,28 +582,18 @@ async function main() {
       })()`,
     );
     await new Promise((resolve) => setTimeout(resolve, 350));
-    const menuGroupFieldGeometry = await evaluate(
+    // The group has only a name now (rank was dropped in 8bb23c8), so the check
+    // is that the name field renders at a usable size.
+    const menuGroupLabelRect = await evaluate(
       client,
       `(() => {
-        const labelInput = document.getElementById('menu-group-label');
-        const rankCombobox = document.getElementById('menu-group-rank');
-        const rankHeader = document.querySelector('label[for="menu-group-rank"]')?.parentElement;
-        const labelRect = labelInput?.getBoundingClientRect();
-        const rankRect = rankCombobox?.getBoundingClientRect();
-        return {
-          labelTop: labelRect?.top ?? 0,
-          labelHeight: labelRect?.height ?? 0,
-          rankTop: rankRect?.top ?? 0,
-          rankHeight: rankRect?.height ?? 0,
-          rankHeaderAlignment: rankHeader ? getComputedStyle(rankHeader).alignItems : '',
-        };
+        const rect = document.getElementById('menu-group-label')?.getBoundingClientRect();
+        return rect ? { width: rect.width, height: rect.height } : null;
       })()`,
     );
     assert(
-      Math.abs(menuGroupFieldGeometry.labelTop - menuGroupFieldGeometry.rankTop) <= 1 &&
-        Math.abs(menuGroupFieldGeometry.labelHeight - menuGroupFieldGeometry.rankHeight) <= 1 &&
-        menuGroupFieldGeometry.rankHeaderAlignment === 'baseline',
-      `Menu-group fields were not position-aligned: ${JSON.stringify(menuGroupFieldGeometry)}`,
+      menuGroupLabelRect && menuGroupLabelRect.width > 100 && menuGroupLabelRect.height >= 32,
+      `Menu-group name field did not render: ${JSON.stringify(menuGroupLabelRect)}`,
     );
     await capture(client, '/tmp/sts-role-groups-dialog-desktop.png');
     await clickSaveButton(client);
@@ -568,7 +620,7 @@ async function main() {
 
     // --- Test A: edit a school-scoped TEACHER -> real names, Thai perms, preserve scope ---
     await navigate(client, `${FRONTEND_URL}/manage-users/${teacherId}/edit/permissions`);
-    await waitForEditForm(client, 'คุณครู');
+    await waitForEditForm(client, 'ผู้อำนวยการ');
 
     // Scope editor must resolve the real school NAME (not an id/count) into the
     // school Combobox, and mirror the school's province.
@@ -580,10 +632,19 @@ async function main() {
       (await comboboxValue(client, 'scope-province')) === SCHOOL.province,
       'Scope editor did not preserve the school province',
     );
-    // Permission checkboxes must use Thai catalog labels, never raw ids.
+    // Permission checkboxes must use Thai catalog labels, never raw ids. The
+    // group's pages show once it is expanded (RoleGroupSelector).
+    await evaluate(
+      client,
+      `document.querySelector('button[aria-label="ดูสิทธิ์ของผู้อำนวยการ"]')?.click()`,
+    );
+    await waitFor(
+      async () => (await bodyText(client)).includes('บันทึกการใช้งาน'),
+      'Permission editor did not expand the selected group',
+    );
     const editorText = await bodyText(client);
     assert(
-      editorText.includes('จัดการรายชื่อผู้ใช้งาน') && editorText.includes('บันทึกการใช้งาน'),
+      editorText.includes('รายชื่อนักเรียน') && editorText.includes('บันทึกการใช้งาน'),
       'Permission editor did not render Thai catalog labels',
     );
     assert(
@@ -592,23 +653,9 @@ async function main() {
     );
     await capture(client, '/tmp/sts-role-scope-edit-desktop.png');
 
+    // Saving goes straight through now (no pre-save review dialog since
+    // b40140b); what was saved is checked in the database below.
     await clickSaveButton(client);
-    await waitForReviewDialog(client, true);
-    const reviewA = await reviewDialogText(client);
-    assert(
-      reviewA.includes(SCHOOL.name) && reviewA.includes(SCHOOL.province),
-      `Review dialog did not show the resolved scope name: ${reviewA.slice(0, 300)}`,
-    );
-    assert(
-      !reviewA.includes('ทั้งประเทศ'),
-      'Editing a school-scoped teacher must NOT show a nationwide scope',
-    );
-    for (const label of TEACHER_PERMISSION_LABELS) {
-      assert(reviewA.includes(label), `Review dialog missing Thai permission label "${label}"`);
-    }
-    await capture(client, '/tmp/sts-role-scope-review-desktop.png');
-
-    await clickDialogButton(client, 'ยืนยันบันทึก');
     await waitFor(
       async () => !String(await evaluate(client, 'location.pathname')).includes('/edit'),
       'Save did not navigate away from the edit form',
@@ -637,27 +684,22 @@ async function main() {
       [teacherId, JSON.stringify(['home', 'dashboard', 'attendance-dashboard'])],
     );
     await navigate(client, `${FRONTEND_URL}/manage-users/${teacherId}/edit/permissions`);
-    await waitForEditForm(client, 'คุณครู');
+    await waitForEditForm(client, 'ผู้อำนวยการ');
+    // One page now (no tabs), so the invalid national id cannot hide: saving
+    // must stop on that field, focus it and write nothing.
     await clickSaveButton(client);
-    await waitFor(async () => {
-      const text = await bodyText(client);
-      return text.includes('ยังบันทึกไม่ได้') && text.includes('อยู่ในแท็บข้อมูล');
-    }, 'Hidden validation error was not surfaced after save');
-    assert(
-      !(await reviewDialogText(client)),
-      'Review dialog opened even though hidden profile data was invalid',
-    );
-
-    await clickButton(client, 'ไปแก้ในแท็บข้อมูล');
-    await waitFor(
-      async () => String(await evaluate(client, 'location.pathname')).endsWith('/edit'),
-      'Invalid-field action did not navigate to the information tab',
-    );
     await waitFor(
       async () =>
         (await evaluate(client, 'document.activeElement?.getAttribute("name")')) ===
         'PersonID_Onec',
-      'Invalid national-id field was not focused',
+      'Invalid national-id field was not focused after save',
+    );
+    const [unsaved] = await dataSource.query(`SELECT permissions FROM users WHERE id = $1`, [
+      teacherId,
+    ]);
+    assert(
+      unsaved?.permissions?.includes('attendance-dashboard'),
+      'An invalid form was saved anyway',
     );
     await evaluate(
       client,
@@ -668,19 +710,7 @@ async function main() {
         input.dispatchEvent(new Event('input', { bubbles: true }));
       })()`,
     );
-    await clickButton(client, 'สิทธิ์');
-    await waitFor(
-      async () => String(await evaluate(client, 'location.pathname')).endsWith('/edit/permissions'),
-      'Permission tab did not reopen after fixing hidden data',
-    );
     await clickSaveButton(client);
-    await waitForReviewDialog(client, true);
-    const cleanupReview = await reviewDialogText(client);
-    assert(
-      cleanupReview.includes('dashboard') && cleanupReview.includes('attendance-dashboard'),
-      'Review dialog did not disclose retired permissions that will be removed',
-    );
-    await clickDialogButton(client, 'ยืนยันบันทึก');
     await waitFor(
       async () => {
         const [saved] = await dataSource.query(
@@ -689,11 +719,14 @@ async function main() {
         );
         return (
           saved?.PersonID_Onec === '1000000000002' &&
-          !saved?.permissions?.includes('dashboard') &&
           !saved?.permissions?.includes('attendance-dashboard')
         );
       },
-      'Corrected permission save was not persisted',
+      async () =>
+        `Corrected permission save was not persisted @ ${await evaluate(client, 'location.pathname')}: ${await evaluate(
+          client,
+          `JSON.stringify(document.body.innerText.split('\\n').filter((line) => line.includes('กรุณา') || line.includes('ไม่') || line.includes('ต้อง')).slice(0, 10))`,
+        )} value=${await evaluate(client, `document.querySelector('[name="PersonID_Onec"]')?.value`)}`,
     );
     const [cleanedTeacher] = await dataSource.query(
       `SELECT "PersonID_Onec", permissions FROM users WHERE id = $1`,
@@ -703,31 +736,120 @@ async function main() {
       cleanedTeacher?.PersonID_Onec === '1000000000002',
       'Corrected hidden profile field was not persisted',
     );
+    // dashboard is a live page again; attendance-dashboard is the retired id.
     assert(
-      !cleanedTeacher?.permissions?.includes('dashboard') &&
-        !cleanedTeacher?.permissions?.includes('attendance-dashboard'),
+      !cleanedTeacher?.permissions?.includes('attendance-dashboard'),
       `Retired permissions were not removed: ${JSON.stringify(cleanedTeacher?.permissions)}`,
     );
 
     // --- Test B: edit a nationwide DIRECTOR -> amber nationwide highlight ---
-    await navigate(client, `${FRONTEND_URL}/manage-users/${nationalId}/edit/permissions`);
+    // A nationwide account belongs to the council realm (realm split, 2026-09-23).
+    await navigate(client, `${FRONTEND_URL}/council/manage-users/${nationalId}/edit`);
     await waitForEditForm(client, 'ผู้อำนวยการ');
-    await clickSaveButton(client);
-    await waitForReviewDialog(client, true);
-    const reviewB = await reviewDialogText(client);
+    // Nothing is saved here: the check is that the council form opens on the
+    // account's own group with its nationwide scope intact.
+    const [nationalRow] = await dataSource.query(`SELECT data_scope FROM users WHERE id = $1`, [
+      nationalId,
+    ]);
+    assert(nationalRow?.data_scope?.global === true, 'Nationwide account lost its scope');
+
+    // --- Test C: a school admin adds a user only inside its own school ---
+    // Owner, 2026-09-28: no national group next to the school's own (two
+    // ผู้อำนวยการ), and no area outside the admin's scope.
+    const schoolSession = await login(SCHOOL_ADMIN_USERNAME, schoolAdminPassword);
+    const nationalDirectorAttempt = await fetch(`${BACKEND_URL}/api/users`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        cookie: `${schoolSession.cookieName}=${schoolSession.cookieValue}`,
+      },
+      body: JSON.stringify({
+        username: `rs_national_${Date.now().toString(36)}`,
+        password: `Role-${suffix}-Blocked1`,
+        FirstName: 'Role',
+        LastName: 'Scope Smoke',
+        PersonID_Onec: '1000000000005',
+        email: 'blocked.role-scope@example.invalid',
+        phone: '0812345678',
+        role: 'DIRECTOR',
+        roles: ['DIRECTOR'],
+        permissions: ['home'],
+        data_scope: TEACHER_SCOPE,
+      }),
+    });
     assert(
-      reviewB.includes('ทั้งประเทศ (ทุกจังหวัด)') && reviewB.includes('โปรดตรวจสอบให้แน่ใจ'),
-      `Nationwide scope was not highlighted in the review dialog: ${reviewB.slice(0, 300)}`,
+      nationalDirectorAttempt.status === 403,
+      `School admin handing out the national DIRECTOR group returned ${nationalDirectorAttempt.status}: ${(await nationalDirectorAttempt.text()).slice(0, 200)}`,
     );
-    // Do not persist; nationwide highlight is the assertion.
-    await clickDialogButton(client, 'ยกเลิก');
+    await client.call('Network.setCookie', {
+      name: schoolSession.cookieName,
+      value: schoolSession.cookieValue,
+      url: BACKEND_URL,
+      httpOnly: true,
+      sameSite: 'Lax',
+    });
+    await evaluate(
+      client,
+      `localStorage.setItem('sts_user', ${JSON.stringify(JSON.stringify(schoolSession.user))});
+       localStorage.removeItem('sts_school_filter'); true`,
+    );
+    await navigate(client, `${FRONTEND_URL}/manage-users/new?schoolId=${SCHOOL.id}`);
+    await waitFor(
+      async () =>
+        (await comboboxValue(client, 'scope-school')) === SCHOOL.name &&
+        (await evaluate(
+          client,
+          `document.querySelectorAll('[role="radiogroup"] input[type="radio"]').length`,
+        )) > 0,
+      async () =>
+        `School admin add form did not render its school scope: ${(await bodyText(client)).slice(0, 300)}`,
+    );
+    const groupLabels = await evaluate(
+      client,
+      `JSON.stringify([...document.querySelectorAll('[role="radiogroup"] input[type="radio"]')].map((r) => r.getAttribute('aria-label')))`,
+    );
+    const labels = JSON.parse(groupLabels);
+    assert(
+      new Set(labels).size === labels.length,
+      `School admin form lists a group twice: ${groupLabels}`,
+    );
+    const scopeFields = await evaluate(
+      client,
+      `JSON.stringify(['scope-province', 'scope-district', 'scope-sub-district', 'scope-school'].map((id) => {
+        const input = document.getElementById(id);
+        return [id, input?.value ?? null, Boolean(input?.disabled)];
+      }))`,
+    );
+    assert(
+      scopeFields ===
+        JSON.stringify([
+          ['scope-province', SCHOOL.province, true],
+          ['scope-district', SCHOOL.district, true],
+          ['scope-sub-district', SCHOOL.sub_district, true],
+          ['scope-school', SCHOOL.name, true],
+        ]),
+      `School admin scope was not pinned to its own school: ${scopeFields}`,
+    );
+    await capture(client, '/tmp/sts-role-scope-school-admin-add.png');
+    // Back to the nationwide admin for the rest of the run.
+    await client.call('Network.setCookie', {
+      name: session.cookieName,
+      value: session.cookieValue,
+      url: BACKEND_URL,
+      httpOnly: true,
+      sameSite: 'Lax',
+    });
+    await evaluate(
+      client,
+      `localStorage.setItem('sts_user', ${JSON.stringify(JSON.stringify(session.user))}); true`,
+    );
 
     // --- Mobile render ---
     await client.call('Emulation.setDeviceMetricsOverride', {
       width: 390, height: 844, deviceScaleFactor: 1, mobile: true,
     });
     await navigate(client, `${FRONTEND_URL}/manage-users/${teacherId}/edit/permissions`);
-    await waitForEditForm(client, 'คุณครู');
+    await waitForEditForm(client, 'ผู้อำนวยการ');
     await waitFor(
       async () => (await comboboxValue(client, 'scope-school')) === SCHOOL.name,
       'Mobile scope editor did not resolve the real school name',
@@ -735,7 +857,7 @@ async function main() {
     await capture(client, '/tmp/sts-role-scope-edit-mobile.png');
 
     await navigate(client, `${FRONTEND_URL}/manage-role-groups`);
-    await selectComboboxOption(client, 'กรองตามโรงเรียน', SCHOOL.name);
+    await pickHeaderSchool(client, SCHOOL, adminId);
     await waitFor(
       async () => (await bodyText(client)).includes(menuGroupLabel),
       'Mobile menu-group table did not render the school-owned group',
@@ -761,7 +883,7 @@ async function main() {
     await clickButton(client, 'ยกเลิก');
 
     console.log(
-      'role/scope browser smoke passed (Thai permission catalog, hidden validation feedback, retired permission cleanup, real scope names, preserve-scope save, nationwide highlight, desktop/mobile)',
+      'role/scope browser smoke passed (school groups offered, Thai permission catalog, invalid field focused, retired permission cleanup, real scope names, preserve-scope save, council edit of a nationwide account, school admin kept to its own school and groups, desktop/mobile)',
     );
   } finally {
     await closeChrome(chrome);
@@ -772,11 +894,12 @@ async function main() {
     await disableUser(dataSource, teacherId, TEACHER_USERNAME);
     await disableUser(dataSource, nationalId, NATIONAL_USERNAME);
     await disableUser(dataSource, adminId, ADMIN_USERNAME);
+    await disableUser(dataSource, schoolAdminId, SCHOOL_ADMIN_USERNAME);
     await app.close();
   }
 }
 
 main().catch((error) => {
-  console.error(errorMessage(error));
+  console.error(error?.stack || errorMessage(error));
   process.exitCode = 1;
 });

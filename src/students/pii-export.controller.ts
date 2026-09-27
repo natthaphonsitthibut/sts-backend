@@ -5,7 +5,7 @@ import {
   CurrentUser,
   PermissionsGuard,
   Public,
-  RequirePermission,
+  RequireAnyPermission,
   type AuthenticatedRequestUser,
 } from '../auth';
 import {
@@ -16,8 +16,12 @@ import {
 } from './dto/pii-export.dto';
 import { PiiExportService } from './pii-export.service';
 
+// The request panel is the ส่งออกข้อมูล tab of จัดการข้อมูลนักเรียน, and the
+// school's ผู้ดูแลระบบ holds that page without รายชื่อนักเรียน (owner,
+// 2026-09-22), so either page opens it. Approval stays with the council's
+// ผู้ดูแลระบบ and every request stays inside the actor's scope (service).
 @UseGuards(AuthGuard, PermissionsGuard)
-@RequirePermission('students')
+@RequireAnyPermission('students', 'manage-students')
 @Controller('api/students/pii-export-requests')
 export class PiiExportController {
   constructor(private readonly piiExportService: PiiExportService) {}

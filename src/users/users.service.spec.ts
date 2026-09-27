@@ -929,3 +929,79 @@ describe('UsersService', () => {
     });
   });
 });
+
+describe('UsersService.getRoles school groups', () => {
+  function setup(actorScopeAllowsSchool: boolean) {
+    const usersRepository = {
+      isSchoolInScope: jest.fn().mockResolvedValue(actorScopeAllowsSchool),
+    };
+    const usersPolicyService = {
+      normalizeScope: jest.fn().mockReturnValue({ global: true, school_ids: [] }),
+      getRoleDefinitions: jest.fn().mockResolvedValue([]),
+      getPrimaryRole: jest.fn().mockReturnValue('ADMIN'),
+      canGrantPermissions: jest.fn().mockReturnValue(true),
+    };
+    const service = new UsersService(
+      usersRepository as unknown as UsersRepository,
+      usersPolicyService as unknown as UsersPolicyService,
+      {} as unknown as PasswordService,
+      {} as unknown as AuditLogService,
+      {} as never,
+      {} as unknown as FileStorageAdapter,
+    );
+    return { service, usersRepository, usersPolicyService };
+  }
+  const admin = {
+    id: 1,
+    username: 'council-admin',
+    roles: ['ADMIN'],
+    permissions: ['manage-users-list'],
+    data_scope: { global: true },
+  } as unknown as ActorContext;
+
+  it("lists a school's own groups when asked for a school inside the actor's scope", async () => {
+    const { service, usersRepository, usersPolicyService } = setup(true);
+
+    await service.getRoles(admin, { schoolId: 10010001 });
+
+    expect(usersRepository.isSchoolInScope).toHaveBeenCalledWith(10010001, {
+      global: true,
+      school_ids: [],
+    });
+    expect(usersPolicyService.getRoleDefinitions).toHaveBeenCalledWith(false, 10010001);
+  });
+
+  it('ignores a school outside the actor scope', async () => {
+    const { service, usersRepository, usersPolicyService } = setup(false);
+
+    await service.getRoles(admin, { schoolId: 99999999 });
+
+    expect(usersRepository.isSchoolInScope).toHaveBeenCalledWith(99999999, {
+      global: true,
+      school_ids: [],
+    });
+    expect(usersPolicyService.getRoleDefinitions).toHaveBeenCalledWith(false, null);
+  });
+
+  it('uses the school location to authorize a council area actor', async () => {
+    const { service, usersRepository, usersPolicyService } = setup(true);
+    usersPolicyService.normalizeScope.mockReturnValue({
+      global: false,
+      school_ids: [],
+      provinces: ['เชียงใหม่'],
+    });
+    const areaAdmin = {
+      ...admin,
+      data_scope: { provinces: ['เชียงใหม่'] },
+    };
+
+    await service.getRoles(areaAdmin, { schoolId: 10010001 });
+
+    expect(usersRepository.isSchoolInScope).toHaveBeenCalledWith(10010001, {
+      global: false,
+      school_ids: [],
+      provinces: ['เชียงใหม่'],
+    });
+    expect(usersPolicyService.getRoleDefinitions).toHaveBeenCalledWith(false, 10010001);
+  });
+});

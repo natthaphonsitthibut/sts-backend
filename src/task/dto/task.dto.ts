@@ -15,7 +15,10 @@ import {
   MaxLength,
   Min,
 } from 'class-validator';
-import { PaginationQueryDto } from '../../common/pagination/pagination.dto';
+import {
+  PaginatedSearchQueryDto,
+  PaginationQueryDto,
+} from '../../common/pagination/pagination.dto';
 
 export type TaskDurationUnit = 'minutes' | 'hours' | 'days' | 'weeks';
 export type TaskLinkAdminAction = 'lock' | 'unlock';
@@ -27,7 +30,75 @@ export type CaseResolutionOutcome =
   | 'UNREACHABLE'
   | 'OTHER';
 
-export class GetReferralDrilldownQueryDto extends PaginationQueryDto {}
+/** The global school/area filter, applied on top of the actor's own scope. */
+export class FollowUpSummaryQueryDto {
+  @IsOptional()
+  @IsString()
+  @MaxLength(50)
+  grade?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(20)
+  room?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(150)
+  province?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(150)
+  district?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(150)
+  subDistrict?: string;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  schoolId?: number;
+}
+
+export class GetReferralDrilldownQueryDto extends PaginatedSearchQueryDto {
+  @IsOptional()
+  @IsString()
+  @MaxLength(50)
+  grade?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(20)
+  room?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(150)
+  province?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(150)
+  district?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(150)
+  subDistrict?: string;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  schoolId?: number;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(50)
+  statusCode?: string;
+}
 
 export class TaskGoogleCallbackDto extends ExternalOAuthCallbackDto {
   @IsOptional()

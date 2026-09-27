@@ -45,6 +45,22 @@ export type RiskDashboardSortBy =
   | 'problemCategory';
 export type RiskDashboardSortDirection = 'asc' | 'desc';
 
+/** The global school/area filter a follow-up aggregate is narrowed to. */
+export interface FollowUpAreaFilters {
+  province?: string;
+  district?: string;
+  subDistrict?: string;
+  schoolId?: number;
+  /** ชั้น label and ห้อง number of the student's enrollment, as the risk tabs filter. */
+  grade?: string;
+  room?: string;
+}
+
+export interface ReferralDrilldownFilters extends FollowUpAreaFilters {
+  statusCode?: string;
+  searchTerm?: string;
+}
+
 export interface RiskDashboardFilters {
   studentGroup?: 'RISK' | 'WATCHLIST';
   riskTier?: RiskDashboardTier;

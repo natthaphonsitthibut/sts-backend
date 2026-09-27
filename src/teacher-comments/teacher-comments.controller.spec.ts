@@ -26,6 +26,7 @@ describe('Teacher comment controller security metadata', () => {
     ]);
     expect(Reflect.getMetadata(ANY_PERMISSIONS_KEY, StudentClassroomCommentsController)).toEqual([
       'students',
+      'manage-students',
       'classrooms',
       'manage-school-structure',
       'attendance',

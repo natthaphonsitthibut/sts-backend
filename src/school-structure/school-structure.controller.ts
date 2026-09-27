@@ -46,6 +46,7 @@ import {
 } from './dto/school-structure.dto';
 import { multerConfig } from '../common/interceptors/file-upload.interceptor';
 import { SchoolStructureService } from './school-structure.service';
+import { CLASSROOM_COMMENT_READER_PERMISSIONS } from '../teacher-comments/teacher-comments.service';
 
 @UseGuards(AuthGuard, PermissionsGuard)
 @RequirePermission('manage-school-structure')
@@ -55,14 +56,14 @@ export class SchoolStructureController {
 
   @Get('student-problem-categories')
   @RequirePermission()
-  @RequireAnyPermission('classrooms', 'manage-school-structure', 'attendance', 'students')
+  @RequireAnyPermission(...CLASSROOM_COMMENT_READER_PERMISSIONS)
   listStudentProblemCategories() {
     return this.service.listStudentProblemCategories();
   }
 
   @Get('student-comment-concern-levels')
   @RequirePermission()
-  @RequireAnyPermission('classrooms', 'manage-school-structure', 'attendance', 'students')
+  @RequireAnyPermission(...CLASSROOM_COMMENT_READER_PERMISSIONS)
   listStudentCommentConcernLevels() {
     return this.service.listStudentCommentConcernLevels();
   }
@@ -77,6 +78,8 @@ export class SchoolStructureController {
     'import-data',
     'manage-role-groups',
     'teachers',
+    'manage-teachers',
+    'classrooms',
   )
   listSchools(@CurrentUser() actor: AuthenticatedRequestUser) {
     return this.service.listSchools(actor);
@@ -262,7 +265,7 @@ export class SchoolStructureController {
   // The comment dialog is opened from the classroom, เช็กชื่อ and student pages.
   @Post('classrooms/:classroomId/students/:studentUuid/comments')
   @RequirePermission()
-  @RequireAnyPermission('classrooms', 'manage-school-structure', 'attendance', 'students')
+  @RequireAnyPermission(...CLASSROOM_COMMENT_READER_PERMISSIONS)
   createStudentComment(
     @Param('classroomId', ParseIntPipe) classroomId: number,
     @Param('studentUuid', ParseUUIDPipe) studentUuid: string,

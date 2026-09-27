@@ -139,13 +139,18 @@ describe('SchoolStructureService', () => {
     const riskProfileService = {
       requestStudentRecalculation: jest.fn().mockResolvedValue(undefined),
     };
+    const notificationsService = {
+      notifyStudentWatchlistAlert: jest.fn().mockResolvedValue([]),
+    };
     return {
       service: new SchoolStructureService(
         repository as never,
         auditLog as never,
         storage as never,
         riskProfileService as never,
+        notificationsService as never,
       ),
+      notificationsService,
       repository,
       auditLog,
       storage,
@@ -379,7 +384,7 @@ describe('SchoolStructureService', () => {
   });
 
   it('appends a scoped classroom comment and records an audit without comment content', async () => {
-    const { service, repository, auditLog } = setup();
+    const { service, repository, auditLog, notificationsService } = setup();
     const studentUuid = '00000000-0000-4000-8000-000000000001';
 
     await expect(
@@ -431,10 +436,21 @@ describe('SchoolStructureService', () => {
       expect.anything(),
     );
     expect(JSON.stringify(auditLog.recordAtomic.mock.calls[0])).not.toContain('ควรติดตาม');
+    // ควรเฝ้าดู puts the student into the เฝ้าระวัง group — alert, without the
+    // comment text, and not back to the author.
+    expect(notificationsService.notifyStudentWatchlistAlert).toHaveBeenCalledWith({
+      commentId: '91',
+      studentUuid,
+      schoolId: 1001,
+      concernLevelLabel: 'ควรเฝ้าดู',
+      problemCategoryLabel: 'ปัญหาด้านการเรียน',
+      authorLabel: SCHOOL_ACTOR.username,
+      authorUserId: SCHOOL_ACTOR.id,
+    });
   });
 
   it('allows the student-page permission within the actor classroom scope', async () => {
-    const { service, repository } = setup();
+    const { service, repository, notificationsService } = setup();
 
     await expect(
       service.createStudentComment(
@@ -448,6 +464,8 @@ describe('SchoolStructureService', () => {
         CLASSROOM_COMMENT_ACTOR,
       ),
     ).resolves.toMatchObject({ data: { concernLevelCode: 'WATCH' } });
+    // บันทึกทั่วไป stays in the history only: no watchlist alert.
+    expect(notificationsService.notifyStudentWatchlistAlert).not.toHaveBeenCalled();
     expect(repository.isSchoolInScope).toHaveBeenCalledWith(
       1001,
       CLASSROOM_COMMENT_ACTOR.data_scope,

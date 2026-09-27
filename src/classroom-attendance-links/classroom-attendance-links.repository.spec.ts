@@ -157,6 +157,29 @@ describe('ClassroomAttendanceLinksRepository', () => {
     expect(sql).toContain('last_used_at = NULL');
   });
 
+  it('returns only the live link after re-issuing a teacher whose earlier link was closed', async () => {
+    const { repository, runner } = setup([{ id: 'link-id' }]);
+
+    await repository.upsertLinks(
+      [
+        {
+          schoolId: 10,
+          schoolTermId: 20,
+          teacherMembershipId: 30,
+          tokenHash: 'c'.repeat(64),
+          tokenEncrypted: 'v1:cipher',
+          actorId: 1,
+        },
+      ],
+      runner as never,
+    );
+
+    const calls = runner.query.mock.calls as unknown as Array<[string, unknown[] | undefined]>;
+    // A closed link from earlier in the term stays on record; the read-back
+    // must not count it, or the caller sees more rows than teachers and fails.
+    expect(calls[1][0]).toContain("link.link_status = 'ACTIVE'");
+  });
+
   it('marks a rotated delivered link as needing resend', async () => {
     const { repository, runner } = setup();
 

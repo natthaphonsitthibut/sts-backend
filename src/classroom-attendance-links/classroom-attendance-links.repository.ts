@@ -491,9 +491,13 @@ export class ClassroomAttendanceLinksRepository {
         ),
       ],
     );
+    // Only the live link each teacher just got: a closed link from earlier in
+    // the term stays on record beside it, and returning it too made re-issuing
+    // after a deactivation fail the row-count check.
     const rows = await createSqlQueryExecutor(runner).query<ClassroomLinkRow>(
       `${this.linkSelect()} WHERE link.teacher_membership_id = ANY($1::bigint[])
          AND link.school_term_id = $2
+         AND link.link_status = 'ACTIVE'
        ORDER BY link.teacher_membership_id`,
       [inputs.map((input) => input.teacherMembershipId), inputs[0]?.schoolTermId],
     );

@@ -19,6 +19,7 @@ import { hasPermission } from '../auth/permissions.constants';
 import { attendanceStatusFromCode } from '../attendance/attendance-status';
 import { AuditLogService } from '../audit-log/audit-log.service';
 import { RiskProfileService } from '../risk-profile/risk-profile.service';
+import { NotificationsService } from '../notifications/notifications.service';
 import { resolveAuditActorId } from '../common/audit/audit-actor.util';
 import { processImageUpload } from '../common/file-upload/visit-photo.util';
 import { encodeMediaVersion } from '../common/utils/media-version.util';
@@ -101,6 +102,7 @@ export class SchoolStructureService {
     @Inject(FILE_STORAGE_ADAPTER)
     private readonly storage: FileStorageAdapter,
     private readonly riskProfileService: RiskProfileService,
+    private readonly notificationsService: NotificationsService,
   ) {}
 
   private resolveScope(actor: AuthenticatedRequestUser, allowRelatedRead = false): DataScope {
@@ -1238,6 +1240,17 @@ export class SchoolStructureService {
         .catch(() => {
           this.logger.warn('Unable to refresh risk profile after classroom comment');
         });
+      // บันทึกทั่วไป stays in the history only; the other levels put the
+      // student into the เฝ้าระวัง group, which is what the alert announces.
+      await this.notificationsService.notifyStudentWatchlistAlert({
+        commentId: created.id,
+        studentUuid,
+        schoolId: classroom.school_id,
+        concernLevelLabel: created.concern_level_label,
+        problemCategoryLabel: created.problem_category_label,
+        authorLabel: author.label,
+        authorUserId: author.kind === 'USER' ? author.userId : null,
+      });
     }
 
     return {
