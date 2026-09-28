@@ -3,7 +3,6 @@ import {
   Controller,
   Post,
   Get,
-  Delete,
   Body,
   Headers,
   Param,
@@ -227,13 +226,5 @@ export class TaskController {
   @Post('araid/challenge/status')
   async pollAraIdChallenge(@Headers('x-task-araid-challenge') rawChallenge: string | undefined) {
     return await this.taskService.pollTaskAraIdChallenge((rawChallenge ?? '').trim());
-  }
-
-  @Post(':taskId/delete')
-  @Post('delete/:taskId')
-  @Delete(':taskId')
-  @UseGuards(AuthGuard)
-  async deleteTask(@Param('taskId', ParseUUIDPipe) taskId: string, @Req() req: RequestWithActor) {
-    return await this.taskService.deleteTask(taskId, req.user, req.ip ?? null);
   }
 }

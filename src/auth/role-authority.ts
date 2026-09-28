@@ -11,7 +11,7 @@
  * ticking pages off one account never widens what its owner can do to others.
  */
 
-import { APP_PAGES } from './page-registry.constants';
+import { APP_PAGES, NON_PAGE_PERMISSIONS } from './page-registry.constants';
 
 /**
  * Pages whose holder administers other accounts. Holding one lets an actor hand
@@ -33,7 +33,13 @@ const HELD_ONLY_PAGES = new Set(
   ).map((page) => page.id),
 );
 
-const REALM_PAGES = APP_PAGES.map((page) => page.id).filter((id) => !HELD_ONLY_PAGES.has(id));
+// Non-page permissions (บันทึกการใช้งาน, the case actions) belong to
+// the realm too: a school's ผู้ดูแลระบบ must be able to build its ผอ. group, which
+// holds the case actions the admin itself does not.
+const REALM_PAGES = [
+  ...APP_PAGES.map((page) => page.id),
+  ...NON_PAGE_PERMISSIONS.map((permission) => permission.id),
+].filter((id) => !HELD_ONLY_PAGES.has(id));
 
 /** Every page an actor holding `actorPages` may hand to someone else. */
 export function grantablePages(actorPages: Iterable<string>): Set<string> {

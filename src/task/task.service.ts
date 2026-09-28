@@ -57,10 +57,6 @@ export class TaskService {
     return await this.taskRepository.findCaseById(caseId, undefined, actor);
   }
 
-  async deleteTask(taskId: string, actor?: ActorContext, ip?: string | null) {
-    return await this.taskLifecycleService.deleteTask(taskId, actor, ip);
-  }
-
   async getTaskChain(actor: ActorContext | undefined, taskId: string) {
     return await this.taskReadService.getTaskChain(actor, taskId);
   }

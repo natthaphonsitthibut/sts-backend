@@ -37,7 +37,7 @@ export class CaseController {
   ) {}
 
   @UseGuards(AuthGuard, PermissionsGuard)
-  @RequirePermission('dashboard')
+  @RequirePermission('case:assign')
   @Post()
   @HttpCode(HttpStatus.OK)
   async openCase(@Body() body: OpenCaseDto, @CurrentUser() actor?: AuthenticatedRequestUser) {
@@ -63,7 +63,7 @@ export class CaseController {
 
   /** ส่งลิงก์ผ่าน LINE: one round's link, straight to its assigned teacher. */
   @UseGuards(AuthGuard, PermissionsGuard)
-  @RequirePermission('dashboard')
+  @RequirePermission('case:assign')
   @Post(':caseId/rounds/:taskId/send-line')
   @HttpCode(HttpStatus.OK)
   async sendRoundLine(
@@ -76,7 +76,7 @@ export class CaseController {
   }
 
   @UseGuards(AuthGuard, PermissionsGuard)
-  @RequirePermission('dashboard')
+  @RequirePermission('case:assign')
   @Post(':caseId/cancel-assignment')
   @HttpCode(HttpStatus.OK)
   async cancelCaseAssignment(
@@ -88,7 +88,7 @@ export class CaseController {
   }
 
   @UseGuards(AuthGuard, PermissionsGuard)
-  @RequirePermission('dashboard')
+  @RequirePermission('case:review')
   @Post(':caseId/review')
   async reviewCase(
     @Param('caseId', ParseIntPipe) caseId: number,

@@ -14,6 +14,7 @@ describe('AuditLogController', () => {
     expect(classGuards).toEqual([AuthGuard, PermissionsGuard]);
     expect(Reflect.getMetadata(ANY_PERMISSIONS_KEY, listHandler)).toEqual([
       'audit-log',
+      'audit-log:all',
       'import-data',
       'students',
       // The link detail screen embeds the panel and is guarded by รายงานสถานะ
@@ -22,6 +23,7 @@ describe('AuditLogController', () => {
     ]);
     expect(Reflect.getMetadata(ANY_PERMISSIONS_KEY, getByIdHandler)).toEqual([
       'audit-log',
+      'audit-log:all',
       'import-data',
       'students',
       // The link detail screen embeds the panel and is guarded by รายงานสถานะ

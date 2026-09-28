@@ -1,9 +1,13 @@
-import { APP_PAGES } from './page-registry.constants';
+import { APP_PAGES, CASE_ACTION_PERMISSIONS } from './page-registry.constants';
 import {
+  AREA_ADMIN_DEFAULT_PERMISSIONS,
   AREA_ROLE_TEMPLATES,
+  DIRECTOR_DEFAULT_PERMISSIONS,
+  EXECUTIVE_DEFAULT_PERMISSIONS,
   hasPermission,
   isRestrictedExecutive,
   PERMISSION_CATALOG,
+  SCHOOL_ADMIN_DEFAULT_PERMISSIONS,
   SCHOOL_ROLE_TEMPLATES,
   SYSTEM_ROLE_DEFINITIONS,
 } from './permissions.constants';
@@ -38,17 +42,39 @@ describe('hasPermission', () => {
     expect(isRestrictedExecutive({ roles: ['EXECUTIVE', 'DIRECTOR'] })).toBe(false);
   });
 
-  it('gives ADMIN every grantable permission except the opt-in pages', () => {
+  it('gives ADMIN every grantable permission except the opt-in pages and the case actions', () => {
     const admin = SYSTEM_ROLE_DEFINITIONS.find((role) => role.name === 'ADMIN');
     const optIn = new Set(
       APP_PAGES.filter((page) => page.defaultPolicy === 'opt-in').map((page) => page.id),
     );
+    const caseActions = new Set<string>(CASE_ACTION_PERMISSIONS);
     const expected = PERMISSION_CATALOG.map((permission) => permission.id).filter(
-      (id) => !optIn.has(id),
+      (id) => !optIn.has(id) && !caseActions.has(id),
     );
 
     expect(optIn.has('attendance')).toBe(true);
     expect(admin?.default_permissions).toEqual(expected);
+    expect(admin?.default_permissions).toEqual(
+      expect.arrayContaining(['dashboard', 'audit-log:all']),
+    );
+  });
+
+  it('gives the case actions to ผอ. only, and the whole log to admins only', () => {
+    expect(DIRECTOR_DEFAULT_PERMISSIONS).toEqual(
+      expect.arrayContaining(['dashboard', 'case:assign', 'case:review']),
+    );
+    expect(DIRECTOR_DEFAULT_PERMISSIONS).not.toContain('audit-log:all');
+    expect(SCHOOL_ADMIN_DEFAULT_PERMISSIONS).toEqual(
+      expect.arrayContaining(['dashboard', 'audit-log:all']),
+    );
+    for (const defaults of [
+      SCHOOL_ADMIN_DEFAULT_PERMISSIONS,
+      AREA_ADMIN_DEFAULT_PERMISSIONS,
+      EXECUTIVE_DEFAULT_PERMISSIONS,
+    ]) {
+      expect(defaults).not.toContain('case:assign');
+      expect(defaults).not.toContain('case:review');
+    }
   });
 
   it('keeps opt-in pages out of every default group', () => {

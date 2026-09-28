@@ -609,27 +609,4 @@ export class TaskLifecycleService {
       return { expired: 0 };
     }
   }
-
-  async deleteTask(taskId: string, actor?: ActorContext, ip?: string | null) {
-    try {
-      const actorId = resolveAuditActorId(actor);
-      const result = await this.taskRepository.deleteTask(taskId, actorId);
-      const rowCount = result.rowCount ?? 0;
-      if (rowCount > 0) {
-        await this.auditLog.record({
-          action: 'TASK_DELETE',
-          actorUserId: actorId,
-          actorLabel: actor?.username,
-          targetType: 'task',
-          targetId: taskId,
-          ip: ip ?? null,
-        });
-      }
-      return { success: true, rowCount };
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      this.logger.error(`deleteTask error: ${message}`);
-      throw err;
-    }
-  }
 }

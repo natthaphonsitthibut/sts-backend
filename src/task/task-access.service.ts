@@ -606,12 +606,16 @@ export class TaskAccessService {
       }
 
       if (
-        !this.taskPolicyService.canManageAdminLink(currentActor, {
-          task_type: typeof link.task_type === 'string' ? link.task_type : null,
-          target_school_id: link.target_school_id,
-          target_room: link.target_room,
-          case_created_by: link.case_created_by,
-        })
+        !this.taskPolicyService.canManageAdminLink(
+          currentActor,
+          {
+            task_type: typeof link.task_type === 'string' ? link.task_type : null,
+            target_school_id: link.target_school_id,
+            target_room: link.target_room,
+            case_created_by: link.case_created_by,
+          },
+          'dashboard',
+        )
       ) {
         throw new ForbiddenException('ไม่มีสิทธิ์ดูลิงก์นี้');
       }

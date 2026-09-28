@@ -74,7 +74,7 @@ export class CaseService {
     actor: AuthenticatedRequestUser,
     requiredPermission: string,
   ): void {
-    if (!this.taskPolicyService.hasPermission(actor, 'dashboard')) {
+    if (!this.taskPolicyService.hasPermission(actor, 'case:review')) {
       throw new ForbiddenException('ไม่มีสิทธิ์ดำเนินการกับเคสนี้');
     }
 
@@ -286,7 +286,7 @@ export class CaseService {
     const currentActor = this.taskPolicyService.ensureActor(actor);
     if (
       isRestrictedExecutive(currentActor) ||
-      !this.taskPolicyService.hasPermission(currentActor, 'dashboard')
+      !this.taskPolicyService.hasPermission(currentActor, 'case:assign')
     ) {
       throw new ForbiddenException('ไม่มีสิทธิ์เปิดเคสนักเรียน');
     }
@@ -487,8 +487,11 @@ export class CaseService {
     actor?: AuthenticatedRequestUser,
   ) {
     const currentActor = this.taskPolicyService.ensureActor(actor);
-    if (isRestrictedExecutive(currentActor)) {
-      throw new ForbiddenException('บัญชีผู้บริหารไม่มีสิทธิ์ดำเนินการกับเคสรายบุคคล');
+    if (
+      isRestrictedExecutive(currentActor) ||
+      !this.taskPolicyService.hasPermission(currentActor, 'case:assign')
+    ) {
+      throw new ForbiddenException('บัญชีนี้ไม่มีสิทธิ์ยกเลิกการมอบหมาย');
     }
     const reason = clean(this.normalizeText(body.cancel_reason)) || null;
     if (!reason) {

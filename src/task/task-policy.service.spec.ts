@@ -34,7 +34,7 @@ describe('TaskPolicyService data scope policy', () => {
           id: 7,
           username: 'case-reviewer',
           roles: ['ADMIN'],
-          permissions: ['dashboard'],
+          permissions: ['dashboard', 'case:assign'],
           data_scope: { school_ids: [10010002] },
         },
         {
@@ -52,7 +52,7 @@ describe('TaskPolicyService data scope policy', () => {
           id: 9,
           username: 'own-case-reviewer',
           roles: ['ADMIN'],
-          permissions: ['dashboard'],
+          permissions: ['dashboard', 'case:assign'],
           data_scope: { own_only: true },
         },
         {
@@ -71,7 +71,7 @@ describe('TaskPolicyService data scope policy', () => {
           id: 9,
           username: 'own-case-reviewer',
           roles: ['ADMIN'],
-          permissions: ['dashboard'],
+          permissions: ['dashboard', 'case:assign'],
           data_scope: { own_only: true },
         },
         {
@@ -83,22 +83,18 @@ describe('TaskPolicyService data scope policy', () => {
     ).toBe(false);
   });
 
-  it('admits visit link management to the รายงานสถานะนักเรียน page', () => {
-    expect(
-      service.canManageAdminLink(
-        {
-          id: 8,
-          username: 'dashboard-only',
-          roles: ['ADMIN'],
-          permissions: ['dashboard'],
-          data_scope: { school_ids: [10010002] },
-        },
-        {
-          task_type: 'VISIT',
-          target_school_id: 10010002,
-        },
-      ),
-    ).toBe(true);
+  it('lets รายงานสถานะนักเรียน read a link but only case:assign change it', () => {
+    const dashboardOnly = {
+      id: 8,
+      username: 'dashboard-only',
+      roles: ['ADMIN'],
+      permissions: ['dashboard'],
+      data_scope: { school_ids: [10010002] },
+    };
+    const link = { task_type: 'VISIT', target_school_id: 10010002 };
+
+    expect(service.canManageAdminLink(dashboardOnly, link)).toBe(false);
+    expect(service.canManageAdminLink(dashboardOnly, link, 'dashboard')).toBe(true);
   });
 
   it.each([
@@ -115,7 +111,7 @@ describe('TaskPolicyService data scope policy', () => {
             id: 9,
             username: 'case-reviewer',
             roles: ['ADMIN'],
-            permissions: ['dashboard'],
+            permissions: ['dashboard', 'case:assign'],
             data_scope: dataScope,
           },
           { task_type: 'ASSIST', target_school_id: school, case_created_by: creator },
