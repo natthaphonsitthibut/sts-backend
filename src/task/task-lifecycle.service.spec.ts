@@ -16,7 +16,7 @@ function buildActor(): AuthenticatedRequestUser {
     id: 7,
     username: 'case-admin',
     roles: ['ADMIN'],
-    permissions: ['dashboard'],
+    permissions: ['dashboard', 'case:assign'],
     data_scope: { school_ids: [10010002] },
   };
 }

@@ -249,7 +249,7 @@ export class TaskPolicyService {
       throw new BadRequestException('ประเภทลิงก์นี้ถูกยกเลิกแล้ว');
     }
 
-    if (!this.hasPermission(actor, 'dashboard')) {
+    if (!this.hasPermission(actor, 'case:assign')) {
       throw new ForbiddenException('ไม่มีสิทธิ์สร้างรายการนี้');
     }
   }
@@ -346,13 +346,16 @@ export class TaskPolicyService {
       target_room?: unknown;
       case_created_by?: unknown;
     },
+    // Changing a round's link is a case action (`case:assign`); reading its
+    // detail only needs the case page (`dashboard`).
+    permission: 'case:assign' | 'dashboard' = 'case:assign',
   ): boolean {
     const taskType = typeof link.task_type === 'string' ? link.task_type.trim() : '';
 
     // Both remaining link types come from a case round and are created under the
     // same rule (`assertCanCreateTask`), so whoever can issue one can manage it.
     if (taskType === 'VISIT' || taskType === 'ASSIST') {
-      if (!this.hasPermission(actor, 'dashboard')) {
+      if (!this.hasPermission(actor, permission)) {
         return false;
       }
 

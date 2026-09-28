@@ -119,7 +119,7 @@ describe('CaseService', () => {
               targetStatus: 'RESOLVED',
               requiresResolutionOutcome: false,
               completionOutcomeCode: 'REFERRED_AGENCY',
-              requiredPermission: 'dashboard',
+              requiredPermission: 'case:review',
               availablePhaseCode: null,
               targetWorkflowPhaseCode: null,
             });
@@ -131,7 +131,7 @@ describe('CaseService', () => {
               targetStatus: 'RESOLVED',
               requiresResolutionOutcome: false,
               completionOutcomeCode: 'CLOSED',
-              requiredPermission: 'dashboard',
+              requiredPermission: 'case:review',
               availablePhaseCode: null,
               targetWorkflowPhaseCode: null,
             });
@@ -143,7 +143,7 @@ describe('CaseService', () => {
               targetStatus: 'OPEN',
               requiresResolutionOutcome: false,
               completionOutcomeCode: null,
-              requiredPermission: 'dashboard',
+              requiredPermission: 'case:review',
               availablePhaseCode: null,
               targetWorkflowPhaseCode: 'ASSISTANCE',
             });
@@ -166,7 +166,7 @@ describe('CaseService', () => {
 
   it('opens one scoped case from the authoritative student record', async () => {
     const studentId = '11111111-1111-4111-8111-111111111111';
-    const actor = buildActor(['dashboard']);
+    const actor = buildActor(['dashboard', 'case:assign', 'case:review']);
 
     const result = await service.openCase(
       { student_id: studentId, reason: '  ต้องติดตามเรื่องการมาเรียน  ' },
@@ -238,7 +238,7 @@ describe('CaseService', () => {
         student_id: '11111111-1111-4111-8111-111111111111',
         reason: 'ติดตามต่อ',
       },
-      buildActor(['dashboard']),
+      buildActor(['dashboard', 'case:assign', 'case:review']),
     );
 
     expect(result.created).toBe(false);
@@ -328,7 +328,7 @@ describe('CaseService', () => {
           student_id: '11111111-1111-4111-8111-111111111111',
           reason: 'ติดตามต่อ',
         },
-        buildActor(['dashboard']),
+        buildActor(['dashboard', 'case:assign', 'case:review']),
       ),
     ).rejects.toBeInstanceOf(NotFoundException);
 
@@ -358,7 +358,7 @@ describe('CaseService', () => {
         referral_agency_id: 12,
         reviewed_by: 'client-forged-reviewer',
       },
-      buildActor(['dashboard']),
+      buildActor(['dashboard', 'case:assign', 'case:review']),
     );
 
     expect(result.case_status).toBe('RESOLVED');
@@ -399,7 +399,7 @@ describe('CaseService', () => {
           review_note: 'ส่งต่อเพื่อดูแลต่อ',
           referral_agency_id: 12,
         },
-        buildActor(['dashboard']),
+        buildActor(['dashboard', 'case:assign', 'case:review']),
       ),
     ).resolves.toEqual(expect.objectContaining({ success: true, case_status: 'RESOLVED' }));
     expect(taskRepository.transitionPendingReviewCase).toHaveBeenCalled();
@@ -411,7 +411,7 @@ describe('CaseService', () => {
       service.reviewCase(
         10,
         { review_action: 'REFER_AGENCY', review_note: '' },
-        buildActor(['dashboard']),
+        buildActor(['dashboard', 'case:assign', 'case:review']),
       ),
     ).rejects.toBeInstanceOf(BadRequestException);
 
@@ -434,7 +434,7 @@ describe('CaseService', () => {
         review_action: 'CLOSE',
         review_note: 'ตรวจรายงานแล้ว ปิดเคสได้',
       },
-      buildActor(['dashboard', 'dashboard']),
+      buildActor(['dashboard', 'case:review']),
     );
 
     expect(result.case_status).toBe('RESOLVED');
@@ -478,7 +478,7 @@ describe('CaseService', () => {
         review_note: 'ควรให้ทุนการศึกษา',
         assistance_measure_codes: ['SCHOLARSHIP'],
       },
-      buildActor(['dashboard']),
+      buildActor(['dashboard', 'case:assign', 'case:review']),
     );
 
     expect(result.case_status).toBe('OPEN');
@@ -514,7 +514,7 @@ describe('CaseService', () => {
           review_note: 'ช่วยเหลือรอบสอง',
           assistance_measure_codes: ['SCHOLARSHIP'],
         },
-        buildActor(['dashboard']),
+        buildActor(['dashboard', 'case:assign', 'case:review']),
       ),
     ).resolves.toMatchObject({ case_status: 'OPEN' });
     expect(taskRepository.transitionPendingReviewCase).toHaveBeenCalledWith(
@@ -544,7 +544,7 @@ describe('CaseService', () => {
           review_note: 'ปิดเคส',
           resolution_outcome: 'RETURNED_TO_SCHOOL',
         },
-        buildActor(['dashboard']),
+        buildActor(['dashboard', 'case:assign', 'case:review']),
       ),
     ).rejects.toBeInstanceOf(BadRequestException);
 
@@ -579,12 +579,34 @@ describe('CaseService', () => {
     expect(taskRepository.findCaseById).not.toHaveBeenCalled();
   });
 
+  // รายงานสถานะนักเรียน reads cases; acting on one is `case:assign` / `case:review`,
+  // which a ผู้ดูแลระบบ group does not carry by default (owner, 2026-09-28).
+  it('keeps a dashboard-only account from reviewing, opening or withdrawing', async () => {
+    const reader = buildActor(['dashboard'], { roles: ['S10010002_BASE_ADMIN'] });
+
+    await expect(
+      service.reviewCase(10, { review_action: 'CLOSE', review_note: 'อ่านอย่างเดียว' }, reader),
+    ).rejects.toBeInstanceOf(ForbiddenException);
+    await expect(
+      service.openCase(
+        { student_id: '11111111-1111-4111-8111-111111111111', reason: 'อ่านอย่างเดียว' },
+        reader,
+      ),
+    ).rejects.toBeInstanceOf(ForbiddenException);
+    await expect(
+      service.cancelCaseAssignment(10, { cancel_reason: 'อ่านอย่างเดียว' }, reader),
+    ).rejects.toBeInstanceOf(ForbiddenException);
+
+    expect(taskRepository.findCaseById).not.toHaveBeenCalled();
+    expect(taskRepository.withTransaction).not.toHaveBeenCalled();
+  });
+
   it('rejects the retired FORWARD action before mutating', async () => {
     await expect(
       service.reviewCase(
         10,
         { review_action: 'FORWARD', review_note: 'legacy request' },
-        buildActor(['dashboard']),
+        buildActor(['dashboard', 'case:assign', 'case:review']),
       ),
     ).rejects.toThrow('การดำเนินการกับเคสไม่ถูกต้อง');
 

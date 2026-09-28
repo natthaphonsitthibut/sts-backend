@@ -95,6 +95,18 @@ export const APP_PAGES: AppPageDefinition[] = [
  */
 export const NON_PAGE_PERMISSIONS: Array<{ id: string; title: string }> = [
   { id: 'audit-log', title: 'บันทึกการใช้งาน' },
+  // The whole log (every event type) is the ผู้ดูแลระบบ's page; `audit-log`
+  // alone opens only the history panels on the pages an account already has
+  // (owner, 2026-09-28).
+  { id: 'audit-log:all', title: 'บันทึกการใช้งานทั้งหมด' },
+  // Acting on a case is separate from reading it: รายงานสถานะนักเรียน (`dashboard`)
+  // lets an account open a case, and only these let it change one — so a menu
+  // group can read cases without assigning or reviewing them (owner, 2026-09-28).
+  { id: 'case:assign', title: 'มอบหมายการติดตามและการช่วยเหลือ' },
+  { id: 'case:review', title: 'พิจารณาเคส' },
 ];
+
+/** The case-action permissions, which no council default group starts with. */
+export const CASE_ACTION_PERMISSIONS = ['case:assign', 'case:review'] as const;
 
 export const GRANTABLE_PAGE_PERMISSIONS = APP_PAGES;

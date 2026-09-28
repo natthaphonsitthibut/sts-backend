@@ -26,7 +26,7 @@ export class AuditLogController {
   constructor(private readonly auditLogService: AuditLogService) {}
 
   @Get('actions')
-  @RequireAnyPermission('audit-log', 'import-data', 'students', 'dashboard')
+  @RequireAnyPermission('audit-log', 'audit-log:all', 'import-data', 'students', 'dashboard')
   getActions(
     @Query() query: GetAuditLogActionsQueryDto,
     @CurrentUser() actor: AuthenticatedRequestUser,
@@ -35,13 +35,13 @@ export class AuditLogController {
   }
 
   @Get(':id')
-  @RequireAnyPermission('audit-log', 'import-data', 'students', 'dashboard')
+  @RequireAnyPermission('audit-log', 'audit-log:all', 'import-data', 'students', 'dashboard')
   async getById(@Param('id') id: string, @CurrentUser() actor: AuthenticatedRequestUser) {
     return await this.auditLogService.getById(actor, id);
   }
 
   @Get()
-  @RequireAnyPermission('audit-log', 'import-data', 'students', 'dashboard')
+  @RequireAnyPermission('audit-log', 'audit-log:all', 'import-data', 'students', 'dashboard')
   async list(@Query() query: GetAuditLogQueryDto, @CurrentUser() actor: AuthenticatedRequestUser) {
     return await this.auditLogService.list(actor, {
       ...query,

@@ -1,6 +1,7 @@
 import { normalizeScopeArray, type DataScope } from './auth.types';
 import {
   APP_PAGES,
+  CASE_ACTION_PERMISSIONS,
   GRANTABLE_PAGE_PERMISSIONS,
   NON_PAGE_PERMISSIONS,
 } from './page-registry.constants';
@@ -91,7 +92,12 @@ const OPT_IN_PAGE_IDS: ReadonlySet<string> = new Set(
 // Council ผู้ดูแลระบบ holds every page — "แอดมินสภาก็คงทำได้ทุกอย่าง" (owner,
 // 2026-09-25) — so it can build any school's accounts and menu groups. Opt-in
 // pages (เช็กชื่อ) are the exception: no default group has them (owner, 2026-09-26).
-const ADMIN_DEFAULT_PERMISSIONS = VALID_PERMISSION_IDS.filter((id) => !OPT_IN_PAGE_IDS.has(id));
+// Neither are the case actions: an admin reads cases, the school's ผอ. assigns
+// and reviews them (owner, 2026-09-28).
+const COUNCIL_EXCLUDED_DEFAULTS: ReadonlySet<string> = new Set(CASE_ACTION_PERMISSIONS);
+const ADMIN_DEFAULT_PERMISSIONS = VALID_PERMISSION_IDS.filter(
+  (id) => !OPT_IN_PAGE_IDS.has(id) && !COUNCIL_EXCLUDED_DEFAULTS.has(id),
+);
 
 /**
  * The four default menu groups, one per sidebar mockup the owner supplied on
@@ -116,6 +122,7 @@ export const SCHOOL_ADMIN_DEFAULT_PERMISSIONS = [
   'import-data',
   'export-data',
   'audit-log',
+  'audit-log:all',
 ];
 
 /** ผอ. reads lists; managing them is the school admin's (owner, 2026-09-22). */
@@ -128,6 +135,9 @@ export const DIRECTOR_DEFAULT_PERMISSIONS = [
   // ส่งออกข้อมูล only — not นำเข้า (owner, 2026-09-25).
   'export-data',
   'audit-log',
+  // The case workflow is the ผอ.'s: assign and review (owner, 2026-09-28).
+  'case:assign',
+  'case:review',
 ];
 
 // แชตบอท is ผู้บริหาร's alone — not ผอ. (owner, 2026-09-25).

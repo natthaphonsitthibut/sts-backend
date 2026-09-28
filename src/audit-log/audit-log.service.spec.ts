@@ -39,7 +39,7 @@ describe('AuditLogService', () => {
     );
   });
 
-  it('serves the whole log to council admins only, inside their scope', async () => {
+  it('serves the whole log to บันทึกการใช้งานทั้งหมด holders only, inside their scope', async () => {
     const queries: Array<{ sql: string; params?: unknown[] }> = [];
     const queryRunner = {
       connect: jest.fn().mockResolvedValue(undefined),
@@ -54,7 +54,7 @@ describe('AuditLogService', () => {
       id: 2,
       username: 'district.admin',
       roles: ['A5001_BASE_ADMIN'],
-      permissions: ['audit-log'],
+      permissions: ['audit-log:all'],
       data_scope: { provinces: ['เชียงใหม่'], districts: ['เมืองเชียงใหม่'] },
     };
 
@@ -65,17 +65,25 @@ describe('AuditLogService', () => {
     );
     expect(queries[0].params).toContainEqual(['เชียงใหม่']);
 
+    // A school ผู้ดูแลระบบ holds it too (owner, 2026-09-28), fenced to its school.
     const schoolAdmin = {
       ...areaAdmin,
       roles: ['S10010004_BASE_ADMIN'],
       data_scope: { school_ids: [10010004] },
     };
+    await service.list(schoolAdmin, { domain: 'all', page: 1, limit: 20 });
+    expect(queries[queries.length - 1].params).toContainEqual(['10010004']);
+
+    // `audit-log` alone (the ผอ.'s history panels) does not open the whole log.
     await expect(
-      service.list(schoolAdmin, { domain: 'all', page: 1, limit: 20 }),
+      service.list(
+        { ...schoolAdmin, roles: ['S10010004_BASE_DIRECTOR'], permissions: ['audit-log'] },
+        { domain: 'all', page: 1, limit: 20 },
+      ),
     ).rejects.toBeInstanceOf(ForbiddenException);
     await expect(
       service.list(
-        { ...areaAdmin, roles: ['A5001_BASE_EXECUTIVE'] },
+        { ...areaAdmin, roles: ['A5001_BASE_EXECUTIVE'], permissions: ['dashboard'] },
         { domain: 'all', page: 1, limit: 20 },
       ),
     ).rejects.toBeInstanceOf(ForbiddenException);
