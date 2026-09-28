@@ -267,9 +267,17 @@ export class ClassroomAttendanceLinksRepository {
         ON teacher.id = membership.teacher_id
        AND teacher.teacher_status = 'ACTIVE'
        AND teacher.deleted_at IS NULL
-      LEFT JOIN classroom_attendance_links link
-        ON link.teacher_membership_id = membership.id
-       AND link.school_term_id = term.id
+      -- One row per teacher: a closed link stays on record when a new one is
+      -- issued beside it, so pick the live link, else the most recent one.
+      LEFT JOIN LATERAL (
+        SELECT candidate.*
+        FROM classroom_attendance_links candidate
+        WHERE candidate.teacher_membership_id = membership.id
+          AND candidate.school_term_id = term.id
+        ORDER BY (candidate.link_status = 'ACTIVE') DESC,
+                 candidate.issued_at DESC, candidate.id DESC
+        LIMIT 1
+      ) link ON TRUE
       LEFT JOIN LATERAL (
         SELECT
           COUNT(DISTINCT assignment.classroom_id)::int AS classroom_count,

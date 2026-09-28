@@ -34,7 +34,10 @@ describe('ClassroomAttendanceLinksRepository', () => {
     expect(sql).toContain('school.id = ANY($3::int[])');
     expect(sql).toContain('LIMIT $');
     expect(sql).toContain('FROM school_teacher_memberships membership');
-    expect(sql).toContain('LEFT JOIN classroom_attendance_links link');
+    // A closed link stays on record beside its replacement: one row per teacher.
+    expect(sql).toContain('FROM classroom_attendance_links candidate');
+    expect(sql).toContain(') link ON TRUE');
+    expect(sql).toMatch(/ORDER BY \(candidate\.link_status = 'ACTIVE'\) DESC[\s\S]*LIMIT 1/);
   });
 
   it('filters room rows by link creation and displayed homeroom state on the server', async () => {
@@ -54,7 +57,7 @@ describe('ClassroomAttendanceLinksRepository', () => {
     const calls = runner.query.mock.calls as unknown as Array<[string, unknown[] | undefined]>;
     expect(calls[0][0]).toContain('classroom.grade_level_id = $4');
     expect(calls[0][0]).toContain('link.id IS NULL');
-    expect(calls[1][0]).toContain('LEFT JOIN classroom_attendance_links link');
+    expect(calls[1][0]).toContain(') link ON TRUE');
   });
 
   it('applies grade and room scope to assignment-link review queries', async () => {
