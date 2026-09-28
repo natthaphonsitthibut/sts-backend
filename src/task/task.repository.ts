@@ -1375,19 +1375,6 @@ export class TaskRepository {
     return result.rows;
   }
 
-  async deleteTask(taskId: string, actorId?: number | null): Promise<QueryResultLike> {
-    return await this.withTransaction(async (executor) => {
-      await executor.query(
-        `UPDATE task_links SET deleted_at = now(), deleted_by = $2 WHERE task_id = $1 AND deleted_at IS NULL`,
-        [taskId, actorId ?? null],
-      );
-      return await executor.query(
-        `UPDATE tasks SET deleted_at = now(), deleted_by = $2 WHERE id = $1 AND deleted_at IS NULL`,
-        [taskId, actorId ?? null],
-      );
-    });
-  }
-
   async findTaskChainTask(taskId: string, actor?: ActorContext): Promise<QueryResultRow | null> {
     const scopeQuery = this.buildCaseScopeQuery(actor, 2);
     const scopeSql = scopeQuery.sql ? ` AND ${scopeQuery.sql}` : '';
@@ -1814,8 +1801,8 @@ export class TaskRepository {
   /**
    * Lock a link row and confirm the link + its parent task are both live.
    * Returns null if either is tombstoned. Call at the start of a submit/write
-   * transaction so an admin delete that commits after token validation can't be
-   * raced: deleteTask's UPDATE and this `FOR UPDATE` serialize on the same row.
+   * transaction so a tombstone that commits after token validation can't be
+   * raced: the tombstoning UPDATE and this `FOR UPDATE` serialize on the same row.
    */
   async lockLiveTaskLink(linkId: string, executor: QueryExecutor): Promise<QueryResultRow | null> {
     const result = await executor.query(
