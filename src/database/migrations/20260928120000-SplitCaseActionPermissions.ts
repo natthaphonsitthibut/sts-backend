@@ -9,7 +9,8 @@ import type { MigrationInterface, QueryRunner } from 'typeorm';
  *
  * Default groups gain their new permissions, then every account's materialised
  * `users.permissions` is reset to its group's defaults — except `newnewnew`, the
- * owner's sandbox account, which keeps what it has and gains all three.
+ * owner's sandbox account, which keeps what it has and gains every permission
+ * the catalogue offers — the three new ones and the opt-in เช็กชื่อ page.
  * `case_review_actions` buttons now ask for `case:review`.
  *
  * Data only: no table or column changes. Before this runs every account's
@@ -20,6 +21,8 @@ const NEW_PERMISSIONS = ['case:assign', 'case:review', 'audit-log:all'];
 const DIRECTOR_ADDED = ['case:assign', 'case:review'];
 const ADMIN_ADDED = ['audit-log:all'];
 const SANDBOX_USERNAME = 'newnewnew';
+// The sandbox holds everything: every default page already, plus these.
+const SANDBOX_ADDED = [...NEW_PERMISSIONS, 'attendance'];
 
 const appendMissing = (column: string) => `
   ${column} || COALESCE((
@@ -64,7 +67,7 @@ export class SplitCaseActionPermissions20260928120000 implements MigrationInterf
       SET permissions = ${appendMissing("COALESCE(permissions, '[]'::jsonb)")}
       WHERE username = $2
     `,
-      [JSON.stringify(NEW_PERMISSIONS), SANDBOX_USERNAME],
+      [JSON.stringify(SANDBOX_ADDED), SANDBOX_USERNAME],
     );
     await queryRunner.query(`
       UPDATE case_review_actions
@@ -74,6 +77,14 @@ export class SplitCaseActionPermissions20260928120000 implements MigrationInterf
   }
 
   public async down(queryRunner: QueryRunner): Promise<void> {
+    await queryRunner.query(
+      `
+      UPDATE users
+      SET permissions = permissions - 'attendance'
+      WHERE username = $1
+    `,
+      [SANDBOX_USERNAME],
+    );
     await queryRunner.query(`
       UPDATE case_review_actions
       SET required_permission_code = 'dashboard'
