@@ -22,6 +22,13 @@ import { AraIdService } from '../araid/araid.service';
 import { GoogleOidcProvider } from '../classroom-attendance-links/google-oidc.provider';
 import { googleLoginConfig } from '../config/google-login.config';
 import { ScopedGoogleLoginStateStore } from '../google-login/scoped-google-login-state.store';
+import { encodeMediaVersion } from '../common/utils/media-version.util';
+import { mapFollowUpHistoryRow } from './follow-up-history.mapper';
+import {
+  FILE_STORAGE_ADAPTER,
+  type FileServeResult,
+  type FileStorageAdapter,
+} from '../files/storage/file-storage.types';
 
 /** Every AraID challenge in this service belongs to a follow-up/assistance link. */
 const ARAID_SCOPE: AraIdChallengeScope = 'task-link';
@@ -58,7 +65,29 @@ export class TaskAccessService {
     private readonly googleStates: ScopedGoogleLoginStateStore,
     @Inject(googleLoginConfig.KEY)
     private readonly googleConfig: ConfigType<typeof googleLoginConfig>,
+    @Inject(FILE_STORAGE_ADAPTER)
+    private readonly storage: FileStorageAdapter,
   ) {}
+
+  /**
+   * The student's photo for a follow-up link, behind the same gate as the rest
+   * of the student's details: an open link whose identity check has passed.
+   */
+  async resolveStudentPhoto(token: string, sessionToken?: string): Promise<FileServeResult> {
+    const task = await this.getTaskByToken(token, sessionToken);
+    if (!task || 'error' in task || task.auth_required !== false) {
+      throw new NotFoundException('ไม่พบรูปประจำตัวนักเรียน');
+    }
+    const caseData = await this.taskRepository.findCaseByTaskId(String(task.task_id));
+    const storageKey =
+      typeof caseData?.student_photo_storage_key === 'string'
+        ? caseData.student_photo_storage_key
+        : null;
+    if (!storageKey) throw new NotFoundException('ไม่พบรูปประจำตัวนักเรียน');
+    const result = await this.storage.resolve(storageKey);
+    if (!result) throw new NotFoundException('ไม่พบรูปประจำตัวนักเรียน');
+    return result;
+  }
 
   async startGoogleAuthorization(token: string): Promise<{ authorizationUrl: string }> {
     const link = await this.findUsableLinkForVerification(token);
@@ -413,6 +442,14 @@ export class TaskAccessService {
         result.semester = caseData?.semester || null;
         result.student_grade = caseData?.grade || null;
         result.student_room = caseData?.room || null;
+        // Same shape as every other photo: a versioned API path whose handler
+        // checks the caller, then hands back a short-lived signed URL.
+        result.student_photo_url =
+          typeof caseData?.student_photo_storage_key === 'string'
+            ? `/api/tasks/${encodeURIComponent(token)}/student-photo?v=${encodeMediaVersion(
+                caseData.student_photo_updated_at,
+              )}`
+            : null;
         const caseId = Number(caseData?.id);
         result.contact_channels = Number.isInteger(caseId)
           ? (await this.taskRepository.listPublicCaseContactChannels(caseId)).map((row) => ({
@@ -425,25 +462,9 @@ export class TaskAccessService {
             }))
           : [];
         result.follow_up_history = Number.isInteger(caseId)
-          ? (await this.taskRepository.listPublicCaseFollowUpHistory(caseId, 5)).map((row) => ({
-              assigned_to_name:
-                typeof row.assigned_to_name === 'string' ? row.assigned_to_name : null,
-              visited_at: row.visited_at ?? null,
-              submitted_at: row.submitted_at ?? null,
-              assignment_starts_at: row.assignment_starts_at ?? null,
-              assignment_ends_at: row.assignment_ends_at ?? null,
-              assignment_note: typeof row.assignment_note === 'string' ? row.assignment_note : null,
-              cause_detail: typeof row.cause_detail === 'string' ? row.cause_detail : null,
-              follow_up_problem_category_label:
-                typeof row.follow_up_problem_category_label === 'string'
-                  ? row.follow_up_problem_category_label
-                  : null,
-              follow_up_problem_category_guidance:
-                typeof row.follow_up_problem_category_guidance === 'string'
-                  ? row.follow_up_problem_category_guidance
-                  : null,
-              exception_label: typeof row.exception_label === 'string' ? row.exception_label : null,
-            }))
+          ? (await this.taskRepository.listStudentFollowUpHistory(caseId, 5)).map(
+              mapFollowUpHistoryRow,
+            )
           : [];
         if (link.task_type === 'VISIT' && Number.isInteger(caseId)) {
           const prefill = await this.taskRepository.findRepeatVisitPrefill(

@@ -1232,7 +1232,9 @@ export class TaskRepository {
         enrollment."AcademicYear_Onec" AS academic_year,
         enrollment."Semester_Onec" AS semester,
         grade.label AS grade,
-        enrollment."RoomID_Onec"::text AS room
+        enrollment."RoomID_Onec"::text AS room,
+        person.photo_storage_key AS student_photo_storage_key,
+        person.updated_at AS student_photo_updated_at
       FROM cases c
       JOIN tasks t ON t.case_id = c.id
       LEFT JOIN case_workflow_statuses case_status ON case_status.code = c.status
@@ -1251,6 +1253,7 @@ export class TaskRepository {
           current_enrollment."Semester_Onec" DESC NULLS LAST
         LIMIT 1
       ) enrollment ON true
+      LEFT JOIN student_person person ON person.person_uuid = enrollment.person_uuid
       LEFT JOIN grade_levels grade ON grade.id = enrollment."GradeLevelID_Onec"
       WHERE t.id = $1 AND c.deleted_at IS NULL AND t.deleted_at IS NULL
       `,
@@ -1260,7 +1263,12 @@ export class TaskRepository {
     return result.rows[0] || null;
   }
 
-  async listPublicCaseFollowUpHistory(caseId: number, limit = 5): Promise<QueryResultRow[]> {
+  /**
+   * The student's last visits across every case they have had, not only the
+   * case this link belongs to: a new case opened after an old one closed would
+   * otherwise start with an empty history and hide that someone already went.
+   */
+  async listStudentFollowUpHistory(caseId: number, limit = 5): Promise<QueryResultRow[]> {
     const normalizedLimit = Number.isFinite(limit) ? Math.trunc(limit) : 5;
     const boundedLimit = Math.max(1, Math.min(normalizedLimit, 5));
     const result = await this.query<QueryResultRow>(
@@ -1287,7 +1295,19 @@ export class TaskRepository {
         ON problem_category.code = submission.follow_up_problem_category_code
       LEFT JOIN home_visit_exception_options exception
         ON exception.code = submission.home_visit_exception_code
-      WHERE task.case_id = $1
+      -- A case names one term's enrollment, so the student's other cases are
+      -- found through the person behind it; the current case always counts.
+      WHERE task.case_id IN (
+          SELECT sibling.id
+          FROM cases current_case
+          JOIN student_term current_term ON current_term.student_uuid = current_case.student_uuid
+          JOIN student_term sibling_term ON sibling_term.person_uuid = current_term.person_uuid
+          JOIN cases sibling ON sibling.student_uuid = sibling_term.student_uuid
+          WHERE current_case.id = $1
+            AND sibling.deleted_at IS NULL
+          UNION
+          SELECT $1::int
+        )
         AND task.task_type = 'VISIT'
         AND task.deleted_at IS NULL
       ORDER BY submission.submitted_at DESC, submission.id DESC

@@ -86,6 +86,32 @@ export class TaskController {
     return task;
   }
 
+  /**
+   * The student's photo on a follow-up link. The link's identity session rides
+   * in the same header the form's other calls use, so the page fetches it as a
+   * blob; the response is a redirect to a short-lived signed URL (or the file,
+   * on local disk), never cached.
+   */
+  @Public()
+  @Get(':token/student-photo')
+  async getStudentPhoto(
+    @Param('token') token: string,
+    @Req() req: Request,
+    @Res() res: Response,
+  ): Promise<void> {
+    res.setHeader('Cache-Control', 'no-store');
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    const result = await this.taskService.resolveStudentPhoto(
+      token,
+      getHeaderValue(req.headers['x-magic-session']),
+    );
+    if (result.kind === 'redirect') {
+      res.redirect(302, result.url);
+      return;
+    }
+    res.sendFile(result.filePath);
+  }
+
   @Get(':taskId/chain')
   @UseGuards(AuthGuard)
   async getTaskChain(

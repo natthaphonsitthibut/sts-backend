@@ -37,6 +37,10 @@ export class TaskService {
     await this.taskSubmissionService.assertVisitSubmissionAccess(token, sessionToken);
   }
 
+  resolveStudentPhoto(token: string, sessionToken?: string) {
+    return this.taskAccessService.resolveStudentPhoto(token, sessionToken);
+  }
+
   async getTaskByToken(token: string, sessionToken?: string) {
     const result = await this.taskAccessService.getTaskByToken(token, sessionToken);
     if (!result || typeof result !== 'object') {
