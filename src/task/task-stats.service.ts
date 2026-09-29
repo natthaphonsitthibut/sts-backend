@@ -254,10 +254,6 @@ export class TaskStatsService {
         },
         thresholds,
       );
-      // 20260821090000-CollapsePermissionsToPages folded the retired
-      // `manage-student-observations` id into the `students` page, so the old
-      // id no longer exists on any actor and gated the column off for everyone.
-      const canViewTeacherComments = currentActor.permissions.includes('students');
       if (missingProfileCount && missingProfileCount > 0) {
         this.logger.warn(
           `Risk dashboard has ${missingProfileCount} active enrollment(s) without risk profiles`,
@@ -297,13 +293,13 @@ export class TaskStatsService {
           latestCaseAt: row.latest_case_at,
           latestCaseMagicLink: row.latest_case_magic_link ?? null,
           latestCaseHadAssignment: Boolean(row.latest_case_had_assignment),
-          problemCategoryLabel: canViewTeacherComments
-            ? (row.problem_category_label ?? null)
-            : null,
-          concernLevelCode: canViewTeacherComments ? (row.concern_level_code ?? null) : null,
-          concernLevelLabel: canViewTeacherComments ? (row.concern_level_label ?? null) : null,
-          commentCount: canViewTeacherComments ? Number(row.comment_count ?? 0) : 0,
-          teacherComment: canViewTeacherComments ? (row.teacher_comment ?? null) : null,
+          problemCategoryLabel: row.problem_category_label ?? null,
+          concernLevelCode: row.concern_level_code ?? null,
+          concernLevelLabel: row.concern_level_label ?? null,
+          commentCount: Number(row.comment_count ?? 0),
+          // Teacher comments are part of รายงานสถานะนักเรียน for every `dashboard`
+          // holder, within scope (owner, 2026-09-29).
+          teacherComment: row.teacher_comment ?? null,
         })),
         meta: {
           ...buildPaginationMeta(page, limit, totalCount),
