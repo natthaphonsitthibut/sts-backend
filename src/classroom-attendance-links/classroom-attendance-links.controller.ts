@@ -39,6 +39,7 @@ import { appConfig } from '../config/app.config';
 import { ThrottleTeacherAccess } from '../config/throttle.decorators';
 import { DevelopmentGoogleLoginDto } from '../google-login/dto/development-google-login.dto';
 import {
+  AuthorizeLinkClassroomExportDto,
   BulkCreateClassroomAttendanceLinksDto,
   ClassroomLinkRosterQueryDto,
   ClassroomLinkSessionQueryDto,
@@ -583,6 +584,32 @@ export class ClassroomCheckInAuthController {
       (studentUuid, version) =>
         `/${CLASSROOM_LINK_API_PATH}/student-photo?studentId=${encodeURIComponent(studentUuid)}&v=${version}`,
     );
+  }
+
+  /**
+   * Records a download of the room's history before the browser builds the
+   * file. The same rule as reading that history applies: a standing link owns
+   * its rooms all term, an assignment link covers one lesson and is refused.
+   */
+  @Post('export-events')
+  @ThrottleTeacherAccess()
+  async authorizeExport(
+    @Body() body: AuthorizeLinkClassroomExportDto,
+    @Req() request: Request,
+    @Res({ passthrough: true }) response: Response,
+  ) {
+    this.noStore(response);
+    const authorized = await this.service.authorizeCheckInSession(
+      this.cookies.read(request.headers.cookie),
+    );
+    if (authorized.assignedClassroomSubjectId !== null) {
+      throw new ForbiddenException('ลิงก์มอบหมายดาวน์โหลดประวัติการเช็กชื่อไม่ได้');
+    }
+    const classroomId = await this.service.assertAuthorizedClassroom(authorized, body.classroomId);
+    return await this.schoolStructure.applyClassroomExport(classroomId, body, {
+      actorUserId: null,
+      actorLabel: authorized.teacherDisplayName,
+    });
   }
 
   /**

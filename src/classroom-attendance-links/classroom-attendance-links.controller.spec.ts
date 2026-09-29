@@ -33,6 +33,7 @@ describe('Classroom attendance links controller security metadata', () => {
     'studentPhoto',
     'startSession',
     'submitSession',
+    'authorizeExport',
   ] as const)('marks %s public but IP-throttled', (method) => {
     const handler = Object.getOwnPropertyDescriptor(
       ClassroomCheckInAuthController.prototype,
@@ -106,5 +107,68 @@ describe('classroom link Google callback outcomes', () => {
     await controller.googleCallback({ code: 'c', state: 's' }, response);
 
     expect(redirects[0]).not.toContain('ครู');
+  });
+});
+
+/**
+ * A teacher who reads the room's history through the link can download it too;
+ * the export is recorded against the room the session owns, under the teacher's
+ * name because a link has no account behind it.
+ */
+describe('classroom link attendance export', () => {
+  function buildController(assignedClassroomSubjectId: number | null) {
+    const service = {
+      authorizeCheckInSession: jest.fn().mockResolvedValue({
+        assignedClassroomSubjectId,
+        teacherDisplayName: 'ครูสมศรี ใจดี',
+      }),
+      assertAuthorizedClassroom: jest.fn().mockResolvedValue(385),
+    };
+    const schoolStructure = {
+      applyClassroomExport: jest.fn().mockResolvedValue({ data: { authorized: true } }),
+    };
+    const controller = Object.create(ClassroomCheckInAuthController.prototype) as Record<
+      string,
+      unknown
+    > & {
+      authorizeExport: (body: unknown, request: unknown, response: unknown) => Promise<unknown>;
+    };
+    Object.assign(controller, {
+      service,
+      schoolStructure,
+      cookies: { read: () => 'session-token' },
+    });
+    return { controller, service, schoolStructure };
+  }
+  const body = {
+    classroomId: 385,
+    exportScope: 'ATTENDANCE',
+    format: 'pdf',
+    columns: ['date', 'present'],
+  };
+  const request = { headers: { cookie: 'x' } };
+  const response = { setHeader: () => undefined };
+
+  it('records a standing link export against the session room', async () => {
+    const { controller, service, schoolStructure } = buildController(null);
+
+    await expect(controller.authorizeExport(body, request, response)).resolves.toEqual({
+      data: { authorized: true },
+    });
+
+    expect(service.assertAuthorizedClassroom).toHaveBeenCalledWith(expect.anything(), 385);
+    expect(schoolStructure.applyClassroomExport).toHaveBeenCalledWith(385, body, {
+      actorUserId: null,
+      actorLabel: 'ครูสมศรี ใจดี',
+    });
+  });
+
+  it('refuses an assignment link', async () => {
+    const { controller, schoolStructure } = buildController(12);
+
+    await expect(controller.authorizeExport(body, request, response)).rejects.toBeInstanceOf(
+      ForbiddenException,
+    );
+    expect(schoolStructure.applyClassroomExport).not.toHaveBeenCalled();
   });
 });
