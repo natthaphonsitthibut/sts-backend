@@ -793,6 +793,49 @@ export class ImportsRepository {
     return result.rows.map((row) => row.identifier_normalized);
   }
 
+  /**
+   * Who already holds each student number in these schools' terms, by national
+   * id. A student number is unique per school and term, so a file row whose
+   * number belongs to someone else would fail the write on the unique index.
+   */
+  async findStudentNumberHolders(
+    schoolIds: number[],
+    studentNumbers: string[],
+    executor?: QueryExecutor,
+  ): Promise<
+    Array<{
+      school_id: string;
+      academic_year: string;
+      semester: string;
+      student_number: string;
+      person_id: string | null;
+    }>
+  > {
+    if (schoolIds.length === 0 || studentNumbers.length === 0) return [];
+    const result = await this.getExecutor(executor).query<{
+      school_id: string;
+      academic_year: string;
+      semester: string;
+      student_number: string;
+      person_id: string | null;
+    }>(
+      `SELECT enrollment."SchoolID_Onec"::text AS school_id,
+              enrollment."AcademicYear_Onec"::text AS academic_year,
+              enrollment."Semester_Onec"::text AS semester,
+              enrollment.student_number,
+              identifier.identifier_normalized AS person_id
+       FROM student_term enrollment
+       LEFT JOIN student_person_identifier identifier
+         ON identifier.person_uuid = enrollment.person_uuid
+        AND identifier.identifier_type = 'NATIONAL_ID'
+       WHERE enrollment."SchoolID_Onec" = ANY($1::int[])
+         AND enrollment.student_number = ANY($2::text[])
+         AND enrollment.deleted_at IS NULL`,
+      [schoolIds, studentNumbers],
+    );
+    return result.rows;
+  }
+
   async quarantineImportRow(
     input: {
       batchId: string;

@@ -1501,6 +1501,70 @@ export class ImportsService {
     return JSON.stringify([personId, academicYear, semester, schoolId]);
   }
 
+  /** School, term and student number: what the unique index on student numbers covers. */
+  private studentNumberKey(row: Record<string, unknown>): string | null {
+    const studentNumber = normalizeScalar(row['student_number']);
+    const academicYear = this.normalizePositiveInteger(row['AcademicYear_Onec']);
+    const semester = this.normalizePositiveInteger(row['Semester_Onec']);
+    const schoolId = this.normalizePositiveInteger(row['SchoolID_Onec']);
+    if (!studentNumber || !academicYear || !semester || !schoolId) return null;
+    return JSON.stringify([schoolId, academicYear, semester, studentNumber]);
+  }
+
+  /**
+   * Checks each row's student number against whoever already holds it in that
+   * school and term, and against earlier rows of the same file. The returned
+   * function answers "does this row take someone else's number?" and records
+   * the row, so call it once per row, in file order.
+   */
+  private async studentNumberConflictChecker(
+    rows: Record<string, unknown>[],
+    executor?: QueryExecutor,
+  ): Promise<(row: Record<string, unknown>) => boolean> {
+    const schoolIds = new Set<number>();
+    const numbers = new Set<string>();
+    for (const row of rows) {
+      const schoolId = Number(this.normalizePositiveInteger(row['SchoolID_Onec']));
+      const studentNumber = normalizeScalar(row['student_number']);
+      if (schoolId && studentNumber) {
+        schoolIds.add(schoolId);
+        numbers.add(studentNumber);
+      }
+    }
+    // A file without student numbers has nothing to collide on.
+    if (numbers.size === 0) return () => false;
+    const holders = new Map<string, Set<string>>();
+    for (const holder of await this.importsRepository.findStudentNumberHolders(
+      [...schoolIds],
+      [...numbers],
+      executor,
+    )) {
+      const key = this.studentNumberKey({
+        student_number: holder.student_number,
+        AcademicYear_Onec: holder.academic_year,
+        Semester_Onec: holder.semester,
+        SchoolID_Onec: holder.school_id,
+      });
+      if (!key) continue;
+      const people = holders.get(key) ?? new Set<string>();
+      // A holder without a national id is still someone else.
+      people.add(holder.person_id ? this.normalizeNationalId(holder.person_id) : '');
+      holders.set(key, people);
+    }
+    const claimedInFile = new Map<string, string>();
+    return (row) => {
+      const key = this.studentNumberKey(row);
+      if (!key) return false;
+      const personId = this.normalizeNationalId(row['PersonID_Onec']);
+      const existing = holders.get(key);
+      if (existing && [...existing].some((holder) => holder !== personId)) return true;
+      const claimedBy = claimedInFile.get(key);
+      if (claimedBy !== undefined && claimedBy !== personId) return true;
+      claimedInFile.set(key, personId);
+      return false;
+    };
+  }
+
   private existingStudentTermKey(row: {
     person_id: string;
     academic_year: string;
@@ -1749,6 +1813,14 @@ export class ImportsService {
     const statusLabels = new Map(statuses.map((row) => [Number(row.id), row]));
     const mappedStatusCodes = this.mappedStudentStatusCodes(statuses);
     const seenKeys = new Set<string>();
+    const sampleNumberConflict =
+      validTarget === 'student_term'
+        ? await this.studentNumberConflictChecker(dbRows)
+        : () => false;
+    const countNumberConflict =
+      validTarget === 'student_term'
+        ? await this.studentNumberConflictChecker(dbRows)
+        : () => false;
 
     let rowsReady = 0;
     let duplicateRows = 0;
@@ -1815,6 +1887,10 @@ export class ImportsService {
 
         if (rowKey) {
           seenKeys.add(rowKey);
+        }
+        if (action !== 'quarantine' && sampleNumberConflict(dbRow)) {
+          issues.push('รหัสนักเรียนซ้ำกับนักเรียนคนอื่นในภาคเรียนนี้');
+          action = 'quarantine';
         }
 
         const gradeLevelId = normalizeScalar(dbRow['GradeLevelID_Onec']);
@@ -1910,6 +1986,10 @@ export class ImportsService {
         continue;
       }
       seenKeys.add(rowKey);
+      if (countNumberConflict(dbRow)) {
+        rowsToQuarantine += 1;
+        continue;
+      }
       if (validTarget === 'student_term') {
         const personTermKey = JSON.stringify([
           personId,
@@ -2138,6 +2218,10 @@ export class ImportsService {
           quarantined += 1;
         };
 
+        const takesAnotherStudentNumber =
+          validTarget === 'student_term'
+            ? await this.studentNumberConflictChecker(mappedRows, executor)
+            : () => false;
         for (const [index, dbRow] of mappedRows.entries()) {
           const sourceRowNumber = index + 2;
 
@@ -2177,6 +2261,10 @@ export class ImportsService {
             const gradeRoomIssue = this.gradeRoomIssue(dbRow, knownGradeIds, knownClassroomKeys);
             if (gradeRoomIssue) {
               await quarantine(dbRow, sourceRowNumber, gradeRoomIssue);
+              continue;
+            }
+            if (takesAnotherStudentNumber(dbRow)) {
+              await quarantine(dbRow, sourceRowNumber, 'STUDENT_NUMBER_CONFLICT');
               continue;
             }
             this.applyCanonicalStudentStatus(dbRow, knownStudentStatusCodes);
