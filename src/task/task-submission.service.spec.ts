@@ -21,6 +21,7 @@ describe('TaskSubmissionService', () => {
       | 'insertTaskSubmission'
       | 'insertHomeVisitCareObservations'
       | 'updateCaseAfterSubmission'
+      | 'updateStudentHomeFromVisit'
       | 'insertCaseReview'
       | 'updateTaskStatus'
       | 'updateTaskLinkStatus'
@@ -65,6 +66,7 @@ describe('TaskSubmissionService', () => {
       insertTaskSubmission: jest.fn().mockResolvedValue(71),
       insertHomeVisitCareObservations: jest.fn().mockResolvedValue(undefined),
       updateCaseAfterSubmission: jest.fn().mockResolvedValue(true),
+      updateStudentHomeFromVisit: jest.fn().mockResolvedValue(undefined),
       insertCaseReview: jest.fn().mockResolvedValue(undefined),
       updateTaskStatus: jest.fn().mockResolvedValue(undefined),
       updateTaskLinkStatus: jest.fn().mockResolvedValue(undefined),
@@ -576,6 +578,7 @@ describe('TaskSubmissionService', () => {
       task_id: 'task-1',
       task_type: 'VISIT',
       case_id: 10,
+      student_uuid: '11111111-1111-4111-8111-111111111111',
       assigned_to_name: 'ครูลงพื้นที่',
       student_name: 'เด็ก ทดสอบ',
       school_id: 10010002,
@@ -597,9 +600,24 @@ describe('TaskSubmissionService', () => {
         updated_address_district: 'ดอนเมือง',
         updated_address_sub_district: 'สีกัน',
         updated_postal_code: '10210',
+        updated_lat: 13.9126,
+        updated_lng: 100.6068,
       }),
     );
 
+    expect(taskRepository.updateStudentHomeFromVisit).toHaveBeenCalledWith(
+      {
+        studentUuid: '11111111-1111-4111-8111-111111111111',
+        addressLine: '99/9 หมู่ 5',
+        subDistrict: 'สีกัน',
+        district: 'ดอนเมือง',
+        province: 'กรุงเทพมหานคร',
+        postalCode: '10210',
+        lat: 13.9126,
+        lng: 100.6068,
+      },
+      undefined,
+    );
     expect(taskRepository.insertTaskSubmission).toHaveBeenCalledWith(
       expect.objectContaining({
         addressChanged: true,
