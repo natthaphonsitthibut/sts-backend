@@ -1782,6 +1782,60 @@ export class TaskRepository {
     return (result.rowCount ?? result.rows.length) === 1;
   }
 
+  /**
+   * A visit that found the student at a new address moves the student's own
+   * record with it, so the profile, the next case and the next visit all start
+   * from what the teacher saw. The form takes the street part as one free line,
+   * so it lands in the house-number column and the other street parts clear —
+   * keeping them would glue the old soi/road onto the new address. The pin
+   * comes along when one was set; the address text alone never wipes it.
+   */
+  async updateStudentHomeFromVisit(
+    input: {
+      studentUuid: string;
+      addressLine: string;
+      subDistrict: string;
+      district: string;
+      province: string;
+      postalCode: string;
+      lat: number | null;
+      lng: number | null;
+    },
+    executor?: QueryExecutor,
+  ): Promise<void> {
+    await this.getExecutor(executor).query(
+      `
+        UPDATE student_term
+        SET address_house_no = $2,
+            "VillageNumber_Onec" = NULL,
+            "Trok_Onec" = NULL,
+            "Soi_Onec" = NULL,
+            "Street_Onec" = NULL,
+            "SubDistrictNameThai_Onec" = $3,
+            "DistrictNameThai_Onec" = $4,
+            "ProvinceNameThai_Onec" = $5,
+            "PostalCode_Onec" = $6,
+            address_latitude = CASE WHEN $7::float8 IS NOT NULL AND $8::float8 IS NOT NULL
+              THEN $7::float8 ELSE address_latitude END,
+            address_longitude = CASE WHEN $7::float8 IS NOT NULL AND $8::float8 IS NOT NULL
+              THEN $8::float8 ELSE address_longitude END,
+            updated_at = now()
+        WHERE student_uuid = $1::uuid
+          AND deleted_at IS NULL
+      `,
+      [
+        input.studentUuid,
+        input.addressLine,
+        input.subDistrict,
+        input.district,
+        input.province,
+        input.postalCode,
+        input.lat,
+        input.lng,
+      ],
+    );
+  }
+
   async updateTaskStatus(taskId: string, status: string, executor?: QueryExecutor): Promise<void> {
     // `deleted_at IS NULL` guard: if the task was tombstoned between an earlier
     // token validation and this write (submit/delegate race), the status change

@@ -443,6 +443,30 @@ export class TaskSubmissionService {
           }
         }
 
+        if (
+          structuredUpdatedAddress !== null &&
+          studentUuid &&
+          updatedAddressLine &&
+          updatedAddressSubDistrict &&
+          updatedAddressDistrict &&
+          updatedAddressProvince &&
+          updatedPostalCode
+        ) {
+          await this.taskRepository.updateStudentHomeFromVisit(
+            {
+              studentUuid,
+              addressLine: updatedAddressLine,
+              subDistrict: updatedAddressSubDistrict,
+              district: updatedAddressDistrict,
+              province: updatedAddressProvince,
+              postalCode: updatedPostalCode,
+              lat: this.normalizeNumber(data.updated_lat) ?? this.normalizeNumber(data.visit_lat),
+              lng: this.normalizeNumber(data.updated_lng) ?? this.normalizeNumber(data.visit_lng),
+            },
+            executor,
+          );
+        }
+
         await this.taskRepository.updateTaskStatus(String(link.task_id), 'COMPLETED', executor);
         await this.taskRepository.updateTaskLinkStatus(String(link.link_id), 'COMPLETED', executor);
       });
