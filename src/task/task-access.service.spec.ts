@@ -474,6 +474,43 @@ describe('TaskAccessService home visit report context', () => {
     expect(storage.resolve).toHaveBeenCalledWith('students/photo-88.jpg');
   });
 
+  it('gives a pinless link the same approximate spot as the case page', async () => {
+    taskRepository.findCaseByTaskId.mockResolvedValue({
+      id: 88,
+      student_name: 'เด็กหญิงทดสอบ',
+      student_lat: null,
+      student_lng: null,
+      student_uuid: '11111111-1111-4111-8111-111111111111',
+      address_house_no: '171/4',
+      SubDistrictNameThai_Onec: 'แสนสุข',
+      DistrictNameThai_Onec: 'เมืองชลบุรี',
+      ProvinceNameThai_Onec: 'ชลบุรี',
+      PostalCode_Onec: '20130',
+    });
+    const geocodeCache = { resolve: jest.fn().mockResolvedValue({ lat: 13.28, lng: 100.91 }) };
+    magicSessionStore.isVerified.mockResolvedValue(true);
+    const service = new TaskAccessService(
+      taskRepository as unknown as TaskRepository,
+      {} as TaskPolicyService,
+      {} as AuditLogService,
+      magicSessionStore as unknown as MagicSessionStoreService,
+      ...(Array(6).fill({}) as []),
+      geocodeCache as never,
+    );
+
+    await expect(service.getTaskByToken('public-token', 'verified-session')).resolves.toMatchObject(
+      {
+        student_lat: 13.28,
+        student_lng: 100.91,
+        is_approximate_home_location: true,
+      },
+    );
+    expect(geocodeCache.resolve).toHaveBeenCalledWith(
+      '11111111-1111-4111-8111-111111111111',
+      '171/4 แสนสุข เมืองชลบุรี ชลบุรี 20130',
+    );
+  });
+
   it('gates an assistance link behind identity verification like a follow-up link', async () => {
     taskRepository.findTaskLinkByTokenHash.mockResolvedValue({
       id: 'assist-link-1',
