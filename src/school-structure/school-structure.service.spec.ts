@@ -837,6 +837,30 @@ describe('SchoolStructureService', () => {
     );
   });
 
+  it('lets classrooms + export-data export without manage-school-structure', async () => {
+    const { service } = setup();
+    const viewer = {
+      ...SCHOOL_ACTOR,
+      roles: ['CUSTOM_GROUP'],
+      permissions: ['classrooms', 'export-data'],
+    };
+    const request = {
+      exportScope: 'ATTENDANCE' as const,
+      format: 'pdf' as const,
+      columns: ['date', 'present'],
+    };
+
+    await expect(service.authorizeClassroomExport(11, request, viewer)).resolves.toEqual({
+      data: { authorized: true },
+    });
+    await expect(
+      service.authorizeClassroomExport(11, request, {
+        ...viewer,
+        data_scope: { school_ids: [1001], room_ids: [3] },
+      }),
+    ).rejects.toBeInstanceOf(ForbiddenException);
+  });
+
   it('rejects an assignment with an invalid effective date range', async () => {
     const { service } = setup();
     await expect(

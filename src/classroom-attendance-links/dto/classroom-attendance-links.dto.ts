@@ -29,6 +29,7 @@ import {
 } from '../../attendance/dto/exception-attendance.dto';
 import {
   ListClassroomAttendanceHistoryDto,
+  AuthorizeClassroomExportDto,
   UpdateClassroomPresentationDto,
 } from '../../school-structure/dto/school-structure.dto';
 
@@ -269,6 +270,18 @@ export class ListClassroomLinkAttendanceHistoryDto extends ListClassroomAttendan
  * before anything is written.
  */
 export class UpdateLinkClassroomPresentationDto extends UpdateClassroomPresentationDto {
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  classroomId!: number;
+}
+
+/**
+ * An export taken from inside a link. The room is named in the body for the
+ * same reason as a cover change: the controller checks it against the session
+ * before the export is recorded.
+ */
+export class AuthorizeLinkClassroomExportDto extends AuthorizeClassroomExportDto {
   @Type(() => Number)
   @IsInt()
   @Min(1)

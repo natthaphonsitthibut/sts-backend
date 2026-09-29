@@ -589,13 +589,11 @@ export class SchoolStructureService {
     dto: AuthorizeClassroomExportDto,
     actor: AuthenticatedRequestUser,
   ) {
-    if (Boolean(dto.dateFrom) !== Boolean(dto.dateTo)) {
-      throw new BadRequestException('dateFrom and dateTo must be provided together');
-    }
-    if (dto.dateFrom && dto.dateTo && dto.dateFrom > dto.dateTo) {
-      throw new BadRequestException('dateFrom must not be after dateTo');
-    }
-    this.resolveScope(actor);
+    // Exporting is reading what the page already shows, so it takes the same
+    // permission-based read door as the view-only classroom page: holding
+    // `classrooms` + `export-data` without `manage-school-structure` must be
+    // enough, whatever role group those permissions came from.
+    this.resolveScope(actor, true);
     if (!hasPermission(actor.roles, actor.permissions, 'export-data')) {
       throw new ForbiddenException('ไม่มีสิทธิ์ส่งออกข้อมูล');
     }
@@ -603,18 +601,51 @@ export class SchoolStructureService {
     if (!actorId) throw new ForbiddenException('บัญชีนี้ไม่รองรับการส่งออกข้อมูล');
     const classroom = await this.repository.findClassroomById(classroomId);
     if (!classroom) throw new NotFoundException('ไม่พบห้องเรียน');
-    await this.assertSchoolAccess(classroom.school_id, actor);
+    await this.assertSchoolAccess(classroom.school_id, actor, true);
+    return await this.recordClassroomExport(classroomId, classroom.school_id, dto, {
+      actorUserId: actorId,
+      actorLabel: actor.username,
+    });
+  }
 
+  /**
+   * Records a classroom export for a caller that has already proven the room is
+   * theirs — staff through their permissions, a classroom link through the
+   * room bound to its session. The link has no account, so its teacher's name
+   * stands in as the actor, the same as a cover change made from a link.
+   */
+  async applyClassroomExport(
+    classroomId: number,
+    dto: AuthorizeClassroomExportDto,
+    actor: { actorUserId: number | null; actorLabel: string },
+  ) {
+    const classroom = await this.repository.findClassroomById(classroomId);
+    if (!classroom) throw new NotFoundException('ไม่พบห้องเรียน');
+    return await this.recordClassroomExport(classroomId, classroom.school_id, dto, actor);
+  }
+
+  private async recordClassroomExport(
+    classroomId: number,
+    schoolId: number,
+    dto: AuthorizeClassroomExportDto,
+    actor: { actorUserId: number | null; actorLabel: string },
+  ) {
+    if (Boolean(dto.dateFrom) !== Boolean(dto.dateTo)) {
+      throw new BadRequestException('dateFrom and dateTo must be provided together');
+    }
+    if (dto.dateFrom && dto.dateTo && dto.dateFrom > dto.dateTo) {
+      throw new BadRequestException('dateFrom must not be after dateTo');
+    }
     await this.repository.withTransaction(async (queryRunner) => {
       await this.auditLog.recordAtomic(
         {
-          actorUserId: actorId,
-          actorLabel: actor.username,
+          actorUserId: actor.actorUserId,
+          actorLabel: actor.actorLabel,
           action: 'CLASSROOM_DATA_EXPORT',
           targetType: 'school_classrooms',
           targetId: String(classroomId),
           metadata: {
-            schoolId: classroom.school_id,
+            schoolId,
             exportScope: dto.exportScope,
             format: dto.format,
             columns: dto.columns,
