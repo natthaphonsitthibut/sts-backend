@@ -4,6 +4,7 @@ import type { DataScope } from '../auth';
 import { buildDataScopeQuery } from '../common/utils/authorization';
 import { escapeLikePattern } from '../common/utils/helpers';
 import { createSqlQueryExecutor, queryDataSource } from '../database/sql-query';
+import { syncHomeroomSubjectTeachers } from '../school-structure/homeroom-subject-teachers.sql';
 import type { TeacherRow, TeacherStatus } from './teachers.types';
 
 /** Columns every teacher read returns, joined to the membership for the school in view. */
@@ -520,6 +521,12 @@ export class TeachersRepository {
       `,
       [input.membershipId, input.actorId],
     );
+    const homeroomClassrooms = await executor.query<{ classroom_id: string }>(
+      `SELECT classroom_id::text
+       FROM classroom_homeroom_teacher_assignments
+       WHERE teacher_membership_id = $1`,
+      [input.membershipId],
+    );
     await executor.query(
       `DELETE FROM classroom_additional_homeroom_teachers WHERE teacher_membership_id = $1`,
       [input.membershipId],
@@ -528,6 +535,11 @@ export class TeachersRepository {
       `DELETE FROM classroom_homeroom_teachers WHERE teacher_membership_id = $1`,
       [input.membershipId],
     );
+    await syncHomeroomSubjectTeachers(executor, {
+      classroomIds: homeroomClassrooms.rows.map((row) => Number(row.classroom_id)),
+      formerMembershipIds: [Number(input.membershipId)],
+      actorId: input.actorId,
+    });
     await executor.query(
       `
         UPDATE teachers

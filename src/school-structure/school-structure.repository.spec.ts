@@ -524,15 +524,70 @@ describe('SchoolStructureRepository scope', () => {
     );
 
     expect(runner.query).toHaveBeenNthCalledWith(
-      3,
+      4,
       expect.stringContaining('INSERT INTO classroom_homeroom_teachers'),
       [1001, 42, 31, 7],
       true,
     );
     expect(runner.query).toHaveBeenNthCalledWith(
-      4,
+      5,
       expect.stringContaining('INSERT INTO classroom_additional_homeroom_teachers'),
       [1001, 42, 32, 7],
+      true,
+    );
+  });
+
+  it("puts every homeroom teacher on the room's โฮมรูม and takes off only those removed", async () => {
+    const runner = {
+      query: jest
+        .fn()
+        .mockResolvedValueOnce([{ teacher_membership_id: '31' }])
+        .mockResolvedValueOnce([{ teacher_membership_id: '31' }, { teacher_membership_id: '33' }])
+        .mockResolvedValue([]),
+    };
+    const repository = new SchoolStructureRepository({} as never);
+
+    await repository.replaceHomeroomTeachers(
+      { schoolId: 1001, classroomId: 42, teacherMembershipIds: [31, 32], actorId: 7 },
+      runner as never,
+    );
+
+    expect(runner.query).toHaveBeenNthCalledWith(
+      6,
+      expect.stringMatching(
+        /UPDATE classroom_subject_teachers[\s\S]*assignment_status = 'INACTIVE'[\s\S]*NOT EXISTS[\s\S]*classroom_homeroom_teacher_assignments/,
+      ),
+      [[42], [31, 33], 'HOMEROOM101', 7],
+      true,
+    );
+    expect(runner.query).toHaveBeenNthCalledWith(
+      7,
+      expect.stringMatching(
+        /INSERT INTO classroom_subject_teachers[\s\S]*FROM classroom_homeroom_teacher_assignments[\s\S]*ON CONFLICT/,
+      ),
+      [[42], 'HOMEROOM101', 7],
+      true,
+    );
+  });
+
+  it('takes the teacher off โฮมรูม when the room is left with no homeroom teacher', async () => {
+    const runner = {
+      query: jest
+        .fn()
+        .mockResolvedValueOnce([{ teacher_membership_id: '31' }])
+        .mockResolvedValueOnce([{ teacher_membership_id: '31' }])
+        .mockResolvedValue([]),
+    };
+    const repository = new SchoolStructureRepository({} as never);
+
+    await repository.replaceHomeroomTeachers(
+      { schoolId: 1001, classroomId: 42, teacherMembershipIds: [], actorId: 7 },
+      runner as never,
+    );
+
+    expect(runner.query).toHaveBeenCalledWith(
+      expect.stringContaining("assignment_status = 'INACTIVE'"),
+      [[42], [31], 'HOMEROOM101', 7],
       true,
     );
   });
@@ -578,7 +633,12 @@ describe('SchoolStructureRepository scope', () => {
       is_primary: true,
     };
     const runner = {
-      query: jest.fn().mockResolvedValueOnce([]).mockResolvedValueOnce([assignment]),
+      query: jest
+        .fn()
+        .mockResolvedValueOnce([])
+        .mockResolvedValueOnce([])
+        .mockResolvedValueOnce([])
+        .mockResolvedValueOnce([assignment]),
     };
     const repository = new SchoolStructureRepository({} as never);
 
@@ -598,7 +658,13 @@ describe('SchoolStructureRepository scope', () => {
       ),
     ).resolves.toMatchObject({ is_primary: true });
     expect(runner.query).toHaveBeenNthCalledWith(
-      2,
+      3,
+      expect.stringContaining('INSERT INTO classroom_subject_teachers'),
+      [[42], 'HOMEROOM101', 7],
+      true,
+    );
+    expect(runner.query).toHaveBeenNthCalledWith(
+      4,
       expect.stringContaining('TRUE AS is_primary'),
       [42],
       true,

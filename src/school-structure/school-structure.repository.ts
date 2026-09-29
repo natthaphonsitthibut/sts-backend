@@ -7,6 +7,7 @@ import { ATTENDANCE_STATUS_CODE } from '../attendance/attendance-status';
 import { escapeLikePattern } from '../common/utils/helpers';
 import { createSqlQueryExecutor, queryDataSource } from '../database/sql-query';
 import { HOMEROOM_SUBJECT_CODE } from './homeroom-subject.constants';
+import { syncHomeroomSubjectTeachers } from './homeroom-subject-teachers.sql';
 import type {
   AdministrativeAreaOptionRow,
   ClassroomRosterRow,
@@ -1248,6 +1249,13 @@ export class SchoolStructureRepository {
     queryRunner: QueryRunner,
   ): Promise<SchoolTeacherMembershipRow> {
     if (status === 'INACTIVE') {
+      const executor = createSqlQueryExecutor(queryRunner);
+      const homeroomClassrooms = await executor.query<{ classroom_id: string }>(
+        `SELECT classroom_id::text
+         FROM classroom_homeroom_teacher_assignments
+         WHERE teacher_membership_id = $1`,
+        [membershipId],
+      );
       await queryRunner.query(
         `
           DELETE FROM classroom_additional_homeroom_teachers
@@ -1257,6 +1265,11 @@ export class SchoolStructureRepository {
         `,
         [membershipId],
       );
+      await syncHomeroomSubjectTeachers(executor, {
+        classroomIds: homeroomClassrooms.rows.map((row) => Number(row.classroom_id)),
+        formerMembershipIds: [membershipId],
+        actorId,
+      });
     }
     await queryRunner.query(
       `
@@ -1328,6 +1341,18 @@ export class SchoolStructureRepository {
        FOR UPDATE`,
       [input.classroomId],
     );
+    const former = await executor.query<{ teacher_membership_id: string }>(
+      `SELECT teacher_membership_id::text
+       FROM classroom_homeroom_teacher_assignments
+       WHERE classroom_id = $1`,
+      [input.classroomId],
+    );
+    const syncHomeroomSubject = () =>
+      syncHomeroomSubjectTeachers(executor, {
+        classroomIds: [input.classroomId],
+        formerMembershipIds: former.rows.map((row) => Number(row.teacher_membership_id)),
+        actorId: input.actorId,
+      });
     const currentPrimaryId = current.rows[0]?.teacher_membership_id;
     const selectedIds = input.teacherMembershipIds.map(String);
     const primaryId =
@@ -1344,6 +1369,7 @@ export class SchoolStructureRepository {
       await executor.query(`DELETE FROM classroom_homeroom_teachers WHERE classroom_id = $1`, [
         input.classroomId,
       ]);
+      await syncHomeroomSubject();
       return;
     }
     await executor.query(
@@ -1368,6 +1394,7 @@ export class SchoolStructureRepository {
         [input.schoolId, input.classroomId, additionalId, input.actorId],
       );
     }
+    await syncHomeroomSubject();
   }
 
   async createAssignment(
@@ -1383,7 +1410,12 @@ export class SchoolStructureRepository {
     },
     queryRunner: QueryRunner,
   ): Promise<ClassroomTeacherAssignmentRow> {
-    await createSqlQueryExecutor(queryRunner).query(
+    const executor = createSqlQueryExecutor(queryRunner);
+    const former = await executor.query<{ teacher_membership_id: string }>(
+      `SELECT teacher_membership_id::text FROM classroom_homeroom_teachers WHERE classroom_id = $1`,
+      [input.classroomId],
+    );
+    await executor.query(
       `
         INSERT INTO classroom_homeroom_teachers (
           school_id, classroom_id, teacher_membership_id, created_by, updated_by
@@ -1396,6 +1428,11 @@ export class SchoolStructureRepository {
       `,
       [input.schoolId, input.classroomId, input.teacherMembershipId, input.actorId],
     );
+    await syncHomeroomSubjectTeachers(executor, {
+      classroomIds: [input.classroomId],
+      formerMembershipIds: former.rows.map((row) => Number(row.teacher_membership_id)),
+      actorId: input.actorId,
+    });
     const assignments = await createSqlQueryExecutor(
       queryRunner,
     ).query<ClassroomTeacherAssignmentRow>(
