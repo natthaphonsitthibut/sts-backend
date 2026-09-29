@@ -121,6 +121,28 @@ describe('TeachersRepository', () => {
     expect(runner.query).toHaveBeenLastCalledWith(expect.any(String), ['7', 1], true);
   });
 
+  it('takes a deactivated teacher off โฮมรูม in the rooms they were homeroom of', async () => {
+    const runner = {
+      query: jest
+        .fn()
+        .mockResolvedValueOnce([])
+        .mockResolvedValueOnce([{ classroom_id: '42' }, { classroom_id: '43' }])
+        .mockResolvedValue([]),
+    };
+    const repository = new TeachersRepository({} as never);
+
+    await repository.deactivateTeacher(
+      { teacherId: '7', membershipId: '5', actorId: 1 },
+      runner as never,
+    );
+
+    expect(runner.query).toHaveBeenCalledWith(
+      expect.stringContaining("assignment_status = 'INACTIVE'"),
+      [[42, 43], [5], 'HOMEROOM101', 1],
+      true,
+    );
+  });
+
   it('locks every homeroom classroom in id order before teacher deactivation', async () => {
     const runner = { query: jest.fn().mockResolvedValue([]) };
     const repository = new TeachersRepository({} as never);
