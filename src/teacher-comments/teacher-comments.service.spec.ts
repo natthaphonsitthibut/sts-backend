@@ -22,17 +22,56 @@ function buildService() {
 }
 
 describe('TeacherCommentsService', () => {
-  it('denies executive access to raw per-student comments', async () => {
+  it('lets an executive with the students permission read per-student comments in scope', async () => {
+    const { repository, service } = buildService();
+    repository.listStudentClassroomComments.mockResolvedValueOnce([]);
+    const executive: AuthenticatedRequestUser = {
+      id: 20,
+      username: 'executive',
+      roles: ['EXECUTIVE'],
+      permissions: ['students'],
+      data_scope: { provinces: ['เชียงใหม่'] },
+    };
+
+    await service.listStudentComments(STUDENT_UUID, executive);
+
+    expect(repository.listStudentClassroomComments).toHaveBeenCalledWith(
+      { provinces: ['เชียงใหม่'] },
+      STUDENT_UUID,
+      3,
+    );
+  });
+
+  it('refuses a dashboard-only executive the per-student comment read', async () => {
     const { service } = buildService();
     await expect(
       service.listStudentComments(STUDENT_UUID, {
-        id: 20,
-        username: 'executive',
+        id: 21,
+        username: 'executive-dashboard',
         roles: ['EXECUTIVE'],
-        permissions: ['students'],
+        permissions: ['dashboard'],
         data_scope: { global: true },
       }),
     ).rejects.toBeInstanceOf(ForbiddenException);
+  });
+
+  it('lets a dashboard-only executive read the teacher-comments report in scope', async () => {
+    const { repository, service } = buildService();
+    repository.listClassroomComments.mockResolvedValueOnce([]);
+    const executive: AuthenticatedRequestUser = {
+      id: 22,
+      username: 'executive-dashboard',
+      roles: ['EXECUTIVE'],
+      permissions: ['dashboard'],
+      data_scope: { provinces: ['เชียงใหม่'] },
+    };
+
+    await service.listComments({ page: 1, limit: 20 }, executive);
+
+    expect(repository.listClassroomComments).toHaveBeenCalledWith(
+      { provinces: ['เชียงใหม่'] },
+      expect.objectContaining({ page: 1, limit: 20 }),
+    );
   });
 
   it('refuses an own-only scope that cannot read school-wide comments', async () => {

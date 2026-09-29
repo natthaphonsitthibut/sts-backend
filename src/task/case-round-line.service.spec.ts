@@ -1,4 +1,4 @@
-import { ForbiddenException, GoneException, NotFoundException } from '@nestjs/common';
+import { GoneException, NotFoundException } from '@nestjs/common';
 import { CaseRoundLineService } from './case-round-line.service';
 
 const ACTOR = {
@@ -115,14 +115,26 @@ describe('CaseRoundLineService', () => {
     await expect(
       closed.service.send(5, LINK.task_id, REQUEST_ID, ACTOR as never),
     ).rejects.toBeInstanceOf(GoneException);
+  });
 
-    const executive = setup();
+  // `case:assign` gates this action at the controller; the service itself
+  // only enforces the case scope, exactly like every other case action, so an
+  // EXECUTIVE holding that permission sends the round's link like anyone else.
+  it('lets an EXECUTIVE with case:assign send the round link within scope', async () => {
+    const { service, repository, messaging } = setup();
+
     await expect(
-      executive.service.send(5, LINK.task_id, REQUEST_ID, {
+      service.send(5, LINK.task_id, REQUEST_ID, {
         ...ACTOR,
         roles: ['EXECUTIVE'],
-        permissions: ['dashboard'],
+        permissions: ['dashboard', 'case:assign'],
       }),
-    ).rejects.toBeInstanceOf(ForbiddenException);
+    ).resolves.toMatchObject({ data: { status: 'SENT' } });
+    expect(repository.findCaseById).toHaveBeenCalledWith(
+      5,
+      undefined,
+      expect.objectContaining({ roles: ['EXECUTIVE'] }),
+    );
+    expect(messaging.sendMessages).toHaveBeenCalled();
   });
 });

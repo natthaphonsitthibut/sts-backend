@@ -5,7 +5,6 @@ import {
   DIRECTOR_DEFAULT_PERMISSIONS,
   EXECUTIVE_DEFAULT_PERMISSIONS,
   hasPermission,
-  isRestrictedExecutive,
   PERMISSION_CATALOG,
   SCHOOL_ADMIN_DEFAULT_PERMISSIONS,
   SCHOOL_ROLE_TEMPLATES,
@@ -14,13 +13,20 @@ import {
 
 describe('hasPermission', () => {
   it('grants exactly the pages the menu group carries, whatever the role is', () => {
-    // ผู้บริหาร is not clamped to หน้าหลัก any more: the group's ticks decide.
-    // Its own rule — never the raw text of a student record — is enforced by
-    // isRestrictedExecutive where that text is read, not by hiding pages here.
+    // ผู้บริหาร is not clamped to หน้าหลัก any more: the group's ticks decide
+    // what it sees, with no separate raw-data restriction layered on top
+    // (owner, 2026-09-29) — same as every other role.
     expect(hasPermission(['EXECUTIVE'], ['home', 'timetable'], 'timetable')).toBe(true);
     expect(hasPermission(['EXECUTIVE'], ['home', 'timetable'], 'home')).toBe(true);
     expect(hasPermission(['EXECUTIVE'], ['home', 'timetable'], 'students')).toBe(false);
     expect(hasPermission(['EXECUTIVE'], ['home', 'timetable'], 'export-data')).toBe(false);
+  });
+
+  it('grants ผู้บริหาร raw-data pages fully once its group carries them', () => {
+    // No isRestrictedExecutive layer left: granting the page grants the page.
+    expect(hasPermission(['EXECUTIVE'], ['students'], 'students')).toBe(true);
+    expect(hasPermission(['EXECUTIVE'], ['export-data'], 'export-data')).toBe(true);
+    expect(hasPermission(['A500101_BASE_EXECUTIVE'], ['students'], 'students')).toBe(true);
   });
 
   it.each(['*', 'ALL'])('treats %s in storage as every page', (wildcard) => {
@@ -32,14 +38,6 @@ describe('hasPermission', () => {
     expect(hasPermission(['ADMIN'], ['home'], 'settings')).toBe(false);
     expect(hasPermission(['DIRECTOR'], [], 'students')).toBe(false);
     expect(hasPermission([], ['home'], 'home')).toBe(true);
-  });
-
-  it('keeps ผู้บริหาร out of raw student data regardless of pages', () => {
-    // The page check above says nothing about raw text; this is the guard the
-    // services call, and it must stay true even when the group grants a page.
-    expect(isRestrictedExecutive({ roles: ['EXECUTIVE'] })).toBe(true);
-    expect(isRestrictedExecutive({ roles: ['EXECUTIVE', 'ADMIN'] })).toBe(false);
-    expect(isRestrictedExecutive({ roles: ['EXECUTIVE', 'DIRECTOR'] })).toBe(false);
   });
 
   it('gives ADMIN every grantable permission except the opt-in pages and the case actions', () => {

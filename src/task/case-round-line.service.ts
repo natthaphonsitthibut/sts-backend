@@ -1,13 +1,5 @@
-import {
-  ForbiddenException,
-  GoneException,
-  Inject,
-  Injectable,
-  Logger,
-  NotFoundException,
-} from '@nestjs/common';
+import { GoneException, Inject, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import type { AuthenticatedRequestUser } from '../auth';
-import { isRestrictedExecutive } from '../auth/permissions.constants';
 import { AuditLogService } from '../audit-log/audit-log.service';
 import { resolveAuditActorId } from '../common/audit/audit-actor.util';
 import { MESSAGING_PROVIDER, type MessagingProvider } from '../common/messaging/messaging.types';
@@ -45,9 +37,6 @@ export class CaseRoundLineService {
     actor?: AuthenticatedRequestUser,
   ): Promise<{ success: true; data: { status: RoundLineStatus; failure_code: string | null } }> {
     const currentActor = this.taskPolicyService.ensureActor(actor);
-    if (isRestrictedExecutive(currentActor)) {
-      throw new ForbiddenException('บัญชีผู้บริหารไม่มีสิทธิ์ดำเนินการกับเคสรายบุคคล');
-    }
     // Same scope gate as every other case action.
     const caseRecord = await this.taskRepository.findCaseById(caseId, undefined, currentActor);
     if (!caseRecord) throw new NotFoundException('Case not found');

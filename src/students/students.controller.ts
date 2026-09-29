@@ -108,7 +108,7 @@ export class StudentsController {
   @Get()
   @RequireAnyPermission('students', 'manage-students')
   findAll(@Query() query: GetStudentsQueryDto, @CurrentUser() actor?: AuthenticatedRequestUser) {
-    return this.studentsService.findAll(query, resolveActorDataScope(actor), actor);
+    return this.studentsService.findAll(query, resolveActorDataScope(actor));
   }
 
   // Declared before the dynamic `:id` route so the static segment isn't
@@ -119,7 +119,7 @@ export class StudentsController {
     @Query() query: GetStudentFilterOptionsQueryDto,
     @CurrentUser() actor?: AuthenticatedRequestUser,
   ) {
-    return this.studentsService.getFilterOptions(query, resolveActorDataScope(actor), actor);
+    return this.studentsService.getFilterOptions(query, resolveActorDataScope(actor));
   }
 
   @Get('management-options')

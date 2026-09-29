@@ -195,19 +195,23 @@ describe('DataExportsService', () => {
     expect(statusCatalogService.getCatalog).not.toHaveBeenCalled();
   });
 
-  it('keeps executive actors restricted even when raw permissions are regranted', async () => {
+  it('gives an executive the same full catalog as any other role holding every permission', async () => {
+    // No isRestrictedExecutive gate left: the catalog follows permission +
+    // scope exactly like every other role (owner, 2026-09-29).
     const result = await service.getCatalog({
       id: 1,
       username: 'executive',
       roles: ['EXECUTIVE'],
-      permissions: ['*', 'export-data', 'students', 'dashboard', 'dashboard'],
+      permissions: ['*', 'export-data', 'students', 'dashboard'],
       data_scope: { global: true },
     });
 
-    expect(result.data).toEqual([]);
+    expect(result.data.map((item) => item.code)).toEqual(
+      DATA_EXPORT_CATALOG.map((item) => item.code),
+    );
   });
 
-  it('denies executive actors from creating raw jobs despite explicit raw permissions', async () => {
+  it('lets an executive with export-data and students create a job like any other role', async () => {
     await expect(
       service.createJob(
         {
@@ -223,9 +227,12 @@ describe('DataExportsService', () => {
           filters: {},
         },
       ),
-    ).rejects.toThrow('ไม่มีสิทธิ์ส่งออกชุดข้อมูลนี้');
+      // No queue is configured in this suite, so every role's job hits the
+      // same queue-not-ready failure — the permission/scope gate already let
+      // it through to repository.createJob before that.
+    ).rejects.toThrow('ระบบคิวส่งออกข้อมูลยังไม่พร้อม');
 
-    expect(repository.createJob).not.toHaveBeenCalled();
+    expect(repository.createJob).toHaveBeenCalled();
   });
 
   it('publishes minimized school products by permission', async () => {

@@ -1,4 +1,4 @@
-import { areaRoleKind, isExportApproverRole, isRestrictedExecutive } from './permissions.constants';
+import { areaRoleKind, isExportApproverRole } from './permissions.constants';
 import {
   canGrantPages,
   grantablePages,
@@ -127,8 +127,6 @@ describe('area copies of the council defaults', () => {
     expect(areaRoleKind('A500101_BASE_EXECUTIVE')).toBe('EXECUTIVE');
     expect(areaRoleKind('A50_BASE_ADMIN')).toBe('ADMIN');
     expect(areaRoleKind('S10010004_BASE_ADMIN')).toBeNull();
-    expect(isRestrictedExecutive({ roles: ['A500101_BASE_EXECUTIVE'] })).toBe(true);
-    expect(isRestrictedExecutive({ roles: ['A50_BASE_ADMIN'] })).toBe(false);
     expect(isExportApproverRole('A50_BASE_ADMIN')).toBe(true);
     expect(isExportApproverRole('S10010004_BASE_ADMIN')).toBe(false);
   });

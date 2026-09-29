@@ -7,7 +7,6 @@ import {
 } from '@nestjs/common';
 import { clean } from '../common/utils/helpers';
 import type { AuthenticatedRequestUser } from '../auth';
-import { isRestrictedExecutive } from '../auth/permissions.constants';
 import * as crypto from 'crypto';
 import { AuditLogService } from '../audit-log/audit-log.service';
 import { NotificationsService } from '../notifications/notifications.service';
@@ -296,10 +295,7 @@ export class CaseService {
 
   async openCase(body: OpenCaseDto, actor?: AuthenticatedRequestUser) {
     const currentActor = this.taskPolicyService.ensureActor(actor);
-    if (
-      isRestrictedExecutive(currentActor) ||
-      !this.taskPolicyService.hasPermission(currentActor, 'case:assign')
-    ) {
+    if (!this.taskPolicyService.hasPermission(currentActor, 'case:assign')) {
       throw new ForbiddenException('ไม่มีสิทธิ์เปิดเคสนักเรียน');
     }
 
@@ -437,9 +433,6 @@ export class CaseService {
 
   async getCase(caseId: number, actor?: AuthenticatedRequestUser) {
     const currentActor = this.taskPolicyService.ensureActor(actor);
-    if (isRestrictedExecutive(currentActor)) {
-      throw new ForbiddenException('บัญชีผู้บริหารดูได้เฉพาะรายงานภาพรวมที่ผ่านการปกปิดข้อมูล');
-    }
     const detail = await this.taskRepository.findCaseDetailById(caseId, currentActor);
     if (!detail) {
       throw new NotFoundException('Case not found');
@@ -498,10 +491,7 @@ export class CaseService {
 
   async listReferralAgencies(actor?: AuthenticatedRequestUser) {
     const currentActor = this.taskPolicyService.ensureActor(actor);
-    if (
-      isRestrictedExecutive(currentActor) ||
-      !this.taskPolicyService.hasPermission(currentActor, 'dashboard')
-    ) {
+    if (!this.taskPolicyService.hasPermission(currentActor, 'dashboard')) {
       throw new ForbiddenException('ไม่มีสิทธิ์ดูหน่วยงานส่งต่อ');
     }
     const rows = await this.taskRepository.listActiveReferralAgencies();
@@ -530,10 +520,7 @@ export class CaseService {
     actor?: AuthenticatedRequestUser,
   ) {
     const currentActor = this.taskPolicyService.ensureActor(actor);
-    if (
-      isRestrictedExecutive(currentActor) ||
-      !this.taskPolicyService.hasPermission(currentActor, 'case:assign')
-    ) {
+    if (!this.taskPolicyService.hasPermission(currentActor, 'case:assign')) {
       throw new ForbiddenException('บัญชีนี้ไม่มีสิทธิ์ยกเลิกการมอบหมาย');
     }
     const reason = clean(this.normalizeText(body.cancel_reason)) || null;
@@ -567,9 +554,6 @@ export class CaseService {
 
   async reviewCase(caseId: number, body: ReviewCaseDto, actor?: AuthenticatedRequestUser) {
     const currentActor = this.taskPolicyService.ensureActor(actor);
-    if (isRestrictedExecutive(currentActor)) {
-      throw new ForbiddenException('บัญชีผู้บริหารไม่มีสิทธิ์ดำเนินการกับเคสรายบุคคล');
-    }
     const reviewActionCode = this.normalizeText(body.review_action).toUpperCase();
     const reviewAction = await this.caseTrackingOptions.getReviewAction(reviewActionCode);
     this.assertCanReviewCaseAction(currentActor, reviewAction.requiredPermission);
@@ -758,9 +742,6 @@ export class CaseService {
 
   async getTasksByCase(caseId: number, actor?: AuthenticatedRequestUser) {
     const currentActor = this.taskPolicyService.ensureActor(actor);
-    if (isRestrictedExecutive(currentActor)) {
-      throw new ForbiddenException('บัญชีผู้บริหารดูได้เฉพาะรายงานภาพรวมที่ผ่านการปกปิดข้อมูล');
-    }
     try {
       const caseRecord = await this.taskRepository.findCaseById(caseId, undefined, currentActor);
       if (!caseRecord) {
@@ -780,9 +761,6 @@ export class CaseService {
 
   async getCaseReviews(caseId: number, actor?: AuthenticatedRequestUser) {
     const currentActor = this.taskPolicyService.ensureActor(actor);
-    if (isRestrictedExecutive(currentActor)) {
-      throw new ForbiddenException('บัญชีผู้บริหารดูได้เฉพาะรายงานภาพรวมที่ผ่านการปกปิดข้อมูล');
-    }
     try {
       const caseRecord = await this.taskRepository.findCaseById(caseId, undefined, currentActor);
       if (!caseRecord) {

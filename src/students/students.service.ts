@@ -7,7 +7,6 @@ import {
   Logger,
   NotFoundException,
 } from '@nestjs/common';
-import { isRestrictedExecutive } from '../auth/permissions.constants';
 import type { ConfigType } from '@nestjs/config';
 import { CreateStudentDto } from './dto/create-student.dto';
 import {
@@ -386,14 +385,7 @@ export class StudentsService {
     }
   }
 
-  async findAll(
-    queryParams?: GetStudentsQueryDto,
-    userScope?: DataScope,
-    actor?: AuthenticatedRequestUser,
-  ) {
-    if (isRestrictedExecutive(actor)) {
-      throw new ForbiddenException('บัญชีผู้บริหารดูได้เฉพาะรายงานภาพรวมที่ไม่ระบุตัวบุคคล');
-    }
+  async findAll(queryParams?: GetStudentsQueryDto, userScope?: DataScope) {
     const filters = normalizeStudentListFilters(queryParams);
     const page = filters.page ?? 1;
     const limit = filters.limit ?? DEFAULT_STUDENT_PAGE_SIZE;
@@ -420,14 +412,7 @@ export class StudentsService {
     }
   }
 
-  async getFilterOptions(
-    query: GetStudentFilterOptionsQueryDto,
-    userScope?: DataScope,
-    actor?: AuthenticatedRequestUser,
-  ) {
-    if (isRestrictedExecutive(actor)) {
-      throw new ForbiddenException('บัญชีผู้บริหารดูได้เฉพาะรายงานภาพรวมที่ไม่ระบุตัวบุคคล');
-    }
+  async getFilterOptions(query: GetStudentFilterOptionsQueryDto, userScope?: DataScope) {
     try {
       const options = await this.studentsRepository.getStudentFilterOptions(
         {
@@ -462,9 +447,6 @@ export class StudentsService {
   }
 
   async findOne(id: string, actor?: AuthenticatedRequestUser, userScope?: DataScope) {
-    if (isRestrictedExecutive(actor)) {
-      throw new ForbiddenException('บัญชีผู้บริหารดูได้เฉพาะรายงานภาพรวมที่ไม่ระบุตัวบุคคล');
-    }
     try {
       const student = await this.studentsRepository.findStudentById(id, userScope);
 
@@ -646,9 +628,6 @@ export class StudentsService {
   }
 
   async findCasesByName(name: string, actor?: AuthenticatedRequestUser, userScope?: DataScope) {
-    if (isRestrictedExecutive(actor)) {
-      throw new ForbiddenException('บัญชีผู้บริหารดูได้เฉพาะรายงานภาพรวมที่ไม่ระบุตัวบุคคล');
-    }
     try {
       return await this.studentsRepository.findCasesByStudentName(name, userScope);
     } catch (error) {
@@ -663,9 +642,6 @@ export class StudentsService {
     actor?: AuthenticatedRequestUser,
     userScope?: DataScope,
   ) {
-    if (isRestrictedExecutive(actor)) {
-      throw new ForbiddenException('บัญชีผู้บริหารดูได้เฉพาะรายงานภาพรวมที่ไม่ระบุตัวบุคคล');
-    }
     const student = await this.studentsRepository.findStudentById(studentUuid, userScope);
     if (!student) {
       throw new NotFoundException('Student not found');
@@ -678,9 +654,6 @@ export class StudentsService {
     actor?: AuthenticatedRequestUser,
     userScope?: DataScope,
   ) {
-    if (isRestrictedExecutive(actor)) {
-      throw new ForbiddenException('บัญชีผู้บริหารดูได้เฉพาะรายงานภาพรวมที่ไม่ระบุตัวบุคคล');
-    }
     try {
       return await this.studentsRepository.listAttendanceByStudentId(id, userScope);
     } catch (error) {
@@ -695,9 +668,6 @@ export class StudentsService {
     actor?: AuthenticatedRequestUser,
     userScope?: DataScope,
   ) {
-    if (isRestrictedExecutive(actor)) {
-      throw new ForbiddenException('บัญชีผู้บริหารดูได้เฉพาะรายงานภาพรวมที่ไม่ระบุตัวบุคคล');
-    }
     const student = await this.studentsRepository.findStudentById(id, userScope);
     if (!student) {
       throw new NotFoundException('Student not found');
@@ -777,9 +747,6 @@ export class StudentsService {
     actor?: AuthenticatedRequestUser,
     userScope?: DataScope,
   ) {
-    if (isRestrictedExecutive(actor)) {
-      throw new ForbiddenException('บัญชีผู้บริหารดูได้เฉพาะรายงานภาพรวมที่ไม่ระบุตัวบุคคล');
-    }
     const student = await this.studentsRepository.findStudentById(id, userScope);
     if (!student) {
       throw new NotFoundException('Student not found');
@@ -881,9 +848,6 @@ export class StudentsService {
     userScope: DataScope | undefined,
     requestMeta: { ip: string | null },
   ) {
-    if (isRestrictedExecutive(actor)) {
-      throw new ForbiddenException('บัญชีผู้บริหารดูได้เฉพาะรายงานภาพรวมที่ไม่ระบุตัวบุคคล');
-    }
     const actorUserId = resolveAuditActorId(actor);
     try {
       await this.studentsRepository.withTransaction(async (manager) => {
@@ -960,9 +924,6 @@ export class StudentsService {
     userScope: DataScope | undefined,
     requestMeta: { ip: string | null },
   ) {
-    if (isRestrictedExecutive(actor)) {
-      throw new ForbiddenException('บัญชีผู้บริหารดูได้เฉพาะรายงานภาพรวมที่ไม่ระบุตัวบุคคล');
-    }
     const actorUserId = resolveAuditActorId(actor);
     await this.studentsRepository.withTransaction(async (manager) => {
       const result = await this.studentsRepository.correctPassport(
