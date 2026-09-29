@@ -63,4 +63,18 @@ export class TeacherLineCallbackDto extends ExternalOAuthCallbackDto {
   @IsString()
   @MaxLength(16)
   friendship_status_changed?: string;
+
+  /**
+   * Added by LINE when the sign-in ran inside the LINE app's in-app browser
+   * (LIFF): the LIFF app id and where it was sent. Neither is read.
+   */
+  @IsOptional()
+  @IsString()
+  @MaxLength(128)
+  liffClientId?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(2048)
+  liffRedirectUri?: string;
 }
