@@ -493,6 +493,61 @@ describe('AuditLogService', () => {
     ]);
   });
 
+  it('shows event details before scoped area context and resolves one scoped school', async () => {
+    const row = {
+      id: '88',
+      actor_label: 'admin',
+      action: 'TASK_CREATE',
+      target_type: 'task',
+      target_id: 'task-88',
+      target_username: null,
+      target_name: null,
+      school_name: 'โรงเรียนตัวอย่าง',
+      metadata: {
+        taskType: 'VISIT',
+        scope: {
+          school_ids: [10010003],
+          provinces: ['เชียงใหม่'],
+          districts: ['เมืองเชียงใหม่'],
+          sub_districts: ['ศรีภูมิ'],
+        },
+        tempPassword: 'MUST_NOT_LEAK',
+      },
+      created_at: new Date('2026-09-29T01:00:00.000Z'),
+      total_count: 1,
+    };
+    const queryRunner = {
+      connect: jest.fn().mockResolvedValue(undefined),
+      release: jest.fn().mockResolvedValue(undefined),
+      query: jest.fn().mockResolvedValue({ records: [row], affected: 1 }),
+    };
+    const service = new AuditLogService({ createQueryRunner: () => queryRunner } as never);
+
+    const result = await service.list(
+      { ...actor, permissions: ['dashboard'], data_scope: { global: true } },
+      { domain: 'tasks' },
+    );
+
+    expect(result.data[0]?.details).toEqual([
+      { label: 'ประเภท', value: 'VISIT' },
+      { label: 'โรงเรียน', value: 'โรงเรียนตัวอย่าง' },
+      { label: 'จังหวัดในขอบเขต', value: 'เชียงใหม่' },
+      { label: 'อำเภอในขอบเขต', value: 'เมืองเชียงใหม่' },
+      { label: 'ตำบลในขอบเขต', value: 'ศรีภูมิ' },
+    ]);
+    expect(queryRunner.query).toHaveBeenCalledWith(
+      expect.stringContaining("jsonb_array_length(a.metadata -> 'scope' -> 'school_ids') = 1"),
+      expect.any(Array),
+      true,
+    );
+    expect(queryRunner.query).toHaveBeenCalledWith(
+      expect.stringContaining("a.metadata -> 'scope' -> 'school_ids' ->> 0"),
+      expect.any(Array),
+      true,
+    );
+    expect(JSON.stringify(result.data)).not.toContain('MUST_NOT_LEAK');
+  });
+
   it('loads one audit log through the same permission and scope gate', async () => {
     const scopedActor: AuthenticatedRequestUser = {
       ...actor,
