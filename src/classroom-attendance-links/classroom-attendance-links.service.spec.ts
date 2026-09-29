@@ -357,6 +357,11 @@ describe('ClassroomAttendanceLinksService', () => {
     >;
     const sentMessages = sendCalls[0][0];
     expect(sentMessages[0].text).toContain('#token=');
+    // A link belongs to a teacher for a term: the message names both, and no
+    // classroom field the row no longer carries.
+    expect(sentMessages[0].text).toContain('ลิงก์เช็กชื่อของคุณครูครูประจำชั้น');
+    expect(sentMessages[0].text).toContain('โรงเรียนหนึ่ง · ภาคเรียนที่ 1/2569 · 1 ห้อง');
+    expect(sentMessages[0].text).not.toContain('undefined');
     expect(repository.finishLineDelivery).toHaveBeenCalledWith(
       LINK.id,
       '3c195ce0-1f57-4e5c-a2cf-930a6315f28a',
