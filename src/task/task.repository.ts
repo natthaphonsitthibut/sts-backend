@@ -647,6 +647,16 @@ export class TaskRepository {
          AND teacher_person.deleted_at IS NULL
         ORDER BY
           is_homeroom DESC,
+          -- With two homeroom teachers the first one (the primary) leads, so
+          -- the dialog's default pick is the room's ครูหลัก, not whichever
+          -- name sorts first.
+          EXISTS (
+            SELECT 1
+            FROM classroom_homeroom_teacher_assignments primary_assignment
+            WHERE primary_assignment.classroom_id = current_student.classroom_id
+              AND primary_assignment.teacher_membership_id = membership.id
+              AND primary_assignment.is_primary
+          ) DESC,
           TRIM(teacher_person.first_name || ' ' || teacher_person.last_name) COLLATE "th-x-icu",
           membership.id
       `,
