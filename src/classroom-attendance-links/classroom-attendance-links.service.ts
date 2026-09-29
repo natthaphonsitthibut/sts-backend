@@ -1437,14 +1437,18 @@ export class ClassroomAttendanceLinksService {
 
     const messages = [...byRecipient.entries()].map(([providerUserId, items]) => ({
       providerUserId,
-      text: [
-        'ลิงก์เช็กชื่อห้องเรียน',
-        ...items.map(
-          (item) =>
-            `• ${String(item.row.grade_label)}/${String(item.row.legacy_room_number)}: ${item.accessUrl}`,
-        ),
-        'ครูที่เปิดใช้งานในโรงเรียนสามารถยืนยันตัวตนและใช้ลิงก์นี้ได้',
-      ].join('\n'),
+      // A link belongs to a teacher for a term now, not to a classroom, so the
+      // message names the teacher and the term; the rooms are inside the link.
+      text: items
+        .map((item) =>
+          [
+            `ลิงก์เช็กชื่อของคุณครู${item.row.teacher_name ?? ''}`,
+            `${item.row.school_name} · ภาคเรียนที่ ${item.row.semester}/${item.row.academic_year} · ${item.row.classroom_count} ห้อง`,
+            item.accessUrl,
+            'เปิดลิงก์แล้วยืนยันตัวตนเพื่อเข้าห้องเรียนที่คุณสอน',
+          ].join('\n'),
+        )
+        .join('\n\n'),
     }));
 
     let deliveryResults: Awaited<ReturnType<MessagingProvider['sendMessages']>>;
