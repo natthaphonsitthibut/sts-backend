@@ -1176,6 +1176,8 @@ export class TaskRepository {
           NULLIF(TRIM(current_assignee_teacher.first_name || ' ' || current_assignee_teacher.last_name), ''),
           tl.assigned_to_name
         ) AS current_assignee_name,
+        current_assignee_teacher.photo_storage_key AS assignee_photo_storage_key,
+        current_assignee_teacher.updated_at AS assignee_photo_updated_at,
         t.task_type,
         t.assistance_measure_detail,
         t.target_grade,
@@ -1234,7 +1236,19 @@ export class TaskRepository {
         grade.label AS grade,
         enrollment."RoomID_Onec"::text AS room,
         person.photo_storage_key AS student_photo_storage_key,
-        person.updated_at AS student_photo_updated_at
+        person.updated_at AS student_photo_updated_at,
+        -- The student's own address parts, so a link without a pin can look up
+        -- the same approximate spot the case page shows (same text, same cache).
+        c.student_uuid,
+        enrollment.address_house_no,
+        enrollment."VillageNumber_Onec",
+        enrollment."Trok_Onec",
+        enrollment."Soi_Onec",
+        enrollment."Street_Onec",
+        enrollment."SubDistrictNameThai_Onec",
+        enrollment."DistrictNameThai_Onec",
+        enrollment."ProvinceNameThai_Onec",
+        enrollment."PostalCode_Onec"
       FROM cases c
       JOIN tasks t ON t.case_id = c.id
       LEFT JOIN case_workflow_statuses case_status ON case_status.code = c.status

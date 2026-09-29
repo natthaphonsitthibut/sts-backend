@@ -41,6 +41,10 @@ export class TaskService {
     return this.taskAccessService.resolveStudentPhoto(token, sessionToken);
   }
 
+  resolveAssigneePhoto(token: string, sessionToken?: string) {
+    return this.taskAccessService.resolveAssigneePhoto(token, sessionToken);
+  }
+
   async getTaskByToken(token: string, sessionToken?: string) {
     const result = await this.taskAccessService.getTaskByToken(token, sessionToken);
     if (!result || typeof result !== 'object') {

@@ -6,6 +6,7 @@ import {
   Injectable,
   Logger,
   NotFoundException,
+  Optional,
   UnauthorizedException,
 } from '@nestjs/common';
 import type { ConfigType } from '@nestjs/config';
@@ -24,6 +25,8 @@ import { googleLoginConfig } from '../config/google-login.config';
 import { ScopedGoogleLoginStateStore } from '../google-login/scoped-google-login-state.store';
 import { encodeMediaVersion } from '../common/utils/media-version.util';
 import { mapFollowUpHistoryRow } from './follow-up-history.mapper';
+import { buildStudentTermAddress } from '../common/utils/student-address.util';
+import { StudentGeocodeCacheService } from '../student-geocode/student-geocode-cache.service';
 import {
   FILE_STORAGE_ADAPTER,
   type FileServeResult,
@@ -67,6 +70,8 @@ export class TaskAccessService {
     private readonly googleConfig: ConfigType<typeof googleLoginConfig>,
     @Inject(FILE_STORAGE_ADAPTER)
     private readonly storage: FileStorageAdapter,
+    @Optional()
+    private readonly geocodeCache?: StudentGeocodeCacheService,
   ) {}
 
   /**
@@ -74,18 +79,31 @@ export class TaskAccessService {
    * of the student's details: an open link whose identity check has passed.
    */
   async resolveStudentPhoto(token: string, sessionToken?: string): Promise<FileServeResult> {
+    const task = await this.getVerifiedTask(token, sessionToken);
+    const caseData = await this.taskRepository.findCaseByTaskId(String(task.task_id));
+    return await this.resolvePhoto(caseData?.student_photo_storage_key, 'ไม่พบรูปประจำตัวนักเรียน');
+  }
+
+  /** The assigned teacher's own photo for the form header, behind the same gate. */
+  async resolveAssigneePhoto(token: string, sessionToken?: string): Promise<FileServeResult> {
+    await this.getVerifiedTask(token, sessionToken);
+    const link = await this.taskRepository.findTaskLinkByTokenHash(hashToken(token));
+    return await this.resolvePhoto(link?.assignee_photo_storage_key, 'ไม่พบรูปผู้รับมอบหมาย');
+  }
+
+  /** An open link whose identity check has passed, or not found. */
+  private async getVerifiedTask(token: string, sessionToken?: string) {
     const task = await this.getTaskByToken(token, sessionToken);
     if (!task || 'error' in task || task.auth_required !== false) {
-      throw new NotFoundException('ไม่พบรูปประจำตัวนักเรียน');
+      throw new NotFoundException('ไม่พบข้อมูล');
     }
-    const caseData = await this.taskRepository.findCaseByTaskId(String(task.task_id));
-    const storageKey =
-      typeof caseData?.student_photo_storage_key === 'string'
-        ? caseData.student_photo_storage_key
-        : null;
-    if (!storageKey) throw new NotFoundException('ไม่พบรูปประจำตัวนักเรียน');
+    return task;
+  }
+
+  private async resolvePhoto(storageKey: unknown, notFound: string): Promise<FileServeResult> {
+    if (typeof storageKey !== 'string' || !storageKey) throw new NotFoundException(notFound);
     const result = await this.storage.resolve(storageKey);
-    if (!result) throw new NotFoundException('ไม่พบรูปประจำตัวนักเรียน');
+    if (!result) throw new NotFoundException(notFound);
     return result;
   }
 
@@ -395,6 +413,14 @@ export class TaskAccessService {
       school_name: link.school_name,
       auth_required: authRequired,
     };
+    // The link holder's own photo for the header, behind the same identity
+    // check as everything else on the form.
+    result.assignee_photo_url =
+      !authRequired && typeof link.assignee_photo_storage_key === 'string'
+        ? `/api/tasks/${encodeURIComponent(token)}/assignee-photo?v=${encodeMediaVersion(
+            link.assignee_photo_updated_at,
+          )}`
+        : null;
 
     if (link.task_type === 'ASSIST') {
       // The measures were committed at assignment time; the report form shows
@@ -432,6 +458,24 @@ export class TaskAccessService {
         result.postal_code = caseData?.postal_code || null;
         result.student_lat = caseData?.student_lat || null;
         result.student_lng = caseData?.student_lng || null;
+        result.is_approximate_home_location = false;
+        // No pin on the case or the student: fall back to the same approximate
+        // spot the case page shows, so the form's map never looks emptier.
+        if (
+          (result.student_lat === null || result.student_lng === null) &&
+          typeof caseData?.student_uuid === 'string' &&
+          this.geocodeCache
+        ) {
+          const address = buildStudentTermAddress(caseData);
+          const approximate = address
+            ? await this.geocodeCache.resolve(caseData.student_uuid, address)
+            : null;
+          if (approximate) {
+            result.student_lat = approximate.lat;
+            result.student_lng = approximate.lng;
+            result.is_approximate_home_location = true;
+          }
+        }
         result.reason_flagged = caseData?.reason_flagged || null;
         result.case_status = caseData?.status || null;
         // The card header reuses the composed workflow label so the guest form

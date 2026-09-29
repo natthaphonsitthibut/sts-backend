@@ -17,6 +17,7 @@ import {
 } from '@nestjs/common';
 import type { ConfigType } from '@nestjs/config';
 import { TaskService } from './task.service';
+import type { FileServeResult } from '../files/storage/file-storage.types';
 import type { Request, Response } from 'express';
 import { AraIdSessionCookieService } from '../araid/araid-session-cookie.service';
 import { AuthGuard, CurrentUser, Public } from '../auth';
@@ -99,12 +100,35 @@ export class TaskController {
     @Req() req: Request,
     @Res() res: Response,
   ): Promise<void> {
+    this.sendPhoto(
+      res,
+      await this.taskService.resolveStudentPhoto(
+        token,
+        getHeaderValue(req.headers['x-magic-session']),
+      ),
+    );
+  }
+
+  /** The assigned teacher's own photo for the form header, served the same way. */
+  @Public()
+  @Get(':token/assignee-photo')
+  async getAssigneePhoto(
+    @Param('token') token: string,
+    @Req() req: Request,
+    @Res() res: Response,
+  ): Promise<void> {
+    this.sendPhoto(
+      res,
+      await this.taskService.resolveAssigneePhoto(
+        token,
+        getHeaderValue(req.headers['x-magic-session']),
+      ),
+    );
+  }
+
+  private sendPhoto(res: Response, result: FileServeResult): void {
     res.setHeader('Cache-Control', 'no-store');
     res.setHeader('X-Content-Type-Options', 'nosniff');
-    const result = await this.taskService.resolveStudentPhoto(
-      token,
-      getHeaderValue(req.headers['x-magic-session']),
-    );
     if (result.kind === 'redirect') {
       res.redirect(302, result.url);
       return;
