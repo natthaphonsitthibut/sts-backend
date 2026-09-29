@@ -27,7 +27,7 @@ const ALL_PERMISSIONS = [
   'dashboard', 'student-self', 'dashboard', 'import-data', 'attendance',
   'attendance', 'manage-users-list', 'manage-users-list',
   'manage-role-groups', 'settings',
-  'audit-log',
+  'audit-log', 'audit-log:all',
 ];
 
 function assert(condition, message) {
@@ -322,8 +322,8 @@ async function main() {
 
   try {
     adminId = await upsertAdmin(dataSource, await passwordService.hash(password));
-    // The student pages are school-first: the history tab renders only once a
-    // school is chosen, so the smoke has to pick one the way a user would.
+    // Pick a school through the shared header so the student history remains
+    // scoped even when the page no longer shows a school-first empty state.
     const [historySchool] = await dataSource.query(
       `SELECT id FROM schools ORDER BY id LIMIT 1`,
     );
@@ -380,11 +380,6 @@ async function main() {
       async () => (await evaluate(client, 'location.pathname')) === '/manage-students/history',
       'Retired student history path did not redirect to the management route',
     );
-    await waitFor(
-      async () =>
-        (await bodyText(client)).includes('เลือกโรงเรียนจากแถบด้านบนเพื่อแสดงรายชื่อนักเรียน'),
-      'History tab did not ask for a school before rendering',
-    );
     // The school comes from the header's shared filter, not the URL.
     await evaluate(
       client,
@@ -419,8 +414,18 @@ async function main() {
     await waitForHistoryPanel(client, 'ประวัติข้อมูลนักเรียน');
     await capture(client, '/tmp/sts-entity-history-students-mobile.png');
 
+    await navigate(client, `${FRONTEND_URL}/council/audit-log`);
+    await waitFor(async () => {
+      const body = await bodyText(client);
+      return body.includes('บันทึกการใช้งาน') && body.includes('รายการทั้งหมด') &&
+        !body.includes('กำลังโหลดประวัติ');
+    }, 'Council audit log did not render');
+    assert(!(await bodyText(client)).includes('โหลดประวัติไม่สำเร็จ'), 'Council audit log returned an error');
+    assertNoSecretLeak(await bodyText(client), 'Council audit log');
+    await capture(client, '/tmp/sts-entity-history-council-mobile.png');
+
     console.log(
-      'entity history browser smoke passed (student audit panel, filter, no secret leak, desktop/mobile)',
+      'entity history browser smoke passed (student history and council audit, no secret leak, desktop/mobile)',
     );
   } finally {
     await closeChrome(chrome);

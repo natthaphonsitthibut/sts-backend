@@ -44,6 +44,16 @@ export interface AuditLogRecordInput {
  * shape before casting, since target_id is free text written by many callers.
  */
 const UUID_PATTERN_SQL = `'^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'`;
+const AUDIT_SCHOOL_ID_SQL = `COALESCE(
+  NULLIF(a.metadata ->> 'schoolId', ''),
+  CASE
+    WHEN jsonb_typeof(a.metadata -> 'scope' -> 'school_ids') = 'array'
+    THEN CASE
+      WHEN jsonb_array_length(a.metadata -> 'scope' -> 'school_ids') = 1
+      THEN a.metadata -> 'scope' -> 'school_ids' ->> 0
+    END
+  END
+)`;
 const AUDIT_TARGET_NAME_SQL = `
   COALESCE(CASE
     WHEN a.target_type IN ('student', 'student_term', 'classroom_student_comments')
@@ -1016,7 +1026,17 @@ export class AuditLogService {
         }
         const schoolId = metadata.schoolId;
         return typeof schoolId === 'string' || typeof schoolId === 'number'
-          ? [{ label: 'รหัสโรงเรียน', value: schoolId }]
+          ? [{ label: 'โรงเรียน', value: `ไม่พบชื่อโรงเรียน (รหัส ${schoolId})` }]
+          : [];
+      }
+      if (key === 'schoolId') {
+        const schoolName = metadata.schoolName;
+        if (typeof schoolName === 'string' && schoolName.trim()) {
+          return [{ label: 'โรงเรียน', value: schoolName }];
+        }
+        const schoolId = metadata.schoolId;
+        return typeof schoolId === 'string' || typeof schoolId === 'number'
+          ? [{ label: 'โรงเรียน', value: `ไม่พบชื่อโรงเรียน (รหัส ${schoolId})` }]
           : [];
       }
       const value = metadata[key];
@@ -1034,8 +1054,52 @@ export class AuditLogService {
     return row.metadata;
   }
 
+  private toContextDetails(
+    row: AuditLogRow,
+    metadata: Record<string, unknown> | null,
+  ): Array<{ label: string; value: string }> {
+    if (!metadata) return [];
+
+    const scope =
+      metadata.scope && typeof metadata.scope === 'object' && !Array.isArray(metadata.scope)
+        ? (metadata.scope as Record<string, unknown>)
+        : {};
+    const readText = (...values: unknown[]): string | null => {
+      const text = values
+        .flatMap((value): unknown[] => (Array.isArray(value) ? (value as unknown[]) : [value]))
+        .filter(
+          (value): value is string | number =>
+            typeof value === 'string' || typeof value === 'number',
+        )
+        .map(String)
+        .map((value) => value.trim())
+        .filter(Boolean);
+      return text.length > 0 ? Array.from(new Set(text)).join(', ') : null;
+    };
+
+    const areaDetail = (label: string, direct: unknown, scoped: unknown) => {
+      const directValue = readText(direct);
+      if (directValue) return { label, value: directValue };
+      const scopeValue = readText(scoped);
+      return scopeValue ? { label: `${label}ในขอบเขต`, value: scopeValue } : null;
+    };
+
+    return [
+      typeof row.school_name === 'string' && row.school_name.trim()
+        ? { label: 'โรงเรียน', value: row.school_name.trim() }
+        : null,
+      areaDetail('จังหวัด', metadata.province, scope.provinces),
+      areaDetail('อำเภอ', metadata.district, scope.districts),
+      areaDetail('ตำบล', metadata.subDistrict, scope.sub_districts),
+    ].filter((detail): detail is { label: string; value: string } => detail !== null);
+  }
+
   private toAuditLogEntry(row: AuditLogRow): AuditLogEntryResponse {
     const definition = ACTION_DEFINITIONS[row.action];
+    const metadata = this.withResolvedDetailMetadata(row);
+    const contextDetails = this.toContextDetails(row, metadata);
+    const actionDetails = this.toSafeDetails(definition, metadata);
+    const detailLabels = new Set(actionDetails.map((detail) => detail.label));
     return {
       id: String(row.id),
       domain: definition.domain,
@@ -1049,7 +1113,10 @@ export class AuditLogService {
         row.created_at instanceof Date
           ? row.created_at.toISOString()
           : new Date(String(row.created_at)).toISOString(),
-      details: this.toSafeDetails(definition, this.withResolvedDetailMetadata(row)),
+      details: [
+        ...actionDetails,
+        ...contextDetails.filter((detail) => !detailLabels.has(detail.label)),
+      ],
     };
   }
 
@@ -1206,8 +1273,8 @@ export class AuditLogService {
         LEFT JOIN users tu
           ON a.target_type = 'user' AND a.target_id = tu.id::text
         LEFT JOIN schools audit_school
-          ON NULLIF(a.metadata ->> 'schoolId', '') ~ '^[0-9]+$'
-         AND audit_school.id = (a.metadata ->> 'schoolId')::int
+          ON ${AUDIT_SCHOOL_ID_SQL} ~ '^[0-9]{1,9}$'
+         AND audit_school.id = (${AUDIT_SCHOOL_ID_SQL})::int
         WHERE ${conditions.join(' AND ')}
         ORDER BY ${this.buildListOrderSql(filters)}
         LIMIT ${limitParam}
@@ -1262,8 +1329,8 @@ export class AuditLogService {
           LEFT JOIN users tu
             ON a.target_type = 'user' AND a.target_id = tu.id::text
           LEFT JOIN schools audit_school
-            ON NULLIF(a.metadata ->> 'schoolId', '') ~ '^[0-9]+$'
-           AND audit_school.id = (a.metadata ->> 'schoolId')::int
+            ON ${AUDIT_SCHOOL_ID_SQL} ~ '^[0-9]{1,9}$'
+           AND audit_school.id = (${AUDIT_SCHOOL_ID_SQL})::int
           WHERE a.id = $1::bigint
             AND a.data_origin_code <> 'AUTOMATED_TEST'
         `,
@@ -1308,8 +1375,8 @@ export class AuditLogService {
           LEFT JOIN users tu
             ON a.target_type = 'user' AND a.target_id = tu.id::text
           LEFT JOIN schools audit_school
-            ON NULLIF(a.metadata ->> 'schoolId', '') ~ '^[0-9]+$'
-           AND audit_school.id = (a.metadata ->> 'schoolId')::int
+            ON ${AUDIT_SCHOOL_ID_SQL} ~ '^[0-9]{1,9}$'
+           AND audit_school.id = (${AUDIT_SCHOOL_ID_SQL})::int
           WHERE ${conditions.join(' AND ')}
           LIMIT 1
         `,
