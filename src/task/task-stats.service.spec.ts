@@ -208,7 +208,7 @@ describe('TaskStatsService', () => {
             risk_score: '1.0000',
             open_case_count: 1,
             latest_case_at: '2026-07-06T00:00:00.000Z',
-            teacher_comment: 'ความเห็นของครูที่ต้องมีสิทธิ์จึงจะเห็น',
+            teacher_comment: 'ครูบันทึกว่านักเรียนขาดเรียนต่อเนื่อง',
           },
         ],
         totalCount: 1,
@@ -241,7 +241,7 @@ describe('TaskStatsService', () => {
           termAbsentDays: 8,
           absenceResetAfterDate: '2026-08-01',
           attendanceRatePercent: 72.5,
-          teacherComment: null,
+          teacherComment: 'ครูบันทึกว่านักเรียนขาดเรียนต่อเนื่อง',
         },
       ],
       meta: {
@@ -306,15 +306,14 @@ describe('TaskStatsService', () => {
     expect(result.data[0]).toMatchObject({ studentId: 'student-1', schoolName: 'โรงเรียนทดสอบ' });
   });
 
-  // The gate used to name `manage-student-observations`, which
-  // 20260821090000-CollapsePermissionsToPages folded into `students`. Nobody
-  // held the retired id afterwards, so the column read `-` for every actor.
-  it('shows the problem category and teacher comment to an actor holding the students page', async () => {
+  // Teacher comments belong to รายงานสถานะนักเรียน itself, so `dashboard`
+  // alone shows them — an executive or a school admin without `students`.
+  it('shows the problem category and teacher comment to a dashboard-only actor', async () => {
     const actor = {
       id: 8,
-      username: 'school-admin',
-      roles: ['SCHOOL_ADMIN'],
-      permissions: ['dashboard', 'students'],
+      username: 'executive',
+      roles: ['EXECUTIVE'],
+      permissions: ['dashboard'],
       data_scope: { school_ids: [101] },
     };
     const taskRepository = {
