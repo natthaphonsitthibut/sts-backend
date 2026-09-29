@@ -1,4 +1,5 @@
 import { ForbiddenException, NotFoundException } from '@nestjs/common';
+import { Readable } from 'stream';
 import { AuditLogService } from '../audit-log/audit-log.service';
 import { MagicSessionStoreService } from '../auth/magic-session-store.service';
 import { TaskAccessService } from './task-access.service';
@@ -439,16 +440,15 @@ describe('TaskAccessService home visit report context', () => {
     expect(taskRepository.findRepeatVisitPrefill).not.toHaveBeenCalled();
   });
 
-  it('serves the student photo only to a verified link, as a signed-url redirect', async () => {
+  it('streams the student photo only to a verified link', async () => {
     taskRepository.findCaseByTaskId.mockResolvedValue({
       id: 88,
       student_name: 'เด็กหญิงทดสอบ',
       student_photo_storage_key: 'students/photo-88.jpg',
       student_photo_updated_at: '2026-09-01T00:00:00.000Z',
     });
-    const storage = {
-      resolve: jest.fn().mockResolvedValue({ kind: 'redirect', url: 'https://signed.example/p' }),
-    };
+    const stream = Readable.from(Buffer.from('photo'));
+    const storage = { open: jest.fn().mockResolvedValue(stream) };
     const service = new TaskAccessService(
       taskRepository as unknown as TaskRepository,
       {} as TaskPolicyService,
@@ -461,17 +461,56 @@ describe('TaskAccessService home visit report context', () => {
     await expect(service.resolveStudentPhoto('public-token')).rejects.toBeInstanceOf(
       NotFoundException,
     );
-    expect(storage.resolve).not.toHaveBeenCalled();
+    expect(storage.open).not.toHaveBeenCalled();
 
     magicSessionStore.isVerified.mockResolvedValue(true);
     const task = await service.getTaskByToken('public-token', 'verified-session');
     expect(task?.student_photo_url).toMatch(/^\/api\/tasks\/public-token\/student-photo\?v=/);
     expect(JSON.stringify(task)).not.toContain('students/photo-88.jpg');
     await expect(service.resolveStudentPhoto('public-token', 'verified-session')).resolves.toEqual({
-      kind: 'redirect',
-      url: 'https://signed.example/p',
+      stream,
+      contentType: 'image/jpeg',
     });
-    expect(storage.resolve).toHaveBeenCalledWith('students/photo-88.jpg');
+    expect(storage.open).toHaveBeenCalledWith('students/photo-88.jpg');
+  });
+
+  it('streams the assigned teacher photo only to a verified link', async () => {
+    taskRepository.findTaskLinkByTokenHash.mockResolvedValue({
+      id: 'visit-link-1',
+      task_id: 'visit-task-1',
+      task_type: 'VISIT',
+      status: 'ACTIVE',
+      expires_at: '2999-01-01T00:00:00.000Z',
+      admin_locked: 0,
+      delegation_depth: 0,
+      max_delegation_depth: 0,
+      assigned_to_name: 'ครูเยี่ยมบ้าน',
+      assigned_to_email: 'visitor@example.test',
+      assignee_photo_storage_key: 'teachers/photo.webp',
+    });
+    const stream = Readable.from(Buffer.from('teacher-photo'));
+    const storage = { open: jest.fn().mockResolvedValue(stream) };
+    const service = new TaskAccessService(
+      taskRepository as unknown as TaskRepository,
+      {} as TaskPolicyService,
+      {} as AuditLogService,
+      magicSessionStore as unknown as MagicSessionStoreService,
+      ...(Array(5).fill({}) as []),
+      storage as never,
+    );
+
+    await expect(service.resolveAssigneePhoto('public-token')).rejects.toBeInstanceOf(
+      NotFoundException,
+    );
+    expect(storage.open).not.toHaveBeenCalled();
+    magicSessionStore.isVerified.mockResolvedValue(true);
+    await expect(service.resolveAssigneePhoto('public-token', 'verified-session')).resolves.toEqual(
+      {
+        stream,
+        contentType: 'image/webp',
+      },
+    );
+    expect(storage.open).toHaveBeenCalledWith('teachers/photo.webp');
   });
 
   it('gives a pinless link the same approximate spot as the case page', async () => {
