@@ -1,10 +1,9 @@
 import { TaskPolicyService } from './task-policy.service';
 import { TaskRepository } from './task.repository';
 import { TaskStatsService } from './task-stats.service';
-import { ForbiddenException } from '@nestjs/common';
 
 describe('TaskStatsService', () => {
-  it('returns aggregate-only follow-up outcomes and referral backlog to an EXECUTIVE', async () => {
+  it('returns follow-up outcomes and referral backlog for an EXECUTIVE', async () => {
     const actor = {
       id: 70,
       username: 'executive',
@@ -49,28 +48,36 @@ describe('TaskStatsService', () => {
     expect(JSON.stringify(result)).not.toContain('studentName');
   });
 
-  it('denies referral PII drill-down to an EXECUTIVE', async () => {
+  it('lets an EXECUTIVE open the referral drill-down within its own scope', async () => {
     const actor = {
       id: 70,
       username: 'executive',
       roles: ['EXECUTIVE'],
       permissions: ['dashboard'],
-      data_scope: { global: true },
+      data_scope: { provinces: ['เชียงใหม่'] },
     };
-    const taskRepository = { listReferralDrilldown: jest.fn() };
+    const taskRepository = {
+      listReferralDrilldown: jest.fn().mockResolvedValue({ rows: [], totalCount: 0 }),
+    };
     const taskPolicyService = { ensureActor: jest.fn().mockReturnValue(actor) };
     const service = new TaskStatsService(
       taskRepository as unknown as TaskRepository,
       taskPolicyService as unknown as TaskPolicyService,
     );
 
-    await expect(service.getReferralDrilldown(actor, 1, 20)).rejects.toBeInstanceOf(
-      ForbiddenException,
+    await service.getReferralDrilldown(actor, {}, 1, 20);
+
+    // The province scope on the actor is what keeps this to its own area —
+    // no separate executive gate stands in front of it any more.
+    expect(taskRepository.listReferralDrilldown).toHaveBeenCalledWith(
+      expect.objectContaining({ data_scope: { provinces: ['เชียงใหม่'] } }),
+      {},
+      1,
+      20,
     );
-    expect(taskRepository.listReferralDrilldown).not.toHaveBeenCalled();
   });
 
-  it('denies raw case lists to an EXECUTIVE even when review-cases is re-granted', async () => {
+  it('lets an EXECUTIVE list cases within its own scope', async () => {
     const actor = {
       id: 70,
       username: 'executive.regranted',
@@ -78,15 +85,23 @@ describe('TaskStatsService', () => {
       permissions: ['dashboard'],
       data_scope: { provinces: ['เชียงใหม่'] },
     };
-    const taskRepository = { listCasesWithActiveLinks: jest.fn() };
+    const taskRepository = {
+      listCasesWithActiveLinks: jest
+        .fn()
+        .mockResolvedValue({ rows: [], totalCount: 0, statusCounts: {} }),
+    };
     const taskPolicyService = { ensureActor: jest.fn().mockReturnValue(actor) };
     const service = new TaskStatsService(
       taskRepository as unknown as TaskRepository,
       taskPolicyService as unknown as TaskPolicyService,
     );
 
-    await expect(service.getCases(actor)).rejects.toBeInstanceOf(ForbiddenException);
-    expect(taskRepository.listCasesWithActiveLinks).not.toHaveBeenCalled();
+    await service.getCases(actor);
+
+    expect(taskRepository.listCasesWithActiveLinks).toHaveBeenCalledWith(
+      expect.objectContaining({ data_scope: { provinces: ['เชียงใหม่'] } }),
+      expect.anything(),
+    );
   });
 
   it('returns the scoped at-risk student count in case stats', async () => {
@@ -242,6 +257,53 @@ describe('TaskStatsService', () => {
       expect.objectContaining({ riskTier: 'HIGH', sortBy: 'risk', sortDirection: 'desc' }),
       expect.objectContaining({ highAbsentDays: 4 }),
     );
+  });
+
+  it('scopes an EXECUTIVE risk dashboard read to its own province, like any other role', async () => {
+    const actor = {
+      id: 71,
+      username: 'executive.province',
+      roles: ['EXECUTIVE'],
+      permissions: ['dashboard'],
+      data_scope: { provinces: ['เชียงใหม่'] },
+    };
+    const taskRepository = {
+      getSystemSettingValue: jest.fn().mockResolvedValue('3'),
+      listRiskDashboardStudents: jest.fn().mockResolvedValue({
+        rows: [
+          {
+            student_uuid: 'student-1',
+            student_name: 'เด็ก ทดสอบ',
+            school_id: 101,
+            school_name: 'โรงเรียนทดสอบ',
+            grade: 'ม.1',
+            room: '1',
+            risk_tier: 'HIGH',
+          },
+        ],
+        totalCount: 1,
+        summary: { HIGH: 1, WATCH: 0, NORMAL: 0 },
+        caseStatusSummary: { OPEN: 0, IN_PROGRESS: 0, PENDING_REVIEW: 0, STUDENT_NOT_FOUND: 0 },
+      }),
+    };
+    const taskPolicyService = { ensureActor: jest.fn().mockReturnValue(actor) };
+    const service = new TaskStatsService(
+      taskRepository as unknown as TaskRepository,
+      taskPolicyService as unknown as TaskPolicyService,
+    );
+
+    const result = await service.getRiskDashboard(actor, { page: 1, limit: 20 });
+
+    // No isRestrictedExecutive gate left: the actor (carrying its province
+    // scope) is passed straight to the scoped repository query, exactly like
+    // every other role, and its one row comes back.
+    expect(taskRepository.listRiskDashboardStudents).toHaveBeenCalledWith(
+      actor,
+      expect.anything(),
+      expect.anything(),
+    );
+    expect(result.data).toHaveLength(1);
+    expect(result.data[0]).toMatchObject({ studentId: 'student-1', schoolName: 'โรงเรียนทดสอบ' });
   });
 
   // The gate used to name `manage-student-observations`, which

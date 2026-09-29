@@ -341,15 +341,9 @@ export function getEffectivePermissions(
 
 /**
  * Which pages an actor may open is what its menu group grants — the role name
- * decides nothing on its own.
- *
- * ผู้บริหาร used to be clamped here to หน้าหลัก whatever its group said, which
- * made the group's own ticks a lie: after the page collapse the role carries
- * `home` and `ตารางสอน`, the sidebar showed both, and every timetable request
- * came back 403. The rule that actually matters for that role — it never reads a
- * student's raw text — is not a page permission and is enforced where the raw
- * data is read (`isRestrictedExecutive` in students, task, case and data-export
- * services). Granting ผู้บริหาร a page therefore grants the page, not the text.
+ * decides nothing on its own. ผู้บริหาร is no exception: once its menu group
+ * grants a page, the normal permission + data-scope checks decide what it sees
+ * there, exactly like every other role (2026-09-29).
  */
 export function hasPermission(
   roles: string[],
@@ -361,7 +355,6 @@ export function hasPermission(
   return effectivePermissions.includes(permission);
 }
 
-/** Executive-only actors stay restricted even if a raw-data permission is re-granted. */
 /** An area's own copy of a council default: `A<area code>_BASE_<ADMIN|EXECUTIVE>`. */
 const AREA_ROLE_NAME = /^A[0-9]+_BASE_(ADMIN|EXECUTIVE)$/;
 
@@ -378,16 +371,4 @@ export function areaRoleKind(role: string | null | undefined): 'ADMIN' | 'EXECUT
 /** An account that may approve a ส่งออกข้อมูลส่วนบุคคล request, within its scope. */
 export function isExportApproverRole(role: string | null | undefined): boolean {
   return role === 'ADMIN' || areaRoleKind(role) === 'ADMIN';
-}
-
-/** ผู้บริหาร — national or an area's own — sees aggregates only, never raw rows. */
-export function isRestrictedExecutive(actor: { roles: string[] } | undefined): boolean {
-  const roles = actor?.roles ?? [];
-  const executive = roles.some(
-    (role) => role === 'EXECUTIVE' || areaRoleKind(role) === 'EXECUTIVE',
-  );
-  const exempt = roles.some(
-    (role) => role === 'ADMIN' || role === 'DIRECTOR' || areaRoleKind(role) === 'ADMIN',
-  );
-  return executive && !exempt;
 }

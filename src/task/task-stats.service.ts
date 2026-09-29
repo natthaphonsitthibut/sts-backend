@@ -1,5 +1,4 @@
-import { ForbiddenException, Injectable, Logger } from '@nestjs/common';
-import { isRestrictedExecutive } from '../auth/permissions.constants';
+import { Injectable, Logger } from '@nestjs/common';
 import { getBangkokDateString } from '../common/utils/date.util';
 import { encodeMediaVersion } from '../common/utils/media-version.util';
 import {
@@ -33,9 +32,6 @@ export class TaskStatsService {
 
   async getCases(actor?: ActorContext, filters: CaseListFilters = {}) {
     const currentActor = this.taskPolicyService.ensureActor(actor);
-    if (isRestrictedExecutive(currentActor)) {
-      throw new ForbiddenException('บัญชีผู้บริหารดูได้เฉพาะรายงานภาพรวมที่ผ่านการปกปิดข้อมูล');
-    }
     try {
       const page = resolvePage(filters.page);
       const limit = resolveLimit(filters.limit);
@@ -61,9 +57,6 @@ export class TaskStatsService {
 
   async getStats(actor?: ActorContext) {
     const currentActor = this.taskPolicyService.ensureActor(actor);
-    if (isRestrictedExecutive(currentActor)) {
-      throw new ForbiddenException('บัญชีผู้บริหารดูได้เฉพาะรายงานภาพรวมที่ผ่านการปกปิดข้อมูล');
-    }
     try {
       const today = getBangkokDateString();
 
@@ -88,9 +81,6 @@ export class TaskStatsService {
 
   async getOverviewStats(actor?: ActorContext) {
     const currentActor = this.taskPolicyService.ensureActor(actor);
-    if (isRestrictedExecutive(currentActor)) {
-      throw new ForbiddenException('บัญชีผู้บริหารดูได้เฉพาะรายงานภาพรวมที่ผ่านการปกปิดข้อมูล');
-    }
     try {
       return {
         success: true,
@@ -180,9 +170,6 @@ export class TaskStatsService {
     requestedLimit?: number,
   ) {
     const currentActor = this.taskPolicyService.ensureActor(actor);
-    if (isRestrictedExecutive(currentActor)) {
-      throw new ForbiddenException('บัญชีผู้บริหารดูได้เฉพาะจำนวนรวม ไม่สามารถเปิดรายชื่อได้');
-    }
     const page = resolvePage(requestedPage);
     const limit = resolveLimit(requestedLimit);
     const { rows, totalCount } = await this.taskRepository.listReferralDrilldown(
@@ -244,9 +231,6 @@ export class TaskStatsService {
 
   async getRiskDashboard(actor?: ActorContext, filters: RiskDashboardFilters = {}) {
     const currentActor = this.taskPolicyService.ensureActor(actor);
-    if (isRestrictedExecutive(currentActor)) {
-      throw new ForbiddenException('บัญชีผู้บริหารดูได้เฉพาะรายงานภาพรวมที่ผ่านการปกปิดข้อมูล');
-    }
     try {
       const page = resolvePage(filters.page);
       const limit = resolveLimit(filters.limit);

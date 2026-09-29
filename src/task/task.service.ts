@@ -1,5 +1,4 @@
-import { ForbiddenException, Injectable } from '@nestjs/common';
-import { isRestrictedExecutive } from '../auth/permissions.constants';
+import { Injectable } from '@nestjs/common';
 import type { CreateTaskDto, SaveTaskSubmissionDto } from './dto/task.dto';
 import { TaskAccessService } from './task-access.service';
 import { TaskLifecycleService } from './task-lifecycle.service';
@@ -51,9 +50,6 @@ export class TaskService {
   }
 
   async findCaseForActor(caseId: number, actor?: ActorContext) {
-    if (isRestrictedExecutive(actor)) {
-      throw new ForbiddenException('บัญชีผู้บริหารดูได้เฉพาะรายงานภาพรวมที่ผ่านการปกปิดข้อมูล');
-    }
     return await this.taskRepository.findCaseById(caseId, undefined, actor);
   }
 

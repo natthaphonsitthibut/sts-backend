@@ -16,7 +16,7 @@ import { createHash, randomUUID } from 'crypto';
 import { Queue, Worker } from 'bullmq';
 import { Readable } from 'stream';
 import { DataSource } from 'typeorm';
-import { hasPermission, isRestrictedExecutive, type AuthenticatedRequestUser } from '../auth';
+import { hasPermission, type AuthenticatedRequestUser } from '../auth';
 import { isUnconfiguredDataScope, normalizeDataScope, type DataScope } from '../auth/auth.types';
 import { buildDataScopeQuery } from '../common/utils/authorization';
 import { appConfig } from '../config/app.config';
@@ -461,9 +461,6 @@ export class DataExportsService implements OnModuleInit, OnApplicationShutdown {
   }
 
   private canAccessCatalogItem(actor: AuthenticatedRequestUser, item: DataExportCatalogItem) {
-    if (isRestrictedExecutive(actor)) {
-      return false;
-    }
     if (actor.data_scope?.own_only === true || isUnconfiguredDataScope(actor.data_scope)) {
       return false;
     }

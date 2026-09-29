@@ -1,4 +1,3 @@
-import { isRestrictedExecutive } from '../auth/permissions.constants';
 import { ForbiddenException, Injectable } from '@nestjs/common';
 import {
   hasPermission,
@@ -35,6 +34,18 @@ export const CLASSROOM_COMMENT_READER_PERMISSIONS = [
   'attendance',
 ] as const;
 
+/**
+ * The report at /student-risk-report/teacher-comments is a tab of
+ * รายงานสถานะนักเรียน, so anyone who reaches that dashboard page can open it
+ * too — on top of whoever already reads teacher comments elsewhere (owner,
+ * 2026-09-29). This stays separate from CLASSROOM_COMMENT_READER_PERMISSIONS:
+ * a `dashboard`-only account must not gain the per-student comment read.
+ */
+export const CLASSROOM_COMMENT_REPORT_PERMISSIONS = [
+  'dashboard',
+  ...CLASSROOM_COMMENT_READER_PERMISSIONS,
+] as const;
+
 /** Comments a teacher wrote about a student — the only concern record the app keeps. */
 @Injectable()
 export class TeacherCommentsService {
@@ -43,16 +54,12 @@ export class TeacherCommentsService {
     private readonly auditLog: AuditLogService,
   ) {}
 
-  private denyExecutiveRaw(actor: AuthenticatedRequestUser): void {
-    if (isRestrictedExecutive(actor)) {
-      throw new ForbiddenException('บัญชีผู้บริหารดูได้เฉพาะข้อมูลสรุปที่ไม่เปิดเผยข้อมูลดิบ');
-    }
-  }
-
-  private readerScope(actor: AuthenticatedRequestUser): DataScope {
-    this.denyExecutiveRaw(actor);
+  private readerScope(
+    actor: AuthenticatedRequestUser,
+    allowedPermissions: readonly string[] = CLASSROOM_COMMENT_READER_PERMISSIONS,
+  ): DataScope {
     if (
-      !CLASSROOM_COMMENT_READER_PERMISSIONS.some((permission) =>
+      !allowedPermissions.some((permission) =>
         hasPermission(actor.roles, actor.permissions, permission),
       )
     ) {
@@ -161,7 +168,7 @@ export class TeacherCommentsService {
     query: { page?: number; limit?: number; searchTerm?: string },
     actor: AuthenticatedRequestUser,
   ) {
-    const scope = this.readerScope(actor);
+    const scope = this.readerScope(actor, CLASSROOM_COMMENT_REPORT_PERMISSIONS);
     const page = resolvePage(query.page);
     const limit = resolveLimit(query.limit);
     const rows = await this.repository.listClassroomComments(scope, {

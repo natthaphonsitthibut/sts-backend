@@ -4,17 +4,17 @@ import {
   CurrentUser,
   PermissionsGuard,
   RequireAnyPermission,
-  RequirePermission,
   type AuthenticatedRequestUser,
 } from '../auth';
 import { PaginatedSearchQueryDto } from '../common/pagination/pagination.dto';
 import {
   CLASSROOM_COMMENT_READER_PERMISSIONS,
+  CLASSROOM_COMMENT_REPORT_PERMISSIONS,
   TeacherCommentsService,
 } from './teacher-comments.service';
 
 @UseGuards(AuthGuard, PermissionsGuard)
-@RequirePermission('students')
+@RequireAnyPermission(...CLASSROOM_COMMENT_REPORT_PERMISSIONS)
 @Controller('api/student-risk-report/teacher-comments')
 export class TeacherCommentReportsController {
   constructor(private readonly service: TeacherCommentsService) {}

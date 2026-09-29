@@ -262,21 +262,18 @@ describe('StudentsService', () => {
     expect(JSON.stringify(result)).not.toContain('student-photos/person/profile.webp');
   });
 
-  it('denies raw student lists to an EXECUTIVE even when students is re-granted', async () => {
-    await expect(
-      service.findAll(
-        { page: 1, limit: 20 },
-        { provinces: ['เชียงใหม่'] },
-        {
-          id: 70,
-          username: 'executive.regranted',
-          roles: ['EXECUTIVE'],
-          permissions: ['students'],
-          data_scope: { provinces: ['เชียงใหม่'] },
-        },
-      ),
-    ).rejects.toBeInstanceOf(ForbiddenException);
-    expect(studentsRepository.listStudents).not.toHaveBeenCalled();
+  it('lets an EXECUTIVE with the students permission list students within its own scope', async () => {
+    // The route resolves an EXECUTIVE's data_scope (province, here) from its
+    // own account exactly like any other role, and findAll passes that
+    // resolved scope straight to the repository — no isRestrictedExecutive
+    // gate stands in front of it any more (owner, 2026-09-29).
+    studentsRepository.listStudents.mockResolvedValue({ rows: [], totalCount: 0 });
+
+    await service.findAll({ page: 1, limit: 20 }, { provinces: ['เชียงใหม่'] });
+
+    expect(studentsRepository.listStudents).toHaveBeenCalledWith(expect.anything(), {
+      provinces: ['เชียงใหม่'],
+    });
   });
 
   it('passes all-enrollment list mode only when requested', async () => {
