@@ -713,6 +713,17 @@ export class TaskRepository {
           THEN c.student_lat ELSE student.address_latitude END AS student_lat,
         CASE WHEN c.student_lat IS NOT NULL AND c.student_lng IS NOT NULL
           THEN c.student_lng ELSE student.address_longitude END AS student_lng,
+        -- The student's current address parts, so the case map reads the same
+        -- address (and approximate pin) as the student profile does.
+        student.address_house_no,
+        student."VillageNumber_Onec",
+        student."Trok_Onec",
+        student."Soi_Onec",
+        student."Street_Onec",
+        student."SubDistrictNameThai_Onec",
+        student."DistrictNameThai_Onec",
+        student."ProvinceNameThai_Onec",
+        student."PostalCode_Onec",
         c.reason_flagged,
         c.status,
         case_status.label_th AS status_label,

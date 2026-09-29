@@ -15,6 +15,7 @@ import { resolveAuditActorId } from '../common/audit/audit-actor.util';
 import { buildStudentTermAddress } from '../common/utils/student-address.util';
 import { encodeMediaVersion } from '../common/utils/media-version.util';
 import { RiskProfileService } from '../risk-profile/risk-profile.service';
+import { StudentGeocodeCacheService } from '../student-geocode/student-geocode-cache.service';
 import { CancelCaseAssignmentDto, OpenCaseDto, ReviewCaseDto } from './dto/task.dto';
 import { CaseTrackingOptionsService } from './case-tracking-options.service';
 import { TaskPolicyService } from './task-policy.service';
@@ -44,6 +45,7 @@ export class CaseService {
     private readonly notificationsService: NotificationsService,
     private readonly caseTrackingOptions: CaseTrackingOptionsService,
     private readonly riskProfileService?: RiskProfileService,
+    private readonly geocodeCache?: StudentGeocodeCacheService,
   ) {}
 
   private normalizeText(value: unknown): string {
@@ -66,7 +68,11 @@ export class CaseService {
   }
 
   private normalizeCoordinate(value: unknown): number | null {
-    const parsed = typeof value === 'number' ? value : Number(this.normalizeText(value));
+    // Number('') is 0, so an empty column must stop here or it becomes a pin
+    // off the coast of Africa.
+    const text = typeof value === 'number' ? null : this.normalizeText(value);
+    if (text === '') return null;
+    const parsed = typeof value === 'number' ? value : Number(text);
     return Number.isFinite(parsed) ? parsed : null;
   }
 
@@ -100,8 +106,14 @@ export class CaseService {
       student_school: this.normalizeText(row.student_school) || null,
       student_address: this.normalizeText(row.student_address) || null,
       student_phone: this.normalizeText(row.student_phone) || null,
-      student_lat: this.normalizeNumber(row.student_lat),
-      student_lng: this.normalizeNumber(row.student_lng),
+      student_lat: this.normalizeCoordinate(row.student_lat),
+      student_lng: this.normalizeCoordinate(row.student_lng),
+      home_address: buildStudentTermAddress(row) || null,
+      home_province: this.normalizeText(row.ProvinceNameThai_Onec) || null,
+      home_district: this.normalizeText(row.DistrictNameThai_Onec) || null,
+      home_sub_district: this.normalizeText(row.SubDistrictNameThai_Onec) || null,
+      home_postal_code: this.normalizeText(row.PostalCode_Onec) || null,
+      is_approximate_home_location: false,
       teacher_comment: includeTeacherComment
         ? this.normalizeText(row.teacher_comment) || null
         : null,
@@ -438,18 +450,49 @@ export class CaseService {
       this.taskRepository.listCaseRiskSignals(caseId),
       this.taskRepository.listCaseReferrals(caseId),
     ]);
+    const mapped = await this.withApproximateHomeLocation(
+      this.mapCaseDetail(detail, this.taskPolicyService.hasPermission(currentActor, 'students')),
+    );
     return {
       success: true,
       data: {
-        ...this.mapCaseDetail(
-          detail,
-          this.taskPolicyService.hasPermission(currentActor, 'students'),
-        ),
+        ...mapped,
         follow_up_rounds: rounds.map((round) => this.mapFollowUpRound(round)),
         reviews: reviews.map((review) => this.mapCaseReview(review)),
         risk_signals: riskSignals.map((signal) => this.mapCaseRiskSignal(signal)),
         referrals: referrals.map((referral) => this.mapCaseReferral(referral)),
       },
+    };
+  }
+
+  /**
+   * A case with no pin of its own and none saved on the student gets the same
+   * approximate pin the student profile shows, geocoded from the student's
+   * current address through the shared cache, so both pages mark one spot.
+   */
+  private async withApproximateHomeLocation<
+    T extends {
+      student_id: string | null;
+      student_lat: number | null;
+      student_lng: number | null;
+      home_address: string | null;
+    },
+  >(detail: T): Promise<T & { is_approximate_home_location: boolean }> {
+    if (
+      (detail.student_lat !== null && detail.student_lng !== null) ||
+      !detail.student_id ||
+      !detail.home_address ||
+      !this.geocodeCache
+    ) {
+      return { ...detail, is_approximate_home_location: false };
+    }
+    const approximate = await this.geocodeCache.resolve(detail.student_id, detail.home_address);
+    if (!approximate) return { ...detail, is_approximate_home_location: false };
+    return {
+      ...detail,
+      student_lat: approximate.lat,
+      student_lng: approximate.lng,
+      is_approximate_home_location: true,
     };
   }
 

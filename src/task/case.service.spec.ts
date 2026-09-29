@@ -303,6 +303,68 @@ describe('CaseService', () => {
     );
   });
 
+  it('keeps a fractional home pin instead of dropping it', async () => {
+    taskRepository.findCaseDetailById.mockResolvedValueOnce({
+      id: 10,
+      student_id: '11111111-1111-4111-8111-111111111111',
+      student_name: 'เด็ก ทดสอบ',
+      student_lat: '13.286149',
+      student_lng: '100.9207',
+      status: 'OPEN',
+      school_id: 10010002,
+    });
+
+    const result = await service.getCase(10, buildActor(['dashboard']));
+
+    expect(result.data).toMatchObject({
+      student_lat: 13.286149,
+      student_lng: 100.9207,
+      is_approximate_home_location: false,
+    });
+  });
+
+  it("gives a case without a pin the profile's approximate pin", async () => {
+    const geocodeCache = { resolve: jest.fn().mockResolvedValue({ lat: 13.28, lng: 100.92 }) };
+    const withGeocode = new CaseService(
+      taskRepository as unknown as TaskRepository,
+      new TaskPolicyService({} as TaskRepository),
+      auditLog as unknown as AuditLogService,
+      notificationsService as unknown as NotificationsService,
+      {} as CaseTrackingOptionsService,
+      undefined,
+      geocodeCache as never,
+    );
+    taskRepository.findCaseDetailById.mockResolvedValueOnce({
+      id: 10,
+      student_id: '11111111-1111-4111-8111-111111111111',
+      student_name: 'เด็ก ทดสอบ',
+      student_lat: null,
+      student_lng: null,
+      address_house_no: '126/18',
+      VillageNumber_Onec: '10',
+      SubDistrictNameThai_Onec: 'แสนสุข',
+      DistrictNameThai_Onec: 'เมืองชลบุรี',
+      ProvinceNameThai_Onec: 'ชลบุรี',
+      PostalCode_Onec: '20130',
+      status: 'OPEN',
+      school_id: 10010002,
+    });
+
+    const result = await withGeocode.getCase(10, buildActor(['dashboard']));
+
+    expect(geocodeCache.resolve).toHaveBeenCalledWith(
+      '11111111-1111-4111-8111-111111111111',
+      '126/18 หมู่ 10 แสนสุข เมืองชลบุรี ชลบุรี 20130',
+    );
+    expect(result.data).toMatchObject({
+      student_lat: 13.28,
+      student_lng: 100.92,
+      is_approximate_home_location: true,
+      home_province: 'ชลบุรี',
+      home_postal_code: '20130',
+    });
+  });
+
   it('returns teacher comments only to observation managers', async () => {
     taskRepository.findCaseDetailById.mockResolvedValue({
       id: 10,

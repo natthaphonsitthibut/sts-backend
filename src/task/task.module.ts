@@ -26,6 +26,7 @@ import { GoogleLoginModule } from '../google-login/google-login.module';
 import { MessagingModule } from '../common/messaging/messaging.module';
 import { CaseRoundLineService } from './case-round-line.service';
 
+import { StudentGeocodeModule } from '../student-geocode/student-geocode.module';
 @Module({
   imports: [
     AraIdModule,
@@ -36,6 +37,7 @@ import { CaseRoundLineService } from './case-round-line.service';
     TokenEncryptionModule,
     GoogleLoginModule,
     MessagingModule,
+    StudentGeocodeModule,
   ],
   controllers: [
     TaskController,
