@@ -10,6 +10,7 @@ import {
   UnauthorizedException,
 } from '@nestjs/common';
 import type { ConfigType } from '@nestjs/config';
+import type { Readable } from 'stream';
 import * as QRCode from 'qrcode';
 import { clean, hashToken } from '../common/utils/helpers';
 import { resolveAuditActorId } from '../common/audit/audit-actor.util';
@@ -27,11 +28,17 @@ import { encodeMediaVersion } from '../common/utils/media-version.util';
 import { mapFollowUpHistoryRow } from './follow-up-history.mapper';
 import { buildStudentTermAddress } from '../common/utils/student-address.util';
 import { StudentGeocodeCacheService } from '../student-geocode/student-geocode-cache.service';
-import {
-  FILE_STORAGE_ADAPTER,
-  type FileServeResult,
-  type FileStorageAdapter,
-} from '../files/storage/file-storage.types';
+import { FILE_STORAGE_ADAPTER, type FileStorageAdapter } from '../files/storage/file-storage.types';
+
+type LinkPhoto = { stream: Readable; contentType: string };
+
+const PHOTO_CONTENT_TYPES: Record<string, string> = {
+  jpg: 'image/jpeg',
+  jpeg: 'image/jpeg',
+  png: 'image/png',
+  webp: 'image/webp',
+  gif: 'image/gif',
+};
 
 /** Every AraID challenge in this service belongs to a follow-up/assistance link. */
 const ARAID_SCOPE: AraIdChallengeScope = 'task-link';
@@ -78,14 +85,14 @@ export class TaskAccessService {
    * The student's photo for a follow-up link, behind the same gate as the rest
    * of the student's details: an open link whose identity check has passed.
    */
-  async resolveStudentPhoto(token: string, sessionToken?: string): Promise<FileServeResult> {
+  async resolveStudentPhoto(token: string, sessionToken?: string): Promise<LinkPhoto> {
     const task = await this.getVerifiedTask(token, sessionToken);
     const caseData = await this.taskRepository.findCaseByTaskId(String(task.task_id));
     return await this.resolvePhoto(caseData?.student_photo_storage_key, 'ไม่พบรูปประจำตัวนักเรียน');
   }
 
   /** The assigned teacher's own photo for the form header, behind the same gate. */
-  async resolveAssigneePhoto(token: string, sessionToken?: string): Promise<FileServeResult> {
+  async resolveAssigneePhoto(token: string, sessionToken?: string): Promise<LinkPhoto> {
     await this.getVerifiedTask(token, sessionToken);
     const link = await this.taskRepository.findTaskLinkByTokenHash(hashToken(token));
     return await this.resolvePhoto(link?.assignee_photo_storage_key, 'ไม่พบรูปผู้รับมอบหมาย');
@@ -100,11 +107,14 @@ export class TaskAccessService {
     return task;
   }
 
-  private async resolvePhoto(storageKey: unknown, notFound: string): Promise<FileServeResult> {
+  private async resolvePhoto(storageKey: unknown, notFound: string): Promise<LinkPhoto> {
     if (typeof storageKey !== 'string' || !storageKey) throw new NotFoundException(notFound);
-    const result = await this.storage.resolve(storageKey);
-    if (!result) throw new NotFoundException(notFound);
-    return result;
+    const extension = storageKey.split('.').at(-1)?.toLowerCase() ?? '';
+    const contentType = PHOTO_CONTENT_TYPES[extension];
+    if (!contentType) throw new NotFoundException(notFound);
+    const stream = await this.storage.open(storageKey);
+    if (!stream) throw new NotFoundException(notFound);
+    return { stream, contentType };
   }
 
   async startGoogleAuthorization(token: string): Promise<{ authorizationUrl: string }> {

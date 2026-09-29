@@ -17,7 +17,7 @@ import {
 } from '@nestjs/common';
 import type { ConfigType } from '@nestjs/config';
 import { TaskService } from './task.service';
-import type { FileServeResult } from '../files/storage/file-storage.types';
+import type { Readable } from 'stream';
 import type { Request, Response } from 'express';
 import { AraIdSessionCookieService } from '../araid/araid-session-cookie.service';
 import { AuthGuard, CurrentUser, Public } from '../auth';
@@ -90,8 +90,8 @@ export class TaskController {
   /**
    * The student's photo on a follow-up link. The link's identity session rides
    * in the same header the form's other calls use, so the page fetches it as a
-   * blob; the response is a redirect to a short-lived signed URL (or the file,
-   * on local disk), never cached.
+   * blob. Stream through this origin so a cross-origin storage redirect cannot
+   * block the browser's credentialed request with CORS.
    */
   @Public()
   @Get(':token/student-photo')
@@ -126,14 +126,13 @@ export class TaskController {
     );
   }
 
-  private sendPhoto(res: Response, result: FileServeResult): void {
-    res.setHeader('Cache-Control', 'no-store');
+  private sendPhoto(res: Response, result: { stream: Readable; contentType: string }): void {
+    res.setHeader('Cache-Control', 'private, no-store');
     res.setHeader('X-Content-Type-Options', 'nosniff');
-    if (result.kind === 'redirect') {
-      res.redirect(302, result.url);
-      return;
-    }
-    res.sendFile(result.filePath);
+    res.setHeader('Content-Type', result.contentType);
+    result.stream.on('error', () => res.destroy());
+    res.on('close', () => result.stream.destroy());
+    result.stream.pipe(res);
   }
 
   @Get(':taskId/chain')
