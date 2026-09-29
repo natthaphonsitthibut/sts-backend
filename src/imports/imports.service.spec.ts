@@ -806,6 +806,47 @@ describe('ImportsService', () => {
     });
   });
 
+  it('previews a student number held by another student as quarantine', async () => {
+    const { repository, service } = createService();
+    Object.assign(repository, {
+      findStudentNumberHolders: jest.fn().mockResolvedValue([
+        {
+          school_id: '1001',
+          academic_year: '2567',
+          semester: '1',
+          student_number: '61000377',
+          person_id: '5555555555555',
+        },
+      ]),
+    });
+    const file = makeImportFile([
+      {
+        PersonID_Onec: '6666666666666',
+        student_number: '61000377',
+        AcademicYear_Onec: 2567,
+        Semester_Onec: 1,
+        SchoolID_Onec: 1001,
+      },
+      {
+        PersonID_Onec: '5555555555555',
+        student_number: '61000377',
+        AcademicYear_Onec: 2567,
+        Semester_Onec: 1,
+        SchoolID_Onec: 1001,
+      },
+    ]);
+
+    const preview = await service.previewImport(file, 'student_term', '{}', GLOBAL_ACTOR);
+
+    // The holder keeping its own number is fine; the newcomer taking it is not.
+    expect(preview).toMatchObject({ rowsReady: 1, rowsToQuarantine: 1 });
+    expect(preview.sampleRows[0]).toMatchObject({
+      action: 'quarantine',
+      issues: ['รหัสนักเรียนซ้ำกับนักเรียนคนอื่นในภาคเรียนนี้'],
+    });
+    expect(preview.sampleRows[1]).toMatchObject({ status: 'ready' });
+  });
+
   it('reports missing schools without hiding otherwise valid preview rows', async () => {
     const { service } = createService();
     const file = makeImportFile([
@@ -1231,6 +1272,62 @@ describe('ImportsService', () => {
       expect.anything(),
     );
     expect(repository.insertImportRow).not.toHaveBeenCalled();
+  });
+
+  it("quarantines a row taking another student's number instead of failing the write", async () => {
+    const repository = {
+      findExistingSchoolIds: jest.fn().mockResolvedValue([1001]),
+      findSchoolScopeDetails: jest
+        .fn()
+        .mockResolvedValue([{ id: 1001, province: null, district: null, sub_district: null }]),
+      findStudentStatusLabels: jest.fn().mockResolvedValue([]),
+      findGradeLabels: jest.fn().mockResolvedValue([]),
+      withTransaction: jest.fn(async (callback: (executor: unknown) => Promise<unknown>) =>
+        callback({ query: jest.fn() }),
+      ),
+      createImportBatch: jest.fn().mockResolvedValue('batch-id'),
+      findPersonUuidMatchesByNationalIds: jest.fn().mockResolvedValue([]),
+      findPersonUuidsByNationalId: jest.fn().mockResolvedValue([]),
+      findStudentNumberHolders: jest.fn().mockResolvedValue([
+        {
+          school_id: '1001',
+          academic_year: '2567',
+          semester: '1',
+          student_number: '61000377',
+          person_id: '5555555555555',
+        },
+      ]),
+      quarantineImportRow: jest.fn().mockResolvedValue(true),
+      completeImportBatch: jest.fn(),
+      bulkResolveOrCreatePersonsByNationalIds: jest.fn().mockResolvedValue([]),
+      bulkUpsertStudentTerms: jest.fn(),
+      insertImportRow: jest.fn(),
+    };
+    const service = new ImportsService(
+      repository as never,
+      { record: jest.fn(), recordAtomic: jest.fn() } as never,
+    );
+    const file = makeImportFile([
+      {
+        PersonID_Onec: '6666666666666',
+        student_number: '61000377',
+        AcademicYear_Onec: 2567,
+        Semester_Onec: 1,
+        SchoolID_Onec: 1001,
+      },
+    ]);
+
+    const result = await service.processImport(file, 'student_term', '{}', undefined, {
+      id: 1,
+      data_scope: { global: true },
+    } as never);
+
+    expect(result).toMatchObject({ rowsInserted: 0, rowsQuarantined: 1 });
+    expect(repository.quarantineImportRow).toHaveBeenCalledWith(
+      expect.objectContaining({ reasonCode: 'STUDENT_NUMBER_CONFLICT' }),
+      expect.anything(),
+    );
+    expect(repository.bulkUpsertStudentTerms).not.toHaveBeenCalled();
   });
 
   it('quarantines invalid grade and room values before enrollment writes', async () => {
