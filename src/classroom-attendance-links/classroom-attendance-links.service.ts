@@ -1443,7 +1443,10 @@ export class ClassroomAttendanceLinksService {
         .map((item) =>
           [
             `ลิงก์เช็กชื่อของคุณครู${item.row.teacher_name ?? ''}`,
-            `${item.row.school_name} · ภาคเรียนที่ ${item.row.semester}/${item.row.academic_year} · ${item.row.classroom_count} ห้อง`,
+            `${item.row.school_name} · ภาคเรียนที่ ${item.row.semester}/${item.row.academic_year}`,
+            [`${item.row.classroom_count} ห้อง`, item.row.classroom_labels]
+              .filter(Boolean)
+              .join(' '),
             item.accessUrl,
             'เปิดลิงก์แล้วยืนยันตัวตนเพื่อเข้าห้องเรียนที่คุณสอน',
           ].join('\n'),

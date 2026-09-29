@@ -79,6 +79,7 @@ export class ClassroomAttendanceLinksRepository {
              -- How many rooms the link opens onto, from the subjects this
              -- teacher was assigned. Counted here so a row never costs a query.
              COALESCE(taught.classroom_count, 0)::int AS classroom_count,
+             taught.classroom_labels,
              line_account.provider_user_id AS line_provider_user_id,
              line_account.friend_state AS line_friend_state,
              link.line_delivery_teacher_membership_id::text,
@@ -104,17 +105,25 @@ export class ClassroomAttendanceLinksRepository {
       LEFT JOIN subjects assigned_subject
         ON assigned_subject.id = assigned_school_subject.subject_id
       LEFT JOIN LATERAL (
-        SELECT COUNT(DISTINCT assignment.classroom_id) AS classroom_count
-        FROM classroom_subject_teachers assignment
-        JOIN school_classrooms classroom
-          ON classroom.id = assignment.classroom_id
-         AND classroom.school_id = assignment.school_id
-        WHERE assignment.teacher_membership_id = link.teacher_membership_id
-          AND classroom.school_term_id = link.school_term_id
-          AND assignment.assignment_status = 'ACTIVE'
-          AND assignment.deleted_at IS NULL
-          AND classroom.classroom_status = 'ACTIVE'
-          AND classroom.deleted_at IS NULL
+        SELECT COUNT(*) AS classroom_count,
+               string_agg(room.label, ', '
+                 ORDER BY room.grade_level_id, length(room.room_code), room.room_code
+               ) AS classroom_labels
+        FROM (
+          SELECT DISTINCT classroom.id, classroom.grade_level_id, classroom.room_code,
+                 grade.label || '/' || classroom.room_code AS label
+          FROM classroom_subject_teachers assignment
+          JOIN school_classrooms classroom
+            ON classroom.id = assignment.classroom_id
+           AND classroom.school_id = assignment.school_id
+          JOIN grade_levels grade ON grade.id = classroom.grade_level_id
+          WHERE assignment.teacher_membership_id = link.teacher_membership_id
+            AND classroom.school_term_id = link.school_term_id
+            AND assignment.assignment_status = 'ACTIVE'
+            AND assignment.deleted_at IS NULL
+            AND classroom.classroom_status = 'ACTIVE'
+            AND classroom.deleted_at IS NULL
+        ) room
       ) taught ON TRUE
       LEFT JOIN teachers teacher
         ON teacher.id = membership.teacher_id

@@ -39,6 +39,7 @@ const LINK: ClassroomLinkRow = {
   expires_at: null,
   assignment_note: null,
   classroom_count: 1,
+  classroom_labels: 'ป.3/1',
   line_provider_user_id: 'U123',
   line_friend_state: 'FRIEND',
   line_delivery_teacher_membership_id: null,
@@ -360,7 +361,8 @@ describe('ClassroomAttendanceLinksService', () => {
     // A link belongs to a teacher for a term: the message names both, and no
     // classroom field the row no longer carries.
     expect(sentMessages[0].text).toContain('ลิงก์เช็กชื่อของคุณครูครูประจำชั้น');
-    expect(sentMessages[0].text).toContain('โรงเรียนหนึ่ง · ภาคเรียนที่ 1/2569 · 1 ห้อง');
+    expect(sentMessages[0].text).toContain('โรงเรียนหนึ่ง · ภาคเรียนที่ 1/2569');
+    expect(sentMessages[0].text).toContain('1 ห้อง ป.3/1');
     expect(sentMessages[0].text).not.toContain('undefined');
     expect(repository.finishLineDelivery).toHaveBeenCalledWith(
       LINK.id,

@@ -25,6 +25,8 @@ export interface ClassroomLinkRow extends Record<string, unknown> {
   assignment_note: string | null;
   /** Rooms this teacher's subjects reach in the term — what the link opens. */
   classroom_count: number;
+  /** Those rooms as "ม.6/1, ม.6/2", in grade then room order. */
+  classroom_labels: string | null;
   token_hash: string;
   token_encrypted: string;
   link_status: 'ACTIVE' | 'INACTIVE';
