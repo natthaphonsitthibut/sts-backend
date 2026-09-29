@@ -19,6 +19,7 @@ import { CancelCaseAssignmentDto, OpenCaseDto, ReviewCaseDto } from './dto/task.
 import { CaseTrackingOptionsService } from './case-tracking-options.service';
 import { TaskPolicyService } from './task-policy.service';
 import { TaskRepository, type CaseScopeContext } from './task.repository';
+import { mapFollowUpHistoryRow } from './follow-up-history.mapper';
 
 /**
  * Who is opening a case: an account, or a teacher reached through a classroom
@@ -437,11 +438,12 @@ export class CaseService {
     if (!detail) {
       throw new NotFoundException('Case not found');
     }
-    const [rounds, reviews, riskSignals, referrals] = await Promise.all([
+    const [rounds, reviews, riskSignals, referrals, studentHistory] = await Promise.all([
       this.taskRepository.listTasksByCase(caseId),
       this.taskRepository.listCaseReviews(caseId),
       this.taskRepository.listCaseRiskSignals(caseId),
       this.taskRepository.listCaseReferrals(caseId),
+      this.taskRepository.listStudentFollowUpHistory(caseId, 5),
     ]);
     const mapped = await this.withApproximateHomeLocation(
       this.mapCaseDetail(detail, this.taskPolicyService.hasPermission(currentActor, 'students')),
@@ -454,6 +456,9 @@ export class CaseService {
         reviews: reviews.map((review) => this.mapCaseReview(review)),
         risk_signals: riskSignals.map((signal) => this.mapCaseRiskSignal(signal)),
         referrals: referrals.map((referral) => this.mapCaseReferral(referral)),
+        // The student card's history: the student's last visits across all of
+        // their cases, as the follow-up link shows them.
+        student_follow_up_history: studentHistory.map(mapFollowUpHistoryRow),
       },
     };
   }

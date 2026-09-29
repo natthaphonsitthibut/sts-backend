@@ -1,4 +1,4 @@
-import { ForbiddenException } from '@nestjs/common';
+import { ForbiddenException, NotFoundException } from '@nestjs/common';
 import { AuditLogService } from '../audit-log/audit-log.service';
 import { MagicSessionStoreService } from '../auth/magic-session-store.service';
 import { TaskAccessService } from './task-access.service';
@@ -287,7 +287,7 @@ describe('TaskAccessService home visit report context', () => {
       | 'findTaskLinkByTokenHash'
       | 'findCaseByTaskId'
       | 'listPublicCaseContactChannels'
-      | 'listPublicCaseFollowUpHistory'
+      | 'listStudentFollowUpHistory'
       | 'findRepeatVisitPrefill'
     >
   >;
@@ -353,7 +353,7 @@ describe('TaskAccessService home visit report context', () => {
           is_primary: true,
         },
       ]),
-      listPublicCaseFollowUpHistory: jest.fn().mockResolvedValue([
+      listStudentFollowUpHistory: jest.fn().mockResolvedValue([
         {
           assigned_to_name: 'ครูคนก่อน',
           visited_at: '2026-06-13T09:00:00.000Z',
@@ -420,7 +420,7 @@ describe('TaskAccessService home visit report context', () => {
         residence_environment_codes: ['NORMAL'],
       },
     });
-    expect(taskRepository.listPublicCaseFollowUpHistory).toHaveBeenCalledWith(88, 5);
+    expect(taskRepository.listStudentFollowUpHistory).toHaveBeenCalledWith(88, 5);
   });
 
   it('does not expose report history before identity verification', async () => {
@@ -435,8 +435,43 @@ describe('TaskAccessService home visit report context', () => {
     expect(result).not.toHaveProperty('contact_channels');
     expect(result).not.toHaveProperty('case_status');
     expect(taskRepository.listPublicCaseContactChannels).not.toHaveBeenCalled();
-    expect(taskRepository.listPublicCaseFollowUpHistory).not.toHaveBeenCalled();
+    expect(taskRepository.listStudentFollowUpHistory).not.toHaveBeenCalled();
     expect(taskRepository.findRepeatVisitPrefill).not.toHaveBeenCalled();
+  });
+
+  it('serves the student photo only to a verified link, as a signed-url redirect', async () => {
+    taskRepository.findCaseByTaskId.mockResolvedValue({
+      id: 88,
+      student_name: 'เด็กหญิงทดสอบ',
+      student_photo_storage_key: 'students/photo-88.jpg',
+      student_photo_updated_at: '2026-09-01T00:00:00.000Z',
+    });
+    const storage = {
+      resolve: jest.fn().mockResolvedValue({ kind: 'redirect', url: 'https://signed.example/p' }),
+    };
+    const service = new TaskAccessService(
+      taskRepository as unknown as TaskRepository,
+      {} as TaskPolicyService,
+      {} as AuditLogService,
+      magicSessionStore as unknown as MagicSessionStoreService,
+      ...(Array(5).fill({}) as []),
+      storage as never,
+    );
+
+    await expect(service.resolveStudentPhoto('public-token')).rejects.toBeInstanceOf(
+      NotFoundException,
+    );
+    expect(storage.resolve).not.toHaveBeenCalled();
+
+    magicSessionStore.isVerified.mockResolvedValue(true);
+    const task = await service.getTaskByToken('public-token', 'verified-session');
+    expect(task?.student_photo_url).toMatch(/^\/api\/tasks\/public-token\/student-photo\?v=/);
+    expect(JSON.stringify(task)).not.toContain('students/photo-88.jpg');
+    await expect(service.resolveStudentPhoto('public-token', 'verified-session')).resolves.toEqual({
+      kind: 'redirect',
+      url: 'https://signed.example/p',
+    });
+    expect(storage.resolve).toHaveBeenCalledWith('students/photo-88.jpg');
   });
 
   it('gates an assistance link behind identity verification like a follow-up link', async () => {

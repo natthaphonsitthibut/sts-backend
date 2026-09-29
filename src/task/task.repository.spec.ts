@@ -251,7 +251,7 @@ describe('TaskRepository', () => {
 
     await repository.findTaskLinkByTokenHash('token-hash');
     await repository.listTasksByCase(41);
-    await repository.listPublicCaseFollowUpHistory(41);
+    await repository.listStudentFollowUpHistory(41);
 
     const activeLinkQuery = queries[0].sql;
     expect(activeLinkQuery).toContain('current_assignee_teacher.first_name');
@@ -264,6 +264,8 @@ describe('TaskRepository', () => {
 
     const historyQuery = queries[2].sql;
     expect(historyQuery).toContain('link.assigned_to_name');
+    // The student's visits from every case, matched through the person.
+    expect(historyQuery).toContain('sibling_term.person_uuid = current_term.person_uuid');
     expect(historyQuery).not.toContain('current_assignee_teacher');
   });
 

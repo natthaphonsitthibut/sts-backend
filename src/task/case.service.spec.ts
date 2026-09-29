@@ -44,6 +44,7 @@ describe('CaseService', () => {
       | 'listCaseReviews'
       | 'listCaseRiskSignals'
       | 'listCaseReferrals'
+      | 'listStudentFollowUpHistory'
       | 'listActiveReferralAgencies'
     >
   >;
@@ -96,6 +97,7 @@ describe('CaseService', () => {
       listCaseReviews: jest.fn().mockResolvedValue([]),
       listCaseRiskSignals: jest.fn().mockResolvedValue([]),
       listCaseReferrals: jest.fn().mockResolvedValue([]),
+      listStudentFollowUpHistory: jest.fn().mockResolvedValue([]),
       listActiveReferralAgencies: jest.fn().mockResolvedValue([]),
     };
     auditLog = {
