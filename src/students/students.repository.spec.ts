@@ -58,6 +58,19 @@ describe('StudentsRepository roster queries', () => {
     expect(queries[1]).toContain('COALESCE(s.student_status_code, s."StudentStatusID_Onec") = $1');
   });
 
+  it('searches the student list by displayed name only', async () => {
+    const queries: string[] = [];
+    const repository = createRepositoryWithQueryCapture(queries);
+
+    await repository.listStudents({ searchTerm: 'สมหญิง ใจดี' });
+
+    expect(queries).toHaveLength(2);
+    for (const sql of queries) {
+      expect(sql).toContain('(s."FirstName_Onec" || \' \' || s."LastName_Onec") ILIKE');
+      expect(sql).not.toContain('s."PersonID_Onec" ILIKE');
+    }
+  });
+
   it('filters student filter options through current enrollment policy by default', async () => {
     const queries: string[] = [];
     const repository = createRepositoryWithQueryCapture(queries);
