@@ -28,6 +28,12 @@ const CLASSROOM_COMMENT_ACTOR = {
   data_scope: { school_ids: [1001], grade_levels: [423], room_ids: [11] },
 };
 
+const CLASSROOM_HISTORY_ACTOR = {
+  ...SCHOOL_ACTOR,
+  roles: [],
+  permissions: ['classrooms'],
+};
+
 const CLASSROOM = {
   id: '11',
   school_term_id: '21',
@@ -573,6 +579,67 @@ describe('SchoolStructureService', () => {
         sortDirection: 'desc',
       }),
     );
+  });
+
+  it.each(['classrooms', 'attendance'])(
+    'lets %s readers see daily and student history inside their classroom scope',
+    async (permission) => {
+      const { service, repository } = setup();
+      const actor = {
+        ...CLASSROOM_HISTORY_ACTOR,
+        permissions: [permission],
+        data_scope: { school_ids: [1001], grade_levels: [423], room_ids: [11] },
+      };
+
+      await expect(
+        service.listClassroomAttendanceHistory(11, { view: 'DAILY' }, actor),
+      ).resolves.toMatchObject({ data: [], meta: { totalCount: 0 } });
+      await expect(
+        service.listClassroomAttendanceHistory(
+          11,
+          { view: 'STUDENT', studentUuid: '00000000-0000-4000-8000-000000000001' },
+          actor,
+        ),
+      ).resolves.toMatchObject({ data: [], meta: { totalCount: 0 } });
+      expect(repository.isSchoolInScope).toHaveBeenCalledWith(1001, actor.data_scope);
+    },
+  );
+
+  it('denies classroom history without a read permission or outside the school, grade, or room', async () => {
+    const { service, repository } = setup();
+    await expect(
+      service.listClassroomAttendanceHistory(
+        11,
+        { view: 'DAILY' },
+        {
+          ...CLASSROOM_HISTORY_ACTOR,
+          permissions: [],
+        },
+      ),
+    ).rejects.toBeInstanceOf(ForbiddenException);
+    expect(repository.findClassroomById).not.toHaveBeenCalled();
+
+    repository.isSchoolInScope.mockResolvedValueOnce(false);
+    await expect(
+      service.listClassroomAttendanceHistory(11, { view: 'DAILY' }, CLASSROOM_HISTORY_ACTOR),
+    ).rejects.toBeInstanceOf(NotFoundException);
+
+    for (const dataScope of [
+      { school_ids: [1001], grade_levels: [999] },
+      { school_ids: [1001], room_ids: [999] },
+    ]) {
+      await expect(
+        service.listClassroomAttendanceHistory(
+          11,
+          { view: 'DAILY' },
+          {
+            ...CLASSROOM_HISTORY_ACTOR,
+            data_scope: dataScope,
+          },
+        ),
+      ).rejects.toBeInstanceOf(NotFoundException);
+    }
+    expect(repository.listClassroomDailyAttendance).not.toHaveBeenCalled();
   });
 
   it('passes an inclusive date range to student attendance history', async () => {

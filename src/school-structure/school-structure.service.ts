@@ -70,6 +70,12 @@ function databaseErrorCode(error: unknown): string | null {
 
 const POSTGRES_INTEGER_MAX = 2_147_483_647;
 
+export const CLASSROOM_ATTENDANCE_HISTORY_READ_PERMISSIONS = [
+  'classrooms',
+  'manage-school-structure',
+  'attendance',
+] as const;
+
 function roomNumberFromCode(roomCode: string): number {
   const normalized = roomCode.trim();
   const roomNumber = Number(normalized);
@@ -1304,10 +1310,16 @@ export class SchoolStructureService {
     query: ListClassroomAttendanceHistoryDto,
     actor: AuthenticatedRequestUser,
   ) {
-    this.resolveScope(actor);
+    if (
+      !CLASSROOM_ATTENDANCE_HISTORY_READ_PERMISSIONS.some((permission) =>
+        hasPermission(actor.roles, actor.permissions, permission),
+      )
+    ) {
+      throw new ForbiddenException('ไม่มีสิทธิ์อ่านประวัติการเช็กชื่อห้องเรียน');
+    }
     const classroom = await this.repository.findClassroomById(classroomId);
     if (!classroom) throw new NotFoundException('ไม่พบห้องเรียน');
-    await this.assertSchoolAccess(classroom.school_id, actor);
+    await this.assertClassroomCommentAccess(classroom, actor);
     return await this.readClassroomAttendanceHistory(classroomId, query);
   }
 
