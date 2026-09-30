@@ -185,6 +185,8 @@ export class ClassroomAttendanceLinksRepository {
     search?: string;
     gradeLevelId?: number;
     linkStatus?: 'ACTIVE' | 'INACTIVE' | 'NOT_CREATED';
+    sortBy?: 'teacherName' | 'classroomCount' | 'linkStatus' | 'lineStatus';
+    sortDirection?: 'asc' | 'desc';
     page: number;
     limit: number;
     scope: DataScope;
@@ -268,6 +270,18 @@ export class ClassroomAttendanceLinksRepository {
       );
     }
     params.push(input.limit, (input.page - 1) * input.limit);
+    const orderColumns = {
+      teacherName: "TRIM(teacher.first_name || ' ' || teacher.last_name)",
+      classroomCount: 'COALESCE(taught.classroom_count, 0)',
+      linkStatus: `CASE WHEN link.id IS NULL THEN 'NOT_CREATED'
+        WHEN link.link_status = 'ACTIVE' AND school.school_status = 'ACTIVE'
+          AND term.status = 'ACTIVE' THEN 'ACTIVE' ELSE 'INACTIVE' END`,
+      lineStatus: `CASE WHEN link.id IS NULL THEN 'NOT_READY'
+        WHEN line_account.provider_user_id IS NULL THEN 'NOT_VERIFIED'
+        ELSE COALESCE(link.line_delivery_status, 'NOT_READY') END`,
+    } as const;
+    const orderColumn = orderColumns[input.sortBy ?? 'teacherName'];
+    const orderDirection = input.sortDirection === 'desc' ? 'DESC' : 'ASC';
     const listFrom = `
       FROM school_teacher_memberships membership
       JOIN schools school ON school.id = membership.school_id
@@ -342,7 +356,7 @@ export class ClassroomAttendanceLinksRepository {
               link.line_delivery_last_attempted_at, link.line_delivered_at
        ${listFrom}
        WHERE ${conditions.join(' AND ')}
-       ORDER BY teacher.first_name, teacher.last_name, membership.id
+       ORDER BY ${orderColumn} ${orderDirection}, membership.id
        LIMIT $${params.length - 1} OFFSET $${params.length}`,
       params,
     );

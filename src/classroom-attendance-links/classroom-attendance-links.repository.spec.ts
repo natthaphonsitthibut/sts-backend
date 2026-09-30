@@ -40,6 +40,25 @@ describe('ClassroomAttendanceLinksRepository', () => {
     expect(sql).toMatch(/ORDER BY \(candidate\.link_status = 'ACTIVE'\) DESC[\s\S]*LIMIT 1/);
   });
 
+  it('orders the complete paginated list by a validated column before limiting it', async () => {
+    const { repository, runner } = setup();
+
+    await repository.list({
+      schoolId: 10,
+      schoolTermId: 20,
+      sortBy: 'classroomCount',
+      sortDirection: 'desc',
+      page: 2,
+      limit: 20,
+      scope: { school_ids: [10] },
+    });
+
+    const sql = (runner.query.mock.calls as unknown as Array<[string]>)[0][0];
+    expect(sql).toMatch(
+      /ORDER BY COALESCE\(taught\.classroom_count, 0\) DESC, membership\.id\s+LIMIT/,
+    );
+  });
+
   it('filters room rows by link creation and displayed homeroom state on the server', async () => {
     const { repository, runner } = setup();
 
