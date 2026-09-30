@@ -511,6 +511,7 @@ describe('TaskRepository', () => {
     );
     expect(queries[0].params).toEqual(['%เด็ก\\_100\\%%']);
     expect(queries[0].sql).toContain("ESCAPE '\\'");
+    expect(queries[0].sql).not.toContain('s."PersonID_Onec" ILIKE');
   });
 
   it('fails closed for own-only actors on the risk dashboard', async () => {
