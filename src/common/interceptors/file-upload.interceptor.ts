@@ -38,6 +38,16 @@ export const multerConfig = {
   },
 };
 
+/** Report submissions can include up to ten attachments and multi-select answers. */
+export const visitReportMulterConfig = {
+  ...multerConfig,
+  limits: {
+    ...multerConfig.limits,
+    files: 10,
+    fields: 64,
+  },
+};
+
 /**
  * Curriculum content is a single PDF up to 10 MB — larger than the shared
  * attachment limit and deliberately narrower in type.
