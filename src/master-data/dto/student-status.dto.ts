@@ -55,7 +55,7 @@ export class CreateStudentStatusDto {
   @Transform(({ value }: { value: unknown }) => trimIfString(value))
   @IsString()
   @MinLength(1)
-  @MaxLength(100)
+  @MaxLength(100, { message: 'ชื่อสถานะต้องไม่เกิน 100 ตัวอักษร' })
   labelTh!: string;
 
   @IsIn(STUDENT_STATUS_CATEGORIES)
@@ -85,7 +85,7 @@ export class CreateStudentStatusDto {
   @Transform(({ value }: { value: unknown }) => trimIfString(value))
   @IsString()
   @MinLength(1)
-  @MaxLength(32)
+  @MaxLength(32, { message: 'ระบบต้นทางต้องไม่เกิน 32 ตัวอักษร' })
   sourceSystem!: string;
 }
 
@@ -94,7 +94,7 @@ export class UpdateStudentStatusDto {
   @Transform(({ value }: { value: unknown }) => trimIfString(value))
   @IsString()
   @MinLength(1)
-  @MaxLength(100)
+  @MaxLength(100, { message: 'ชื่อสถานะต้องไม่เกิน 100 ตัวอักษร' })
   labelTh?: string;
 
   @IsOptional()
@@ -132,6 +132,6 @@ export class UpdateStudentStatusDto {
   @Transform(({ value }: { value: unknown }) => trimIfString(value))
   @IsString()
   @MinLength(1)
-  @MaxLength(32)
+  @MaxLength(32, { message: 'ระบบต้นทางต้องไม่เกิน 32 ตัวอักษร' })
   sourceSystem?: string;
 }

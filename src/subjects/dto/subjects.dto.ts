@@ -1,3 +1,4 @@
+import { OmitType } from '@nestjs/mapped-types';
 import { Transform } from 'class-transformer';
 import {
   ArrayMaxSize,
@@ -6,6 +7,7 @@ import {
   IsArray,
   IsIn,
   IsInt,
+  Matches,
   IsOptional,
   IsString,
   MaxLength,
@@ -28,14 +30,17 @@ export class CreateSubjectDto {
     typeof value === 'string' ? value.trim().toUpperCase() : value,
   )
   @IsString()
-  @MinLength(1)
-  @MaxLength(20)
+  @MinLength(1, { message: 'กรุณาระบุรหัสวิชา' })
+  @MaxLength(20, { message: 'รหัสวิชาต้องไม่เกิน 20 ตัวอักษร' })
+  @Matches(/^[ก-ฮA-Za-z0-9]+$/, {
+    message: 'รหัสวิชาใช้ได้เฉพาะตัวอักษรไทย อังกฤษ และตัวเลข',
+  })
   code!: string;
 
   @Transform(({ value }: { value: unknown }) => trimIfString(value))
   @IsString()
-  @MinLength(1)
-  @MaxLength(200)
+  @MinLength(1, { message: 'กรุณาระบุชื่อวิชา' })
+  @MaxLength(200, { message: 'ชื่อวิชาต้องไม่เกิน 200 ตัวอักษร' })
   nameTh!: string;
 }
 
@@ -136,6 +141,19 @@ export class SaveGradeSchoolSubjectDto extends AddSchoolSubjectDto {
   @IsInt({ each: true })
   @Min(1, { each: true })
   classroomIds!: number[];
+}
+
+/** Update keeps the existing code; creation alone applies the new character rule. */
+export class UpdateGradeSchoolSubjectDto extends OmitType(SaveGradeSchoolSubjectDto, [
+  'code',
+] as const) {
+  @Transform(({ value }: { value: unknown }) =>
+    typeof value === 'string' ? value.trim().toUpperCase() : value,
+  )
+  @IsString()
+  @MinLength(1, { message: 'กรุณาระบุรหัสวิชา' })
+  @MaxLength(20, { message: 'รหัสวิชาต้องไม่เกิน 20 ตัวอักษร' })
+  code!: string;
 }
 
 export class SaveClassroomSubjectTeachersDto {

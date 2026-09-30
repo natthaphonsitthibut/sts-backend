@@ -48,13 +48,13 @@ export class CreateTeacherDto {
   @Transform(({ value }) => (typeof value === 'string' ? value.trim() : (value as unknown)))
   @IsString()
   @MinLength(1, { message: 'กรุณาระบุชื่อ' })
-  @MaxLength(120)
+  @MaxLength(120, { message: 'ชื่อต้องไม่เกิน 120 ตัวอักษร' })
   firstName!: string;
 
   @Transform(({ value }) => (typeof value === 'string' ? value.trim() : (value as unknown)))
   @IsString()
   @MinLength(1, { message: 'กรุณาระบุนามสกุล' })
-  @MaxLength(120)
+  @MaxLength(120, { message: 'นามสกุลต้องไม่เกิน 120 ตัวอักษร' })
   lastName!: string;
 
   /**
@@ -74,12 +74,12 @@ export class CreateTeacherDto {
   @IsOptional()
   @optionalText()
   @IsEmail({}, { message: 'รูปแบบอีเมลไม่ถูกต้อง' })
-  @MaxLength(255)
+  @MaxLength(255, { message: 'อีเมลต้องไม่เกิน 255 ตัวอักษร' })
   email?: string;
 
   @IsOptional()
   @optionalText()
-  @MaxLength(64)
+  @MaxLength(64, { message: 'LINE ID ต้องไม่เกิน 64 ตัวอักษร' })
   lineId?: string;
 }
 
