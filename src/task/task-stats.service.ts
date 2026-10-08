@@ -206,6 +206,11 @@ export class TaskStatsService {
           referredAt: row.referred_at,
           agencyName: row.agency_name,
           agencyKindLabel: row.agency_kind_label,
+          // The agency's newest link: shareable while it opens, and its state so
+          // the row can warn when it ran out or locked.
+          linkUrl: typeof row.link_url === 'string' ? row.link_url : null,
+          linkStatusCode: typeof row.link_status_code === 'string' ? row.link_status_code : null,
+          linkExpiresAt: row.link_expires_at ?? null,
         };
       }),
       meta: buildPaginationMeta(page, limit, totalCount),

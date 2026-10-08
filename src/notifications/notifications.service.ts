@@ -14,6 +14,7 @@ const CASE_STATUS_LABELS: Record<string, string> = {
   PENDING_REVIEW: 'รอพิจารณา',
   RESOLVED: 'เสร็จสิ้น',
   STUDENT_NOT_FOUND: 'ไม่พบนักเรียน',
+  AWAITING_REFERRAL: 'รอส่งต่อ',
   AWAITING_REFERRAL_OUTCOME: 'รอผลการส่งต่อ',
 };
 const NOTIFICATION_RETENTION_DAYS = 90;
@@ -68,6 +69,7 @@ function formatCaseStatusDetail(
       );
     case 'RESOLVED':
       return reviewResult ? `ผลการพิจารณา: ${reviewResult}` : 'ผลการพิจารณา: ดำเนินการเสร็จสิ้น';
+    case 'AWAITING_REFERRAL':
     case 'AWAITING_REFERRAL_OUTCOME':
       return reviewResult ? `เหตุผลการส่งต่อ: ${reviewResult}` : null;
     case 'STUDENT_NOT_FOUND':

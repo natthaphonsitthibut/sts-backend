@@ -869,7 +869,8 @@ export class TaskRepository {
       FROM cases c
       WHERE c.student_uuid = $1
         AND c.status IN (
-          'OPEN', 'IN_PROGRESS', 'PENDING_REVIEW', 'STUDENT_NOT_FOUND', 'AWAITING_REFERRAL_OUTCOME'
+          'OPEN', 'IN_PROGRESS', 'PENDING_REVIEW', 'STUDENT_NOT_FOUND', 'AWAITING_REFERRAL',
+          'AWAITING_REFERRAL_OUTCOME'
         )
         AND c.deleted_at IS NULL${scopeSql}
       ORDER BY c.created_at DESC, c.id DESC
@@ -1267,6 +1268,27 @@ export class TaskRepository {
   }
 
   async findCaseByTaskId(taskId: string): Promise<QueryResultRow | null> {
+    return await this.findPublicLinkCase(
+      'JOIN tasks t ON t.case_id = c.id',
+      't.id = $1 AND t.deleted_at IS NULL',
+      taskId,
+    );
+  }
+
+  /**
+   * The case a referral link reports on, in the same shape the follow-up link
+   * reads — the agency's page shows what the teacher's page shows (owner,
+   * 2026-10-08).
+   */
+  async findCaseForReferralLink(caseId: number): Promise<QueryResultRow | null> {
+    return await this.findPublicLinkCase('', 'c.id = $1', caseId);
+  }
+
+  private async findPublicLinkCase(
+    joinSql: string,
+    whereSql: string,
+    param: unknown,
+  ): Promise<QueryResultRow | null> {
     const result = await this.query<QueryResultRow>(
       `
       SELECT
@@ -1315,7 +1337,7 @@ export class TaskRepository {
         enrollment."ProvinceNameThai_Onec",
         enrollment."PostalCode_Onec"
       FROM cases c
-      JOIN tasks t ON t.case_id = c.id
+      ${joinSql}
       LEFT JOIN case_workflow_statuses case_status ON case_status.code = c.status
       LEFT JOIN case_completion_outcomes completion_outcome
         ON completion_outcome.code = c.completion_outcome_code
@@ -1334,9 +1356,9 @@ export class TaskRepository {
       ) enrollment ON true
       LEFT JOIN student_person person ON person.person_uuid = enrollment.person_uuid
       LEFT JOIN grade_levels grade ON grade.id = enrollment."GradeLevelID_Onec"
-      WHERE t.id = $1 AND c.deleted_at IS NULL AND t.deleted_at IS NULL
+      WHERE ${whereSql} AND c.deleted_at IS NULL
       `,
-      [taskId],
+      [param],
     );
 
     return result.rows[0] || null;
@@ -2521,7 +2543,7 @@ export class TaskRepository {
     const scopeQuery = this.buildCaseScopeQuery(actor, 1);
     const scopeSql = scopeQuery.sql ? ` AND ${scopeQuery.sql}` : '';
     const result = await this.query<CountRow>(
-      `SELECT count(*) FROM cases c WHERE c.status IN ('OPEN', 'IN_PROGRESS', 'PENDING_REVIEW', 'STUDENT_NOT_FOUND', 'AWAITING_REFERRAL_OUTCOME') AND c.deleted_at IS NULL${scopeSql}`,
+      `SELECT count(*) FROM cases c WHERE c.status IN ('OPEN', 'IN_PROGRESS', 'PENDING_REVIEW', 'STUDENT_NOT_FOUND', 'AWAITING_REFERRAL', 'AWAITING_REFERRAL_OUTCOME') AND c.deleted_at IS NULL${scopeSql}`,
       scopeQuery.params,
     );
 
@@ -2534,6 +2556,7 @@ export class TaskRepository {
       'IN_PROGRESS',
       'PENDING_REVIEW',
       'STUDENT_NOT_FOUND',
+      'AWAITING_REFERRAL',
       'AWAITING_REFERRAL_OUTCOME',
     ];
     const scopeQuery = this.buildCaseScopeQuery(actor, 2);
@@ -3084,16 +3107,132 @@ export class TaskRepository {
       note: string | null;
     },
     executor: QueryExecutor,
-  ): Promise<void> {
-    await executor.query(
+  ): Promise<string> {
+    const result = await executor.query<{ id: string }>(
       `
         INSERT INTO case_referrals (
           case_review_id, case_id, referral_agency_id, referred_by_user_id,
           referral_note, created_by, updated_by
         ) VALUES ($1, $2, $3, $4, $5, $4, $4)
+        RETURNING id
       `,
       [data.reviewId, data.caseId, data.agencyId, data.referredByUserId, data.note],
     );
+    return String(result.rows[0].id);
+  }
+
+  /**
+   * Locks a case for sending a referral, with what deciding whether it may be
+   * sent needs: the ส่งต่อหน่วยงาน review it hangs off, and the case's newest
+   * referral with its newest link — the round this send would replace.
+   */
+  async lockCaseForReferral(
+    caseId: number,
+    actor: CaseScopeContext,
+    executor: QueryExecutor,
+  ): Promise<QueryResultRow | null> {
+    const scopeQuery = this.buildCaseScopeQuery(actor, 2);
+    const scopeSql = scopeQuery.sql ? ` AND ${scopeQuery.sql}` : '';
+    // Read the latest referral in a fresh statement after acquiring the case
+    // lock. A LATERAL read in the locking statement can keep the pre-wait
+    // snapshot and let concurrent replacement sends both issue a new round.
+    const locked = await executor.query<QueryResultRow>(
+      `SELECT c.id FROM cases c WHERE c.id = $1 AND c.deleted_at IS NULL${scopeSql}
+       FOR UPDATE OF c`,
+      [caseId, ...scopeQuery.params],
+    );
+    if (locked.rows.length === 0) return null;
+    const result = await executor.query<QueryResultRow>(
+      `
+        SELECT c.id, c.status, c.school_id, c.student_name, c.student_uuid::text,
+          (
+            SELECT review.id FROM case_reviews review
+            WHERE review.case_id = c.id AND review.review_action = 'REFER_AGENCY'
+            ORDER BY review.reviewed_at DESC, review.id DESC
+            LIMIT 1
+          ) AS refer_review_id,
+          latest.id AS latest_referral_id,
+          latest.status_code AS latest_referral_status,
+          EXISTS (
+            SELECT 1 FROM case_referral_results recorded
+            WHERE recorded.case_referral_id = latest.id
+          ) AS latest_has_result,
+          latest_link.status_code AS latest_link_status,
+          latest_link.expires_at AS latest_link_expires_at
+        FROM cases c
+        LEFT JOIN LATERAL (
+          SELECT referral.id, referral.status_code
+          FROM case_referrals referral
+          WHERE referral.case_id = c.id
+          ORDER BY referral.referred_at DESC, referral.id DESC
+          LIMIT 1
+        ) latest ON true
+        LEFT JOIN LATERAL (
+          SELECT link.status_code, link.expires_at
+          FROM case_referral_links link
+          WHERE link.case_referral_id = latest.id
+          ORDER BY link.created_at DESC, link.id DESC
+          LIMIT 1
+        ) latest_link ON true
+        WHERE c.id = $1 AND c.deleted_at IS NULL${scopeSql}
+      `,
+      [caseId, ...scopeQuery.params],
+    );
+    return result.rows[0] ?? null;
+  }
+
+  /**
+   * Closes a sent referral that never got a result — withdrawn by the school,
+   * or replaced after its link ran out or locked — the way a withdrawn round
+   * closes its task link: the referral reads ยกเลิก, its open link dies, and
+   * the why/who/when stay on its newest link.
+   */
+  async closeUnansweredReferral(
+    referralId: string,
+    data: { reason: string; cancelledByUserId: number | null },
+    executor: QueryExecutor,
+  ): Promise<void> {
+    await executor.query(
+      `
+        UPDATE case_referral_links link
+        SET status_code = CASE WHEN status_code = 'ACTIVE' THEN 'REVOKED' ELSE status_code END,
+            cancelled_at = now(),
+            cancelled_by_user_id = $2,
+            cancel_reason = $3
+        WHERE link.id = (
+          SELECT newest.id FROM case_referral_links newest
+          WHERE newest.case_referral_id = $1
+          ORDER BY newest.created_at DESC, newest.id DESC
+          LIMIT 1
+        )
+      `,
+      [referralId, data.cancelledByUserId, data.reason],
+    );
+    await executor.query(
+      `UPDATE case_referral_links SET status_code = 'REVOKED'
+       WHERE case_referral_id = $1 AND status_code = 'ACTIVE'`,
+      [referralId],
+    );
+    await executor.query(
+      `UPDATE case_referrals SET status_code = 'CANCELLED', updated_by = $2 WHERE id = $1`,
+      [referralId, data.cancelledByUserId],
+    );
+  }
+
+  async setCaseStatus(
+    caseId: number,
+    data: { from: string[]; to: string; updatedByUserId: number | null },
+    executor: QueryExecutor,
+  ): Promise<boolean> {
+    const result = await executor.query(
+      `
+        UPDATE cases SET status = $2, completion_outcome_code = NULL, updated_by = $3
+        WHERE id = $1 AND status = ANY($4::text[]) AND deleted_at IS NULL
+        RETURNING id
+      `,
+      [caseId, data.to, data.updatedByUserId, data.from],
+    );
+    return result.rows.length === 1;
   }
 
   /**
@@ -3104,11 +3243,23 @@ export class TaskRepository {
   async lockCaseReferralForResult(
     caseId: number,
     referralId: string,
-    actor: CaseScopeContext,
+    actor: CaseScopeContext | null,
     executor: QueryExecutor,
   ): Promise<QueryResultRow | null> {
-    const scopeQuery = this.buildCaseScopeQuery(actor, 3);
+    // `null` is the agency's referral link: its token, not a staff scope, is
+    // what proved access to this one referral.
+    const scopeQuery =
+      actor === null ? { sql: '', params: [] } : this.buildCaseScopeQuery(actor, 3);
     const scopeSql = scopeQuery.sql ? ` AND ${scopeQuery.sql}` : '';
+    // Match sendReferral's lock order: case -> referral -> link. Otherwise a
+    // replacement send and an agency report can wait on each other's locks.
+    const caseScope = actor === null ? { sql: '', params: [] } : this.buildCaseScopeQuery(actor, 2);
+    const caseLock = await executor.query<QueryResultRow>(
+      `SELECT c.id FROM cases c WHERE c.id = $1 AND c.deleted_at IS NULL
+        ${caseScope.sql ? `AND ${caseScope.sql}` : ''} FOR UPDATE OF c`,
+      [caseId, ...caseScope.params],
+    );
+    if (caseLock.rows.length === 0) return null;
     const result = await executor.query<QueryResultRow>(
       `
         SELECT referral.id, referral.status_code, c.status AS case_status,
@@ -3125,9 +3276,23 @@ export class TaskRepository {
         FROM case_referrals referral
         JOIN cases c ON c.id = referral.case_id AND c.deleted_at IS NULL
         WHERE referral.id = $1 AND referral.case_id = $2${scopeSql}
-        FOR UPDATE OF referral, c
+        FOR UPDATE OF referral
       `,
       [referralId, caseId, ...scopeQuery.params],
+    );
+    return result.rows[0] ?? null;
+  }
+
+  /** Recheck and lock the reporting link after the case/referral locks. */
+  async lockReferralLinkForReport(linkId: string, referralId: string, executor: QueryExecutor) {
+    const result = await executor.query<QueryResultRow>(
+      `SELECT id, status_code, starts_at, expires_at,
+          starts_at <= clock_timestamp() AS has_started,
+          expires_at > clock_timestamp() AS has_not_expired
+       FROM case_referral_links
+       WHERE id = $1 AND case_referral_id = $2
+       FOR UPDATE`,
+      [linkId, referralId],
     );
     return result.rows[0] ?? null;
   }
@@ -3145,15 +3310,46 @@ export class TaskRepository {
       nextCaseStatus: string;
       note: string;
       recordedByUserId: number | null;
+      /** Set when the agency reported through its link. */
+      agencyReport?: {
+        linkId: string;
+        actionDate: string;
+        identityProviderCode: string;
+        providerSubject: string;
+        reporterName: string;
+      };
     },
     executor: QueryExecutor,
   ): Promise<boolean> {
+    const report = data.agencyReport ?? null;
     await executor.query(
       `
-        INSERT INTO case_referral_results (case_referral_id, result_note, recorded_by_user_id)
-        VALUES ($1, $2, $3)
+        INSERT INTO case_referral_results (
+          case_referral_id, result_note, recorded_by_user_id, case_referral_link_id,
+          action_date, reporter_identity_provider_code, reporter_provider_subject, reporter_name
+        )
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
       `,
-      [data.referralId, data.note, data.recordedByUserId],
+      [
+        data.referralId,
+        data.note,
+        data.recordedByUserId,
+        report?.linkId ?? null,
+        report?.actionDate ?? null,
+        report?.identityProviderCode ?? null,
+        report?.providerSubject ?? null,
+        report?.reporterName ?? null,
+      ],
+    );
+    // A referral takes one result: the link it came through is spent, and any
+    // other link still open on it dies with it (the school recorded it first).
+    await executor.query(
+      `
+        UPDATE case_referral_links
+        SET status_code = CASE WHEN id = $2 THEN 'USED' ELSE 'REVOKED' END
+        WHERE case_referral_id = $1 AND (status_code = 'ACTIVE' OR id = $2)
+      `,
+      [data.referralId, report?.linkId ?? null],
     );
     await executor.query(
       `
@@ -3173,6 +3369,124 @@ export class TaskRepository {
       [data.caseId, data.nextCaseStatus, data.recordedByUserId],
     );
     return transitioned.rows.length === 1;
+  }
+
+  async insertReferralLink(
+    data: {
+      referralId: string;
+      tokenHash: string;
+      tokenEncrypted: string;
+      accessCodeHash: string;
+      startsAt: Date;
+      expiresAt: Date;
+      createdByUserId: number | null;
+    },
+    executor: QueryExecutor,
+  ): Promise<string> {
+    const result = await executor.query<{ id: string }>(
+      `
+        INSERT INTO case_referral_links (
+          case_referral_id, token_hash, token_encrypted, access_code_hash,
+          starts_at, expires_at, created_by_user_id
+        )
+        VALUES ($1, $2, $3, $4, $5, $6, $7)
+        RETURNING id
+      `,
+      [
+        data.referralId,
+        data.tokenHash,
+        data.tokenEncrypted,
+        data.accessCodeHash,
+        data.startsAt,
+        data.expiresAt,
+        data.createdByUserId,
+      ],
+    );
+    return String(result.rows[0].id);
+  }
+
+  /**
+   * A referral link by its token hash, with what deciding whether it may be
+   * used needs: its own state, and whether its referral is still the case's
+   * open question. Never returns the token or the code hash's plaintext.
+   */
+  async findReferralLinkByTokenHash(tokenHash: string): Promise<QueryResultRow | null> {
+    return await this.findReferralLink('link.token_hash = $1', tokenHash);
+  }
+
+  async findReferralLinkById(linkId: string): Promise<QueryResultRow | null> {
+    return await this.findReferralLink('link.id = $1', linkId);
+  }
+
+  private async findReferralLink(whereSql: string, param: string): Promise<QueryResultRow | null> {
+    const result = await this.query<QueryResultRow>(
+      `
+        SELECT link.id, link.case_referral_id, link.access_code_hash, link.failed_code_attempts,
+          link.status_code, link.starts_at, link.expires_at,
+          referral.case_id, referral.referral_note, referral.referred_at,
+          agency.agency_name, kind.label_th AS agency_kind_label,
+          COALESCE(
+            NULLIF(trim(concat_ws(' ', referrer."FirstName", referrer."LastName")), ''),
+            referrer.username
+          ) AS referred_by,
+          c.status AS case_status, c.school_id,
+          EXISTS (
+            SELECT 1 FROM case_referral_results recorded
+            WHERE recorded.case_referral_id = referral.id
+          ) AS has_result
+        FROM case_referral_links link
+        JOIN case_referrals referral ON referral.id = link.case_referral_id
+        JOIN cases c ON c.id = referral.case_id AND c.deleted_at IS NULL
+        JOIN referral_agencies agency ON agency.id = referral.referral_agency_id
+        JOIN referral_agency_kinds kind ON kind.code = agency.agency_kind_code
+        LEFT JOIN users referrer ON referrer.id = referral.referred_by_user_id
+        WHERE ${whereSql}
+      `,
+      [param],
+    );
+    return result.rows[0] ?? null;
+  }
+
+  /**
+   * Counts one wrong access code and locks the link on the last allowed try, in
+   * one statement so two wrong guesses at once cannot both slip under the limit.
+   */
+  async recordFailedReferralLinkCode(
+    linkId: string,
+    maxAttempts: number,
+  ): Promise<{ attempts: number; locked: boolean } | null> {
+    const result = await this.query<{ failed_code_attempts: number; status_code: string }>(
+      `
+        UPDATE case_referral_links
+        SET failed_code_attempts = failed_code_attempts + 1,
+            status_code = CASE
+              WHEN failed_code_attempts + 1 >= $2 THEN 'LOCKED' ELSE status_code
+            END
+        WHERE id = $1 AND status_code = 'ACTIVE'
+        RETURNING failed_code_attempts, status_code
+      `,
+      [linkId, maxAttempts],
+    );
+    const row = result.rows[0];
+    return row
+      ? { attempts: Number(row.failed_code_attempts), locked: row.status_code === 'LOCKED' }
+      : null;
+  }
+
+  /** Where the agency opens a referral link (same base as `/task/:token`). */
+  referralLinkUrl(token: string): string {
+    return `${this.appRuntimeConfig.frontendBaseUrl ?? ''}/referral-report/${token}`;
+  }
+
+  /** The shareable URL of a stored referral link, or null when it cannot be rebuilt. */
+  resolveReferralLinkUrl(tokenEncrypted: string | null | undefined): string | null {
+    if (!tokenEncrypted) return null;
+    try {
+      return this.referralLinkUrl(this.tokenEncryption.decrypt(tokenEncrypted));
+    } catch {
+      this.logger.warn('Unable to decrypt a stored referral link; returning it as unavailable');
+      return null;
+    }
   }
 
   async findCaseReviewById(reviewId: string): Promise<QueryResultRow | null> {
@@ -3774,7 +4088,9 @@ export class TaskRepository {
           person.photo_storage_key, person.updated_at AS photo_updated_at,
           referral.status_code, referral.referred_at,
           ${REFERRAL_STAGE_SQL} AS stage_code,
-          agency.agency_name, kind.label_th AS agency_kind_label
+          agency.agency_name, kind.label_th AS agency_kind_label,
+          latest_link.status_code AS link_status_code, latest_link.expires_at AS link_expires_at,
+          latest_link.token_encrypted AS link_token_encrypted
         FROM case_referrals referral
         JOIN cases c ON c.id = referral.case_id AND c.deleted_at IS NULL
         LEFT JOIN schools school ON school.id = c.school_id
@@ -3783,6 +4099,13 @@ export class TaskRepository {
         LEFT JOIN student_person person ON person.person_uuid = student.person_uuid
         JOIN referral_agencies agency ON agency.id = referral.referral_agency_id
         JOIN referral_agency_kinds kind ON kind.code = agency.agency_kind_code
+        LEFT JOIN LATERAL (
+          SELECT link.status_code, link.expires_at, link.token_encrypted
+          FROM case_referral_links link
+          WHERE link.case_referral_id = referral.id
+          ORDER BY link.created_at DESC, link.id DESC
+          LIMIT 1
+        ) latest_link ON true
         WHERE 1=1${whereSql}
         ORDER BY referral.referred_at DESC, referral.id DESC
         LIMIT $${rowParams.length - 1} OFFSET $${rowParams.length}
@@ -3791,7 +4114,16 @@ export class TaskRepository {
       ),
       this.query<CountRow>(`SELECT COUNT(*)::int AS count${fromSql}`, filterParams),
     ]);
-    return { rows: rows.rows, totalCount: Number(count.rows[0]?.count ?? 0) };
+    return {
+      rows: rows.rows.map(({ link_token_encrypted, ...row }) => ({
+        ...row,
+        link_url:
+          row.link_status_code === 'ACTIVE' && new Date(String(row.link_expires_at)) > new Date()
+            ? this.resolveReferralLinkUrl(link_token_encrypted as string | null)
+            : null,
+      })),
+      totalCount: Number(count.rows[0]?.count ?? 0),
+    };
   }
 
   async listCaseReferrals(caseId: number): Promise<QueryResultRow[]> {
@@ -3810,7 +4142,19 @@ export class TaskRepository {
           COALESCE(
             NULLIF(trim(concat_ws(' ', recorder."FirstName", recorder."LastName")), ''),
             recorder.username
-          ) AS result_recorded_by
+          ) AS result_recorded_by,
+          result.action_date AS result_action_date,
+          result.case_referral_link_id IS NOT NULL AS result_reported_by_agency,
+          result.reporter_name AS result_reporter_name,
+          provider.label_th AS result_reporter_identity_provider,
+          latest_link.id AS link_id, latest_link.status_code AS link_status_code,
+          latest_link.starts_at AS link_starts_at, latest_link.expires_at AS link_expires_at,
+          latest_link.token_encrypted AS link_token_encrypted,
+          latest_link.cancelled_at AS link_cancelled_at, latest_link.cancel_reason AS link_cancel_reason,
+          COALESCE(
+            NULLIF(trim(concat_ws(' ', canceller."FirstName", canceller."LastName")), ''),
+            canceller.username
+          ) AS link_cancelled_by
         FROM case_referrals referral
         JOIN referral_agencies agency ON agency.id = referral.referral_agency_id
         JOIN referral_agency_kinds kind ON kind.code = agency.agency_kind_code
@@ -3818,12 +4162,31 @@ export class TaskRepository {
         LEFT JOIN users actor ON actor.id = referral.referred_by_user_id
         LEFT JOIN case_referral_results result ON result.case_referral_id = referral.id
         LEFT JOIN users recorder ON recorder.id = result.recorded_by_user_id
+        LEFT JOIN identity_providers provider
+          ON provider.code = result.reporter_identity_provider_code
+        LEFT JOIN LATERAL (
+          SELECT link.id, link.status_code, link.starts_at, link.expires_at, link.token_encrypted,
+            link.cancelled_at, link.cancel_reason, link.cancelled_by_user_id
+          FROM case_referral_links link
+          WHERE link.case_referral_id = referral.id
+          ORDER BY link.created_at DESC, link.id DESC
+          LIMIT 1
+        ) latest_link ON true
+        LEFT JOIN users canceller ON canceller.id = latest_link.cancelled_by_user_id
         WHERE referral.case_id = $1
         ORDER BY referral.referred_at DESC, referral.id DESC
       `,
       [caseId],
     );
-    return result.rows;
+    // The token only leaves the database as the shareable URL of a link that
+    // still opens; a spent, locked or revoked link has nothing to share.
+    return result.rows.map(({ link_token_encrypted, ...row }) => ({
+      ...row,
+      link_url:
+        row.link_status_code === 'ACTIVE' && new Date(String(row.link_expires_at)) > new Date()
+          ? this.resolveReferralLinkUrl(link_token_encrypted as string | null)
+          : null,
+    }));
   }
 
   async listCaseRiskSignals(caseId: number): Promise<QueryResultRow[]> {

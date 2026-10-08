@@ -2,6 +2,7 @@ const { NestFactory } = require('@nestjs/core');
 const { DataSource } = require('typeorm');
 const { AppModule } = require('../dist/app.module');
 const { CaseService } = require('../dist/task/case.service');
+const { ReferralLinkService } = require('../dist/task/referral-link.service');
 
 if (process.env.NODE_ENV === 'production') {
   throw new Error('Refusing to seed a case referral with NODE_ENV=production');
@@ -14,7 +15,7 @@ const COUNT = Number(
 /**
  * Where each seeded referral ends up, spread across the cases in turn so the
  * register shows every state the referral flow can reach:
- *   - `AWAITING`      ส่งต่อ, still รอผลการส่งต่อ
+ *   - `AWAITING`      ส่งต่อ with an open agency link, still รอผลการส่งต่อ
  *   - `NOT_SUCCEEDED` ส่งต่อ → ยังไม่สำเร็จ, back in รอพิจารณา
  *   - `SUCCEEDED`     ส่งต่อ → สำเร็จ → ปิดเคส, closed as ส่งต่อหน่วยงาน
  */
@@ -36,6 +37,7 @@ async function main() {
   const app = await NestFactory.createApplicationContext(AppModule, { logger: false });
   const dataSource = app.get(DataSource);
   const caseService = app.get(CaseService);
+  const referralLinks = app.get(ReferralLinkService);
 
   try {
     // Cases already waiting for review come first — those are referrals the
@@ -124,12 +126,20 @@ async function main() {
       }
 
       const note = `ส่งต่อ ${item.agency.agency_name} เพื่อช่วยเหลือ ${item.caseRecord.student_name}`;
+      // ส่งต่อหน่วยงาน decides; sending from the case page picks the agency and
+      // issues its link, as the school would.
       await caseService.reviewCase(
         caseId,
+        { review_action: 'REFER_AGENCY', review_note: note },
+        actor,
+      );
+      await referralLinks.sendReferral(
+        caseId,
         {
-          review_action: 'REFER_AGENCY',
-          review_note: note,
           referral_agency_id: Number(item.agency.id),
+          referral_note: note,
+          starts_at: new Date().toISOString(),
+          expires_at: new Date(Date.now() + 14 * 86_400_000).toISOString(),
         },
         actor,
       );
@@ -141,17 +151,31 @@ async function main() {
         [caseId],
       );
       const succeeded = item.outcome === 'SUCCEEDED';
-      await caseService.recordReferralResult(
-        caseId,
-        referral.id,
-        {
-          result_code: succeeded ? 'SUCCEEDED' : 'NOT_SUCCEEDED',
-          result_note: succeeded
-            ? `${item.agency.agency_name} แจ้งว่าช่วยเหลือเรียบร้อย นักเรียนกลับมาเรียนตามปกติ`
-            : `${item.agency.agency_name} แจ้งว่าติดต่อครอบครัวไม่ได้ ยังช่วยเหลือไม่สำเร็จ`,
-        },
-        actor,
+      // Results only come from the agency's report through its link; the seed
+      // files it through the same core the link's report endpoint uses.
+      const [link] = await dataSource.query(
+        `SELECT id FROM case_referral_links WHERE case_referral_id = $1
+         ORDER BY created_at DESC LIMIT 1`,
+        [referral.id],
       );
+      await caseService.applyReferralResult({
+        caseId,
+        referralId: referral.id,
+        resultCode: succeeded ? 'SUCCEEDED' : 'NOT_SUCCEEDED',
+        note: succeeded
+          ? `${item.agency.agency_name} แจ้งว่าช่วยเหลือเรียบร้อย นักเรียนกลับมาเรียนตามปกติ`
+          : `${item.agency.agency_name} แจ้งว่าติดต่อครอบครัวไม่ได้ ยังช่วยเหลือไม่สำเร็จ`,
+        scopeActor: null,
+        recordedByUserId: null,
+        agencyReport: {
+          linkId: link.id,
+          actionDate: new Date().toISOString().slice(0, 10),
+          identityProviderCode: 'ARAID',
+          providerSubject: `seed-${link.id}`,
+          reporterName: `เจ้าหน้าที่ ${item.agency.agency_name}`,
+        },
+        audit: { actorUserId: null, actorLabel: `เจ้าหน้าที่ ${item.agency.agency_name}` },
+      });
       if (succeeded) {
         await caseService.reviewCase(
           caseId,

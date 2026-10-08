@@ -78,6 +78,7 @@ export interface RiskDashboardFilters {
     | 'IN_PROGRESS'
     | 'PENDING_REVIEW'
     | 'STUDENT_NOT_FOUND'
+    | 'AWAITING_REFERRAL'
     | 'AWAITING_REFERRAL_OUTCOME'
     | 'RESOLVED';
   /**

@@ -1,15 +1,18 @@
 /**
- * Browser proof of บันทึกผลการส่งต่อ on the case page: a referred case shows
- * รอผล with the button, the งานส่งต่อ register shows it under รอผลการส่งต่อ with
- * the same button in its tools, ยังไม่สำเร็จ sends the case back to รอพิจารณา
- * with the note on the step, and after a second referral สำเร็จ also goes back
- * to รอพิจารณา, where ปิดเคส closes it. Also checks the page fits a phone.
+ * Browser proof of referral outcomes on the case page: a sent referral waits in
+ * รอผลการส่งต่อ with no result step and nothing for the school to fill in (the
+ * result is the agency's report), the งานส่งต่อ register files it under
+ * รอผลการส่งต่อ with ดูรายละเอียดเคส + แชร์, an agency report of ยังไม่สำเร็จ
+ * brings the case back to รอพิจารณา with the report step and its review
+ * buttons, and after a second referral สำเร็จ goes back to รอพิจารณา, where
+ * ปิดเคส closes it. Also checks the page fits a phone.
  */
 const { NestFactory } = require('@nestjs/core');
 const { DataSource } = require('typeorm');
 const { AppModule } = require('../dist/app.module');
 const { SessionCookieService } = require('../dist/auth/session-cookie.service');
 const { CaseService } = require('../dist/task/case.service');
+const { ReferralLinkService } = require('../dist/task/referral-link.service');
 const { assert, openChrome, wait, waitFor } = require('./smoke-case-assistance-browser');
 
 if (process.env.NODE_ENV === 'production') {
@@ -33,6 +36,7 @@ async function main() {
   const dataSource = app.get(DataSource);
   const sessionCookieService = app.get(SessionCookieService);
   const caseService = app.get(CaseService);
+  const referralLinks = app.get(ReferralLinkService);
   let chrome = null;
   let caseId = null;
 
@@ -50,7 +54,7 @@ async function main() {
            WHERE existing.student_uuid = enrollment.student_uuid
              AND existing.deleted_at IS NULL
              AND existing.status IN ('OPEN', 'IN_PROGRESS', 'PENDING_REVIEW',
-               'STUDENT_NOT_FOUND', 'AWAITING_REFERRAL_OUTCOME')
+               'STUDENT_NOT_FOUND', 'AWAITING_REFERRAL', 'AWAITING_REFERRAL_OUTCOME')
          )
        ORDER BY enrollment.student_uuid
        LIMIT 1`,
@@ -97,12 +101,25 @@ async function main() {
       ],
     );
     caseId = Number(createdCase.id);
-    const refer = (note) =>
-      caseService.reviewCase(
+    // ส่งต่อหน่วยงาน decides (รอส่งต่อ); sending from the case page issues the
+    // agency's link and moves the case to รอผลการส่งต่อ.
+    const refer = async (note) => {
+      await caseService.reviewCase(
         caseId,
-        { review_action: 'REFER_AGENCY', review_note: note, referral_agency_id: Number(agency.id) },
+        { review_action: 'REFER_AGENCY', review_note: note },
         director,
       );
+      await referralLinks.sendReferral(
+        caseId,
+        {
+          referral_agency_id: Number(agency.id),
+          referral_note: note,
+          starts_at: new Date(Date.now() - 60_000).toISOString(),
+          expires_at: new Date(Date.now() + 86_400_000).toISOString(),
+        },
+        director,
+      );
+    };
     const caseStatus = async () =>
       (await dataSource.query(`SELECT status FROM cases WHERE id = $1`, [caseId]))[0].status;
 
@@ -148,20 +165,22 @@ async function main() {
 
     const visibleButton = (label) => `[...document.querySelectorAll('button')].find((button) =>
       button.offsetParent !== null && button.innerText.trim() === ${JSON.stringify(label)})`;
-    // Each referral is a step on the case's tracking rail, oldest first. Its
-    // fields are disabled inputs, so read their values along with the text.
+    // A referral is a ส่งต่อหน่วยงาน step, and once its result is in, a
+    // รายงานผลการส่งต่อ step after it, oldest first. Fields are disabled
+    // inputs, so read their values too.
+    const REPORT_STEP = '[data-referral-result]';
     const referralStepText = (position) => `(() => {
-      const steps = [...document.querySelectorAll('[data-referral-step]')];
+      const steps = [...document.querySelectorAll(${JSON.stringify(REPORT_STEP)})];
       const step = steps.at(${position});
       if (!step) return '';
       const values = [...step.querySelectorAll('input, textarea')].map((field) => field.value);
       return [step.innerText, ...values].join('\\n');
     })()`;
     const referralStepCount = `document.querySelectorAll('[data-referral-step]').length`;
-    // The button sits in the newest referral's step, not anywhere on the page.
-    const buttonInNewestReferral = (label) => `(() => {
+    // Review buttons sit in the newest report step; บันทึกผล in the sent referral's step.
+    const buttonInNewestReferral = (label, marker = REPORT_STEP) => `(() => {
       const step = [...document.querySelectorAll('[data-flow-step]')]
-        .filter((candidate) => candidate.querySelector('[data-referral-step]'))
+        .filter((candidate) => candidate.querySelector(${JSON.stringify(marker)}))
         .at(-1);
       return Boolean(step && [...step.querySelectorAll('button')].some((button) =>
         button.offsetParent !== null && button.innerText.trim() === ${JSON.stringify(label)}));
@@ -179,57 +198,57 @@ async function main() {
       await wait(500);
     }
 
-    async function recordResult(resultLabel, note, submitLabel) {
-      assert(
-        await chrome.evaluate(`Boolean(${visibleButton('บันทึกผลการส่งต่อ')})`),
-        'the บันทึกผลการส่งต่อ button is missing',
+    // Results only come from the agency's report through its link; that flow
+    // is smoke:referral-links-browser. Here the report goes into the same core.
+    async function reportAsAgency(resultCode, note) {
+      const [latest] = await dataSource.query(
+        `SELECT referral.id AS referral_id, link.id AS link_id
+         FROM case_referrals referral
+         JOIN case_referral_links link ON link.case_referral_id = referral.id
+         WHERE referral.case_id = $1
+         ORDER BY referral.referred_at DESC, link.created_at DESC
+         LIMIT 1`,
+        [caseId],
       );
-      await chrome.evaluate(`${visibleButton('บันทึกผลการส่งต่อ')}.click()`);
-      await waitFor(
-        async () =>
-          await chrome.evaluate(`Boolean(document.getElementById('referral-result-note'))`),
-        'the result dialog did not open',
-      );
-      await chrome.evaluate(`[...document.querySelectorAll('label')]
-        .find((label) => label.innerText.trim() === ${JSON.stringify(resultLabel)}).click()`);
-      await chrome.evaluate(`(() => {
-        const field = document.getElementById('referral-result-note');
-        const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set;
-        setter.call(field, ${JSON.stringify(note)});
-        field.dispatchEvent(new Event('input', { bubbles: true }));
-      })()`);
-      await waitFor(
-        async () =>
-          await chrome.evaluate(`(() => {
-            const button = ${visibleButton(submitLabel)};
-            return Boolean(button) && !button.disabled;
-          })()`),
-        `the submit button did not read ${submitLabel}`,
-      );
-      await chrome.evaluate(`${visibleButton(submitLabel)}.click()`);
-      await waitFor(
-        async () =>
-          !(await chrome.evaluate(`Boolean(document.getElementById('referral-result-note'))`)),
-        'the result dialog did not close after saving',
-      );
+      await caseService.applyReferralResult({
+        caseId,
+        referralId: latest.referral_id,
+        resultCode,
+        note,
+        scopeActor: null,
+        recordedByUserId: null,
+        agencyReport: {
+          linkId: latest.link_id,
+          actionDate: new Date().toISOString().slice(0, 10),
+          identityProviderCode: 'ARAID',
+          providerSubject: 'smoke-outcomes-browser-subject',
+          reporterName: 'เจ้าหน้าที่ หน่วยงานทดสอบ',
+        },
+        audit: { actorUserId: null, actorLabel: 'เจ้าหน้าที่ หน่วยงานทดสอบ' },
+      });
+      await openCasePage();
     }
 
-    // 1. Waiting: the newest referral reads รอผล and offers the button.
+    // 1. Waiting: no result step yet, and nothing for the school to fill in.
     await openCasePage();
-    const badge = await chrome.evaluate(referralStepText(-1));
-    assert(badge.includes('รอผล'), `referral step does not say รอผล: ${badge}`);
     assert(
-      await chrome.evaluate(buttonInNewestReferral('บันทึกผลการส่งต่อ')),
-      'บันทึกผลการส่งต่อ is not inside the referral step',
+      (await chrome.evaluate(
+        `document.querySelectorAll(${JSON.stringify(REPORT_STEP)}).length`,
+      )) === 0,
+      'a report step shows before any result',
+    );
+    assert(
+      !(await chrome.evaluate(`Boolean(${visibleButton('บันทึกผลการส่งต่อ')})`)),
+      'the school is still offered บันทึกผลการส่งต่อ',
     );
     assert(
       await chrome.evaluate(`document.body.innerText.includes('รอผลการส่งต่อ')`),
       'case status รอผลการส่งต่อ is not shown',
     );
-    console.log('ok referred case shows รอผลการส่งต่อ and the บันทึกผลการส่งต่อ button');
+    console.log('ok a sent referral waits in รอผลการส่งต่อ with no result step and no บันทึกผล');
 
-    // 1b. The งานส่งต่อ register: cards follow the flow, and the waiting row
-    //     offers บันทึกผลการส่งต่อ in its tools next to the case link.
+    // 1b. The งานส่งต่อ register: cards follow the flow; a row's tools are
+    //     ดูรายละเอียดเคส + แชร์, like the กลุ่มเสี่ยง rows.
     await chrome.call('Page.navigate', { url: `${FRONTEND_URL}/student-risk-report/referrals` });
     await waitFor(
       async () =>
@@ -251,26 +270,26 @@ async function main() {
       setter.call(field, ${JSON.stringify(enrollment.student_name)});
       field.dispatchEvent(new Event('input', { bubbles: true }));
     })()`);
-    const recordToolLabel = `บันทึกผลการส่งต่อของ ${enrollment.student_name}`;
+    const caseLinkLabel = `ดูรายละเอียดเคสของ ${enrollment.student_name}`;
+    const rowTools = `(() => {
+      const link = [...document.querySelectorAll('a[aria-label]')].find((anchor) =>
+        anchor.offsetParent !== null && anchor.getAttribute('aria-label') === ${JSON.stringify(caseLinkLabel)});
+      if (!link) return null;
+      return [...link.parentElement.querySelectorAll('button')].map((button) => ({
+        label: button.getAttribute('aria-label') || button.innerText.trim(),
+        disabled: button.disabled,
+      }));
+    })()`;
     await waitFor(
-      async () =>
-        await chrome.evaluate(`[...document.querySelectorAll('button[aria-label]')].some((button) =>
-          button.offsetParent !== null && button.getAttribute('aria-label') === ${JSON.stringify(recordToolLabel)})`),
-      'the waiting row has no บันทึกผลการส่งต่อ tool',
+      async () => Boolean(await chrome.evaluate(rowTools)),
+      'the waiting row did not render',
     );
-    await chrome.evaluate(`[...document.querySelectorAll('button[aria-label]')].find((button) =>
-      button.offsetParent !== null && button.getAttribute('aria-label') === ${JSON.stringify(recordToolLabel)}).click()`);
-    await waitFor(
-      async () => await chrome.evaluate(`Boolean(document.getElementById('referral-result-note'))`),
-      'the register tool did not open the result dialog',
+    const tools = await chrome.evaluate(rowTools);
+    assert(
+      tools.length === 1 && tools[0].label === 'แชร์ลิงก์' && tools[0].disabled === false,
+      `the waiting row's tools are ${JSON.stringify(tools)}`,
     );
-    await chrome.evaluate(`${visibleButton('ยกเลิก')}.click()`);
-    await waitFor(
-      async () =>
-        !(await chrome.evaluate(`Boolean(document.getElementById('referral-result-note'))`)),
-      'the result dialog did not close',
-    );
-    console.log('ok งานส่งต่อ shows the flow cards and the record tool on the waiting row');
+    console.log('ok งานส่งต่อ shows the flow cards; the row tools are ดูรายละเอียดเคส + แชร์');
     await openCasePage();
 
     // 2. Phone width: the card and its button stay inside the screen.
@@ -295,7 +314,7 @@ async function main() {
 
     // 3. ยังไม่สำเร็จ → รอพิจารณา, the note shows on the card, no button left.
     const notYetNote = 'หน่วยงานแจ้งว่าครอบครัวไม่ไปตามนัด';
-    await recordResult('ยังไม่สำเร็จ', notYetNote, 'บันทึกผล');
+    await reportAsAgency('NOT_SUCCEEDED', notYetNote);
     await waitFor(
       async () => (await caseStatus()) === 'PENDING_REVIEW',
       'case did not return to รอพิจารณา',
@@ -330,7 +349,7 @@ async function main() {
       (await chrome.evaluate(referralStepText(0))).includes(notYetNote),
       'the first referral step lost its recorded result',
     );
-    await recordResult('สำเร็จ', 'นักเรียนกลับมาเรียนตามปกติแล้ว', 'บันทึกผล');
+    await reportAsAgency('SUCCEEDED', 'นักเรียนกลับมาเรียนตามปกติแล้ว');
     await waitFor(
       async () => (await caseStatus()) === 'PENDING_REVIEW',
       'สำเร็จ did not return the case to รอพิจารณา',

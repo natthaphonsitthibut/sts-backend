@@ -511,10 +511,49 @@ export class CancelCaseAssignmentDto {
 export const REFERRAL_RESULT_CODES = ['SUCCEEDED', 'NOT_SUCCEEDED'] as const;
 export type ReferralResultCode = (typeof REFERRAL_RESULT_CODES)[number];
 
-/** What the agency reported back, recorded once per referral. */
-export class RecordReferralResultDto {
+/**
+ * ส่งต่อ from the case page, the referral's มอบหมาย: which agency, why, and
+ * when its report link opens and closes.
+ */
+export class SendReferralDto {
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  referral_agency_id!: number;
+
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(2000)
+  referral_note!: string;
+
+  @IsDateString()
+  starts_at!: string;
+
+  @IsDateString()
+  expires_at!: string;
+}
+
+/** ยกเลิกการส่งต่อ, with its reason, like ยกเลิกการมอบหมาย. */
+export class CancelReferralDto {
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(500)
+  cancel_reason!: string;
+}
+
+export class ReferralLinkAccessCodeDto {
+  @Matches(/^\d{6}$/, { message: 'กรุณากรอกรหัส 6 หลัก' })
+  access_code!: string;
+}
+
+/** The agency's report through its referral link (D3: result, date, summary). */
+export class SubmitReferralReportDto {
   @IsIn(REFERRAL_RESULT_CODES)
   result_code!: ReferralResultCode;
+
+  @IsDateString({ strict: true }, { message: 'วันที่ดำเนินการไม่ถูกต้อง' })
+  @Matches(/^\d{4}-\d{2}-\d{2}$/, { message: 'วันที่ดำเนินการไม่ถูกต้อง' })
+  action_date!: string;
 
   @IsString()
   @IsNotEmpty()
@@ -591,6 +630,7 @@ export const RISK_DASHBOARD_CASE_STATUSES = [
   'IN_PROGRESS',
   'PENDING_REVIEW',
   'STUDENT_NOT_FOUND',
+  'AWAITING_REFERRAL',
   'AWAITING_REFERRAL_OUTCOME',
   'RESOLVED',
 ] as const;

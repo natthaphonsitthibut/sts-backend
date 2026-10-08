@@ -10,6 +10,7 @@ const { DataSource } = require('typeorm');
 const { AppModule } = require('../dist/app.module');
 const { CaseService } = require('../dist/task/case.service');
 const { TaskStatsService } = require('../dist/task/task-stats.service');
+const { ReferralLinkService } = require('../dist/task/referral-link.service');
 
 if (process.env.NODE_ENV === 'production') {
   throw new Error('Refusing to run referral outcome smoke with NODE_ENV=production');
@@ -44,6 +45,7 @@ async function main() {
   const dataSource = app.get(DataSource);
   const caseService = app.get(CaseService);
   const taskStatsService = app.get(TaskStatsService);
+  const referralLinks = app.get(ReferralLinkService);
 
   let caseId = null;
   let actorId = null;
@@ -62,7 +64,7 @@ async function main() {
            WHERE existing.student_uuid = enrollment.student_uuid
              AND existing.deleted_at IS NULL
              AND existing.status IN ('OPEN', 'IN_PROGRESS', 'PENDING_REVIEW',
-               'STUDENT_NOT_FOUND', 'AWAITING_REFERRAL_OUTCOME')
+               'STUDENT_NOT_FOUND', 'AWAITING_REFERRAL', 'AWAITING_REFERRAL_OUTCOME')
          )
        ORDER BY enrollment.student_uuid
        LIMIT 1`,
@@ -95,8 +97,6 @@ async function main() {
       permissions,
       data_scope: { school_ids: [schoolId] },
     };
-    const reader = { ...director, permissions: ['dashboard'] };
-    const otherSchool = { ...director, data_scope: { school_ids: [schoolId + 1] } };
 
     const [createdCase] = await dataSource.query(
       `INSERT INTO cases (student_uuid, student_name, school_id, student_school, reason_flagged,
@@ -113,21 +113,32 @@ async function main() {
           caseId,
         ])
       )[0];
+    // ส่งต่อหน่วยงาน on the review parks the case in รอส่งต่อ; sending the
+    // referral from the case page (agency + link window) is the referral's
+    // มอบหมาย and moves it to รอผลการส่งต่อ.
     const refer = async (note) => {
       const reviewed = await caseService.reviewCase(
         caseId,
-        { review_action: 'REFER_AGENCY', review_note: note, referral_agency_id: Number(agency.id) },
+        { review_action: 'REFER_AGENCY', review_note: note },
         director,
       );
       assert(
-        reviewed.case_status === 'AWAITING_REFERRAL_OUTCOME' &&
-          reviewed.completion_outcome_code === null,
+        reviewed.case_status === 'AWAITING_REFERRAL' && reviewed.completion_outcome_code === null,
         `REFER_AGENCY returned ${reviewed.case_status}/${reviewed.completion_outcome_code}`,
       );
+      const sent = await referralLinks.sendReferral(
+        caseId,
+        {
+          referral_agency_id: Number(agency.id),
+          referral_note: note,
+          starts_at: new Date(Date.now() - 60_000).toISOString(),
+          expires_at: new Date(Date.now() + 86_400_000).toISOString(),
+        },
+        director,
+      );
       const [latest] = await dataSource.query(
-        `SELECT id, status_code FROM case_referrals WHERE case_id = $1
-         ORDER BY referred_at DESC, id DESC LIMIT 1`,
-        [caseId],
+        `SELECT id, status_code FROM case_referrals WHERE id = $1`,
+        [sent.data.referral_id],
       );
       assert(latest.status_code === 'REFERRED', `new referral is ${latest.status_code}`);
       return latest.id;
@@ -164,6 +175,33 @@ async function main() {
       }
     };
     await expectStages({ [firstReferralId]: 'AWAITING_REFERRAL_OUTCOME' });
+    // Results only come from the agency's report through its link (owner,
+    // 2026-10-08); the link flow itself is smoke:referral-links. Here the
+    // report goes straight into the shared core with the referral's own link.
+    const reportAsAgency = async (referralId, resultCode, note) => {
+      const [link] = await dataSource.query(
+        `SELECT id FROM case_referral_links WHERE case_referral_id = $1
+         ORDER BY created_at DESC LIMIT 1`,
+        [referralId],
+      );
+      const referral = await caseService.applyReferralResult({
+        caseId,
+        referralId,
+        resultCode,
+        note,
+        scopeActor: null,
+        recordedByUserId: null,
+        agencyReport: {
+          linkId: link.id,
+          actionDate: new Date().toISOString().slice(0, 10),
+          identityProviderCode: 'ARAID',
+          providerSubject: 'smoke-referral-outcome-subject',
+          reporterName: 'เจ้าหน้าที่ หน่วยงานทดสอบ',
+        },
+        audit: { actorUserId: null, actorLabel: 'เจ้าหน้าที่ หน่วยงานทดสอบ' },
+      });
+      return { data: { referral, case_status: (await caseState()).status } };
+    };
 
     // 2. The waiting student still holds the one active case.
     await dataSource
@@ -183,21 +221,11 @@ async function main() {
           ),
       );
 
-    // 3. Permission and scope are the server's call.
+    // 3. The agency's report is the only way a result comes in.
     const body = { result_code: 'NOT_SUCCEEDED', result_note: 'ครอบครัวไม่ไปตามนัด' };
-    await expectRejected(
-      caseService.recordReferralResult(caseId, firstReferralId, body, reader),
-      403,
-      'account without case:review',
-    );
-    await expectRejected(
-      caseService.recordReferralResult(caseId, firstReferralId, body, otherSchool),
-      404,
-      'director of another school',
-    );
 
     // 4. ยังไม่สำเร็จ returns the case to รอพิจารณา and keeps the note.
-    const notYet = await caseService.recordReferralResult(caseId, firstReferralId, body, director);
+    const notYet = await reportAsAgency(firstReferralId, body.result_code, body.result_note);
     assert(
       notYet.data.case_status === 'PENDING_REVIEW',
       `ยังไม่สำเร็จ left ${notYet.data.case_status}`,
@@ -205,7 +233,8 @@ async function main() {
     assert(
       notYet.data.referral?.status_code === 'NOT_SUCCEEDED' &&
         notYet.data.referral?.result?.note === body.result_note &&
-        notYet.data.referral?.result?.recorded_by === 'ผอ. ทดสอบส่งต่อ',
+        notYet.data.referral?.result?.reported_by_agency === true &&
+        notYet.data.referral?.result?.reporter_name === 'เจ้าหน้าที่ หน่วยงานทดสอบ',
       `unexpected referral after ยังไม่สำเร็จ: ${JSON.stringify(notYet.data.referral)}`,
     );
     state = await caseState();
@@ -214,7 +243,7 @@ async function main() {
       `case after ยังไม่สำเร็จ is ${JSON.stringify(state)}`,
     );
     await expectRejected(
-      caseService.recordReferralResult(caseId, firstReferralId, body, director),
+      reportAsAgency(firstReferralId, body.result_code, body.result_note),
       409,
       'second result on the same referral',
     );
@@ -223,12 +252,7 @@ async function main() {
     // 5. A new referral supersedes the old one; only it can take a result.
     const secondReferralId = await refer('ส่งต่อโรงพยาบาลอีกครั้ง');
     await expectRejected(
-      caseService.recordReferralResult(
-        caseId,
-        firstReferralId,
-        { result_code: 'SUCCEEDED', result_note: 'ผลของรายการเก่า' },
-        director,
-      ),
+      reportAsAgency(firstReferralId, 'SUCCEEDED', 'ผลของรายการเก่า'),
       409,
       'result on a superseded referral',
     );
@@ -240,8 +264,8 @@ async function main() {
     // 6. Two simultaneous สำเร็จ: exactly one wins, the other is a conflict.
     const success = { result_code: 'SUCCEEDED', result_note: 'หน่วยงานแจ้งว่ากลับมาเรียนแล้ว' };
     const outcomes = await Promise.allSettled([
-      caseService.recordReferralResult(caseId, secondReferralId, success, director),
-      caseService.recordReferralResult(caseId, secondReferralId, success, director),
+      reportAsAgency(secondReferralId, success.result_code, success.result_note),
+      reportAsAgency(secondReferralId, success.result_code, success.result_note),
     ]);
     const fulfilled = outcomes.filter((outcome) => outcome.status === 'fulfilled');
     const rejected = outcomes.filter((outcome) => outcome.status === 'rejected');
@@ -291,13 +315,20 @@ async function main() {
     );
 
     console.log(
-      'referral outcome smoke passed (refer → ยังไม่สำเร็จ → refer again → สำเร็จ → รอพิจารณา → ปิดเคส; 403/404/409 + concurrency)',
+      'referral outcome smoke passed (refer → ยังไม่สำเร็จ → refer again → สำเร็จ → รอพิจารณา → ปิดเคส; 409 + concurrency)',
     );
   } finally {
     if (caseId) {
       await dataSource
         .query(
           `DELETE FROM case_referral_results WHERE case_referral_id IN
+             (SELECT id FROM case_referrals WHERE case_id = $1)`,
+          [caseId],
+        )
+        .catch(() => undefined);
+      await dataSource
+        .query(
+          `DELETE FROM case_referral_links WHERE case_referral_id IN
              (SELECT id FROM case_referrals WHERE case_id = $1)`,
           [caseId],
         )

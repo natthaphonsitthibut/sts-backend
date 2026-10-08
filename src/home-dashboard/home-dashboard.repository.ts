@@ -1429,7 +1429,8 @@ export class HomeDashboardRepository {
     }>(
       `
         SELECT
-          COUNT(*)::int AS referred,
+          -- A withdrawn referral was never answered nor pursued: not a referral made.
+          COUNT(*) FILTER (WHERE referral.status_code <> 'CANCELLED')::int AS referred,
           COUNT(*) FILTER (WHERE referral.status_code IN ('ACCEPTED', 'COMPLETED'))::int AS accepted,
           -- Only a case still in รอผลการส่งต่อ is waiting: ยังไม่สำเร็จ is an
           -- answer, and referrals from before outcome tracking closed their case.

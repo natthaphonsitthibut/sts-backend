@@ -472,6 +472,19 @@ const ACTION_DEFINITIONS: Record<string, AuditActionDefinition> = {
     label: 'บันทึกผลการส่งต่อ',
     detailKeys: [{ key: 'resultCode', label: 'ผลการส่งต่อ' }],
   },
+  CASE_REFERRAL_LINK_ISSUE: {
+    domain: 'cases',
+    label: 'ออกลิงก์ให้หน่วยงาน',
+    detailKeys: [{ key: 'expiresAt', label: 'ใช้ได้ถึง' }],
+  },
+  CASE_REFERRAL_LINK_REVOKE: { domain: 'cases', label: 'ยกเลิกลิงก์ของหน่วยงาน', detailKeys: [] },
+  CASE_REFERRAL_LINK_CODE_FAIL: {
+    domain: 'cases',
+    label: 'กรอกรหัสลิงก์หน่วยงานผิด',
+    detailKeys: [{ key: 'attempts', label: 'จำนวนครั้ง' }],
+  },
+  CASE_REFERRAL_LINK_LOCK: { domain: 'cases', label: 'ลิงก์หน่วยงานถูกล็อก', detailKeys: [] },
+  CASE_REFERRAL_LINK_VERIFY: { domain: 'cases', label: 'หน่วยงานยืนยันตัวตน', detailKeys: [] },
   CASE_ASSIST: {
     domain: 'cases',
     label: 'ให้ความช่วยเหลือ',

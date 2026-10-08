@@ -20,10 +20,12 @@ import {
 } from '../auth';
 import { CaseRoundLineService } from './case-round-line.service';
 import { CaseService } from './case.service';
+import { ReferralLinkService } from './referral-link.service';
 import {
   CancelCaseAssignmentDto,
+  CancelReferralDto,
   OpenCaseDto,
-  RecordReferralResultDto,
+  SendReferralDto,
   ReviewCaseDto,
   SendRoundLineDto,
 } from './dto/task.dto';
@@ -35,6 +37,7 @@ export class CaseController {
   constructor(
     private readonly caseService: CaseService,
     private readonly caseRoundLine: CaseRoundLineService,
+    private readonly referralLinkService: ReferralLinkService,
   ) {}
 
   @UseGuards(AuthGuard, PermissionsGuard)
@@ -108,17 +111,33 @@ export class CaseController {
     }
   }
 
+  /**
+   * ส่งต่อ, the referral's มอบหมาย: agency, reason and the link's window. The
+   * agency's access code comes back only in this response.
+   */
   @UseGuards(AuthGuard, PermissionsGuard)
   @RequirePermission('case:review')
-  @Post(':caseId/referrals/:referralId/result')
-  @HttpCode(HttpStatus.OK)
-  async recordReferralResult(
+  @Post(':caseId/referrals')
+  async sendReferral(
     @Param('caseId', ParseIntPipe) caseId: number,
-    @Param('referralId', new ParseUUIDPipe()) referralId: string,
-    @Body() body: RecordReferralResultDto,
+    @Body() body: SendReferralDto,
     @CurrentUser() actor?: AuthenticatedRequestUser,
   ) {
-    return await this.caseService.recordReferralResult(caseId, referralId, body, actor);
+    return await this.referralLinkService.sendReferral(caseId, body, actor);
+  }
+
+  /** ยกเลิกการส่งต่อ, like ยกเลิกการมอบหมาย: back to รอส่งต่อ with a reason. */
+  @UseGuards(AuthGuard, PermissionsGuard)
+  @RequirePermission('case:review')
+  @Post(':caseId/referrals/:referralId/cancel')
+  @HttpCode(HttpStatus.OK)
+  async cancelReferral(
+    @Param('caseId', ParseIntPipe) caseId: number,
+    @Param('referralId', new ParseUUIDPipe()) referralId: string,
+    @Body() body: CancelReferralDto,
+    @CurrentUser() actor?: AuthenticatedRequestUser,
+  ) {
+    return await this.referralLinkService.cancelReferral(caseId, referralId, body, actor);
   }
 
   @Get(':caseId/tasks')

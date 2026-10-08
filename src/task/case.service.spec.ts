@@ -2,6 +2,7 @@ import {
   BadRequestException,
   ConflictException,
   ForbiddenException,
+  GoneException,
   NotFoundException,
 } from '@nestjs/common';
 import type { AuthenticatedRequestUser } from '../auth';
@@ -55,6 +56,7 @@ describe('CaseService', () => {
       | 'listActiveReferralAgencies'
       | 'lockCaseReferralForResult'
       | 'recordCaseReferralResult'
+      | 'lockReferralLinkForReport'
       | 'closesAsSucceededReferral'
     >
   >;
@@ -121,6 +123,11 @@ describe('CaseService', () => {
         is_latest: true,
       }),
       recordCaseReferralResult: jest.fn().mockResolvedValue(true),
+      lockReferralLinkForReport: jest.fn().mockResolvedValue({
+        status_code: 'ACTIVE',
+        has_started: true,
+        has_not_expired: true,
+      }),
     };
     auditLog = {
       record: jest.fn().mockResolvedValue(undefined),
@@ -140,7 +147,7 @@ describe('CaseService', () => {
             return Promise.resolve({
               code,
               label: 'ส่งต่อหน่วยงาน',
-              targetStatus: 'AWAITING_REFERRAL_OUTCOME',
+              targetStatus: 'AWAITING_REFERRAL',
               requiresResolutionOutcome: false,
               completionOutcomeCode: null,
               requiredPermission: 'case:review',
@@ -441,14 +448,14 @@ describe('CaseService', () => {
       {
         review_action: 'REFER_AGENCY',
         review_note: 'ส่งต่อหน่วยงาน',
-        referral_agency_id: 12,
         reviewed_by: 'client-forged-reviewer',
       },
       buildActor(['dashboard', 'case:assign', 'case:review']),
     );
 
-    // Referring parks the case until the agency's result is recorded.
-    expect(result.case_status).toBe('AWAITING_REFERRAL_OUTCOME');
+    // Deciding to refer parks the case in รอส่งต่อ, like ติดตามต่อ parks it
+    // in รอมอบหมาย; the referral itself is sent from the case page.
+    expect(result.case_status).toBe('AWAITING_REFERRAL');
     expect(result.completion_outcome_code).toBeNull();
     expect(taskRepository.insertCaseReview).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -460,10 +467,7 @@ describe('CaseService', () => {
       }),
       undefined,
     );
-    expect(taskRepository.insertCaseReferral).toHaveBeenCalledWith(
-      expect.objectContaining({ caseId: 10, agencyId: 12, referredByUserId: 1 }),
-      undefined,
-    );
+    expect(taskRepository.insertCaseReferral).not.toHaveBeenCalled();
     expect(auditLog.record).toHaveBeenCalledWith(
       expect.objectContaining({
         action: 'CASE_REFER_AGENCY',
@@ -484,15 +488,25 @@ describe('CaseService', () => {
         {
           review_action: 'REFER_AGENCY',
           review_note: 'ส่งต่อเพื่อดูแลต่อ',
-          referral_agency_id: 12,
         },
         buildActor(['dashboard', 'case:assign', 'case:review']),
       ),
     ).resolves.toEqual(
-      expect.objectContaining({ success: true, case_status: 'AWAITING_REFERRAL_OUTCOME' }),
+      expect.objectContaining({ success: true, case_status: 'AWAITING_REFERRAL' }),
     );
     expect(taskRepository.transitionPendingReviewCase).toHaveBeenCalled();
     expect(taskRepository.insertCaseReview).toHaveBeenCalled();
+  });
+
+  it('refuses an agency on the review: it is picked when the referral is sent', async () => {
+    await expect(
+      service.reviewCase(
+        10,
+        { review_action: 'REFER_AGENCY', review_note: 'ส่งต่อ', referral_agency_id: 12 },
+        buildActor(['dashboard', 'case:assign', 'case:review']),
+      ),
+    ).rejects.toBeInstanceOf(BadRequestException);
+    expect(taskRepository.insertCaseReview).not.toHaveBeenCalled();
   });
 
   it('requires a reason before recording a human review', async () => {
@@ -727,21 +741,60 @@ describe('CaseService', () => {
     expect(taskRepository.withTransaction).not.toHaveBeenCalled();
   });
 
-  describe('recordReferralResult', () => {
-    const director = () => buildActor(['dashboard', 'case:assign', 'case:review']);
+  describe('applyReferralResult (the agency report through its link)', () => {
+    const agencyReport = {
+      linkId: '33333333-3333-4333-8333-333333333333',
+      actionDate: '2026-10-08',
+      identityProviderCode: 'ARAID',
+      providerSubject: 'araid-subject',
+      reporterName: 'นาง สมใจ หน่วยงาน',
+    };
+    const report = (resultCode: 'SUCCEEDED' | 'NOT_SUCCEEDED') =>
+      service.applyReferralResult({
+        caseId: 10,
+        referralId: REFERRAL_ID,
+        resultCode,
+        note: 'นักเรียนกลับมาเรียนแล้ว',
+        scopeActor: null,
+        recordedByUserId: null,
+        agencyReport,
+        audit: { actorUserId: null, actorLabel: 'นาง สมใจ หน่วยงาน (หน่วยงาน)' },
+      });
+
+    it.each([
+      ['locked during the request', { status_code: 'LOCKED' }, ForbiddenException],
+      ['revoked during the request', { status_code: 'REVOKED' }, GoneException],
+      ['expired during the request', { has_not_expired: false }, GoneException],
+      ['not started', { has_started: false }, ForbiddenException],
+      ['already used', { status_code: 'USED' }, ConflictException],
+    ])(
+      'rejects a reporting link that is %s under the transaction lock',
+      async (_label, overrides, errorType) => {
+        taskRepository.lockReferralLinkForReport.mockResolvedValueOnce({
+          status_code: 'ACTIVE',
+          has_started: true,
+          has_not_expired: true,
+          ...overrides,
+        });
+        await expect(report('SUCCEEDED')).rejects.toBeInstanceOf(errorType);
+        expect(taskRepository.recordCaseReferralResult).not.toHaveBeenCalled();
+        expect(auditLog.record).not.toHaveBeenCalled();
+      },
+    );
+
+    it('rejects a link belonging to another referral', async () => {
+      taskRepository.lockReferralLinkForReport.mockResolvedValueOnce(null);
+      await expect(report('SUCCEEDED')).rejects.toBeInstanceOf(NotFoundException);
+      expect(taskRepository.recordCaseReferralResult).not.toHaveBeenCalled();
+    });
 
     it('hands the case back to review when the agency succeeded', async () => {
-      const result = await service.recordReferralResult(
-        10,
-        REFERRAL_ID,
-        { result_code: 'SUCCEEDED', result_note: '  นักเรียนกลับมาเรียนแล้ว  ' },
-        director(),
-      );
+      await report('SUCCEEDED');
 
       expect(taskRepository.lockCaseReferralForResult).toHaveBeenCalledWith(
         10,
         REFERRAL_ID,
-        expect.objectContaining({ data_scope: { school_ids: [10010002] } }),
+        null,
         undefined,
       );
       expect(taskRepository.recordCaseReferralResult).toHaveBeenCalledWith(
@@ -751,11 +804,11 @@ describe('CaseService', () => {
           referralStatusCode: 'COMPLETED',
           nextCaseStatus: 'PENDING_REVIEW',
           note: 'นักเรียนกลับมาเรียนแล้ว',
-          recordedByUserId: 1,
+          recordedByUserId: null,
+          agencyReport,
         },
         undefined,
       );
-      expect(result.data.case_status).toBe('PENDING_REVIEW');
       expect(auditLog.record).toHaveBeenCalledWith(
         expect.objectContaining({
           action: 'CASE_REFERRAL_RESULT',
@@ -764,18 +817,14 @@ describe('CaseService', () => {
             referralId: REFERRAL_ID,
             resultCode: 'SUCCEEDED',
             nextStatus: 'PENDING_REVIEW',
+            reportedThroughLink: agencyReport.linkId,
           },
         }),
       );
     });
 
     it('hands the case back to review when the agency did not succeed', async () => {
-      const result = await service.recordReferralResult(
-        10,
-        REFERRAL_ID,
-        { result_code: 'NOT_SUCCEEDED', result_note: 'ติดต่อครอบครัวไม่ได้' },
-        director(),
-      );
+      await report('NOT_SUCCEEDED');
 
       expect(taskRepository.recordCaseReferralResult).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -784,46 +833,14 @@ describe('CaseService', () => {
         }),
         undefined,
       );
-      expect(result.data.case_status).toBe('PENDING_REVIEW');
       expect(notificationsService.notifyCaseStatusChanged).toHaveBeenCalledWith(
         expect.objectContaining({ caseId: 10, nextStatus: 'PENDING_REVIEW' }),
       );
     });
 
-    it('rejects an account without case:review before touching data', async () => {
-      await expect(
-        service.recordReferralResult(
-          10,
-          REFERRAL_ID,
-          { result_code: 'SUCCEEDED', result_note: 'สำเร็จ' },
-          buildActor(['dashboard']),
-        ),
-      ).rejects.toBeInstanceOf(ForbiddenException);
-      expect(taskRepository.withTransaction).not.toHaveBeenCalled();
-    });
-
-    it('rejects a blank note', async () => {
-      await expect(
-        service.recordReferralResult(
-          10,
-          REFERRAL_ID,
-          { result_code: 'SUCCEEDED', result_note: '   ' },
-          director(),
-        ),
-      ).rejects.toBeInstanceOf(BadRequestException);
-      expect(taskRepository.withTransaction).not.toHaveBeenCalled();
-    });
-
-    it('returns 404 for a referral outside the actor scope', async () => {
+    it('returns 404 for a referral that is not there', async () => {
       taskRepository.lockCaseReferralForResult.mockResolvedValueOnce(null);
-      await expect(
-        service.recordReferralResult(
-          10,
-          REFERRAL_ID,
-          { result_code: 'SUCCEEDED', result_note: 'สำเร็จ' },
-          director(),
-        ),
-      ).rejects.toBeInstanceOf(NotFoundException);
+      await expect(report('SUCCEEDED')).rejects.toBeInstanceOf(NotFoundException);
       expect(taskRepository.recordCaseReferralResult).not.toHaveBeenCalled();
     });
 
@@ -840,14 +857,7 @@ describe('CaseService', () => {
         is_latest: true,
         ...overrides,
       });
-      await expect(
-        service.recordReferralResult(
-          10,
-          REFERRAL_ID,
-          { result_code: 'NOT_SUCCEEDED', result_note: 'ยังไม่สำเร็จ' },
-          director(),
-        ),
-      ).rejects.toBeInstanceOf(ConflictException);
+      await expect(report('NOT_SUCCEEDED')).rejects.toBeInstanceOf(ConflictException);
       expect(taskRepository.recordCaseReferralResult).not.toHaveBeenCalled();
       expect(auditLog.record).not.toHaveBeenCalled();
     });
