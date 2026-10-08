@@ -2,6 +2,9 @@ const { NestFactory } = require('@nestjs/core');
 const { DataSource } = require('typeorm');
 const { AppModule } = require('../dist/app.module');
 const { CaseService } = require('../dist/task/case.service');
+const { AraIdService } = require('../dist/araid/araid.service');
+const { AuthActorService } = require('../dist/auth/auth-actor.service');
+const { SessionCookieService } = require('../dist/auth/session-cookie.service');
 const { ReferralLinkService } = require('../dist/task/referral-link.service');
 
 if (process.env.NODE_ENV === 'production') {
@@ -17,10 +20,9 @@ const COUNT = Number(
  * register shows every state the referral flow can reach:
  *   - `AWAITING`      ส่งต่อ with an open agency link, still รอผลการส่งต่อ
  *   - `NOT_SUCCEEDED` ส่งต่อ → ยังไม่สำเร็จ, back in รอพิจารณา
- *   - `SUCCEEDED`     ส่งต่อ → สำเร็จ → ปิดเคส, closed as ส่งต่อหน่วยงาน
+ *   - `SUCCEEDED`     ส่งต่อ → สำเร็จ → ปิดเคส, closed as เสร็จสิ้น
  */
 const OUTCOME_SPREAD = ['AWAITING', 'NOT_SUCCEEDED', 'SUCCEEDED'];
-const PERMISSIONS = ['dashboard', 'case:assign', 'case:review'];
 
 /**
  * Refers real cases to real agencies, and records what came back, by calling
@@ -40,17 +42,14 @@ async function main() {
   const referralLinks = app.get(ReferralLinkService);
 
   try {
-    // Cases already waiting for review come first — those are referrals the
-    // real flow could have produced. Only when there are not enough does the
-    // seed move an open case into review itself, which is the step a teacher's
-    // submitted report normally performs.
+    // Use genuine submitted cases only; never manufacture a teacher submission.
     const caseRecords = await dataSource.query(
       `
       SELECT c.id, c.student_name, c.school_id, c.status,
              school.name AS school_name
       FROM cases c
       LEFT JOIN schools school ON school.id = c.school_id
-      WHERE c.status IN ('PENDING_REVIEW', 'OPEN')
+      WHERE c.status = 'PENDING_REVIEW'
         AND c.deleted_at IS NULL
         AND NOT EXISTS (
           SELECT 1 FROM case_referrals existing WHERE existing.case_id = c.id
@@ -106,25 +105,29 @@ async function main() {
       return;
     }
 
+    // Existing AraID identity, supplied via stdin so no PIN is stored in code/logs.
+    let raw = '';
+    for await (const chunk of process.stdin) raw += chunk;
+    const identity = JSON.parse(raw);
+    if (!/^\d{13}$/.test(identity.identityNumber) || !/^\d{8}$/.test(identity.pin)) {
+      throw new Error('AraID identity number and PIN are required via stdin');
+    }
+    const araId = app.get(AraIdService);
+    await araId.login(identity.identityNumber, identity.pin);
+    let cookie = '';
+    app.get(SessionCookieService).setSession(
+      {
+        cookie: (name, value) => {
+          cookie = `${name}=${encodeURIComponent(value)}`;
+        },
+      },
+      Number(reviewer.id),
+    );
+    const actor = await app.get(AuthActorService).loadRequiredUser({ headers: { cookie } });
+    if (!actor) throw new Error('Administrator is unavailable');
+
     for (const item of planned) {
       const caseId = Number(item.caseRecord.id);
-      // Scoped to the case's own school, the way a school ผอ. would be.
-      const actor = {
-        id: Number(reviewer.id),
-        username: reviewer.username,
-        FirstName: reviewer.FirstName,
-        LastName: reviewer.LastName,
-        roles: ['ADMIN'],
-        permissions: PERMISSIONS,
-        data_scope: { school_ids: [Number(item.caseRecord.school_id)] },
-      };
-      if (item.caseRecord.status !== 'PENDING_REVIEW') {
-        await dataSource.query(
-          `UPDATE cases SET status = 'PENDING_REVIEW' WHERE id = $1 AND deleted_at IS NULL`,
-          [caseId],
-        );
-      }
-
       const note = `ส่งต่อ ${item.agency.agency_name} เพื่อช่วยเหลือ ${item.caseRecord.student_name}`;
       // ส่งต่อหน่วยงาน decides; sending from the case page picks the agency and
       // issues its link, as the school would.
@@ -133,7 +136,7 @@ async function main() {
         { review_action: 'REFER_AGENCY', review_note: note },
         actor,
       );
-      await referralLinks.sendReferral(
+      const sent = await referralLinks.sendReferral(
         caseId,
         {
           referral_agency_id: Number(item.agency.id),
@@ -145,37 +148,34 @@ async function main() {
       );
       if (item.outcome === 'AWAITING') continue;
 
-      const [referral] = await dataSource.query(
-        `SELECT id FROM case_referrals WHERE case_id = $1
-         ORDER BY referred_at DESC, id DESC LIMIT 1`,
-        [caseId],
-      );
       const succeeded = item.outcome === 'SUCCEEDED';
-      // Results only come from the agency's report through its link; the seed
-      // files it through the same core the link's report endpoint uses.
-      const [link] = await dataSource.query(
-        `SELECT id FROM case_referral_links WHERE case_referral_id = $1
-         ORDER BY created_at DESC LIMIT 1`,
-        [referral.id],
+      const token = sent.data.url.split('/referral-report/')[1];
+      const challenge = await referralLinks.createAraIdChallenge(
+        token,
+        { access_code: sent.data.access_code },
+        'http://localhost:5173',
       );
-      await caseService.applyReferralResult({
-        caseId,
-        referralId: referral.id,
-        resultCode: succeeded ? 'SUCCEEDED' : 'NOT_SUCCEEDED',
-        note: succeeded
-          ? `${item.agency.agency_name} แจ้งว่าช่วยเหลือเรียบร้อย นักเรียนกลับมาเรียนตามปกติ`
-          : `${item.agency.agency_name} แจ้งว่าติดต่อครอบครัวไม่ได้ ยังช่วยเหลือไม่สำเร็จ`,
-        scopeActor: null,
-        recordedByUserId: null,
-        agencyReport: {
-          linkId: link.id,
-          actionDate: new Date().toISOString().slice(0, 10),
-          identityProviderCode: 'ARAID',
-          providerSubject: `seed-${link.id}`,
-          reporterName: `เจ้าหน้าที่ ${item.agency.agency_name}`,
+      const authorization = await referralLinks.beginAraIdChallenge(challenge.data.challengeToken);
+      const profile = await araId.login(identity.identityNumber, identity.pin);
+      await referralLinks.approveAraIdChallenge(
+        authorization.authorizationToken,
+        profile.profileId,
+        Date.now(),
+      );
+      const verified = await referralLinks.pollAraIdChallenge(challenge.data.challengeToken);
+      await referralLinks.submitReport(
+        token,
+        {
+          result_code: succeeded ? 'SUCCEEDED' : 'NOT_SUCCEEDED',
+          action_date: new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Bangkok' }).format(
+            new Date(),
+          ),
+          result_note: succeeded
+            ? `${item.agency.agency_name} แจ้งว่าช่วยเหลือเรียบร้อย นักเรียนกลับมาเรียนตามปกติ`
+            : `${item.agency.agency_name} แจ้งว่าติดต่อครอบครัวไม่ได้ ยังช่วยเหลือไม่สำเร็จ`,
         },
-        audit: { actorUserId: null, actorLabel: `เจ้าหน้าที่ ${item.agency.agency_name}` },
-      });
+        verified.data.sessionToken,
+      );
       if (succeeded) {
         await caseService.reviewCase(
           caseId,
@@ -190,7 +190,9 @@ async function main() {
   }
 }
 
-main().catch((error) => {
-  console.error(error instanceof Error ? error.message : error);
+main().catch(() => {
+  console.error(
+    'Referral preparation failed; credentials withheld. Check dry-run prerequisites before resuming.',
+  );
   process.exitCode = 1;
 });
