@@ -63,6 +63,15 @@ export class FollowUpSummaryQueryDto {
   schoolId?: number;
 }
 
+/** Where a referral stands in the register; see `REFERRAL_STAGE_SQL`. */
+export const REFERRAL_STAGE_CODES = [
+  'AWAITING_REFERRAL_OUTCOME',
+  'PENDING_REVIEW',
+  'COMPLETED',
+  'NOT_SUCCEEDED',
+] as const;
+export type ReferralStageCode = (typeof REFERRAL_STAGE_CODES)[number];
+
 export class GetReferralDrilldownQueryDto extends PaginatedSearchQueryDto {
   @IsOptional()
   @IsString()
@@ -98,6 +107,10 @@ export class GetReferralDrilldownQueryDto extends PaginatedSearchQueryDto {
   @IsString()
   @MaxLength(50)
   statusCode?: string;
+
+  @IsOptional()
+  @IsIn(REFERRAL_STAGE_CODES)
+  stageCode?: ReferralStageCode;
 }
 
 export class TaskGoogleCallbackDto extends ExternalOAuthCallbackDto {
@@ -495,6 +508,20 @@ export class CancelCaseAssignmentDto {
   cancel_reason!: string;
 }
 
+export const REFERRAL_RESULT_CODES = ['SUCCEEDED', 'NOT_SUCCEEDED'] as const;
+export type ReferralResultCode = (typeof REFERRAL_RESULT_CODES)[number];
+
+/** What the agency reported back, recorded once per referral. */
+export class RecordReferralResultDto {
+  @IsIn(REFERRAL_RESULT_CODES)
+  result_code!: ReferralResultCode;
+
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(2000)
+  result_note!: string;
+}
+
 export class SendRoundLineDto {
   /** Stable across transport retries, so a repeated press never sends twice. */
   @IsUUID('4')
@@ -564,6 +591,7 @@ export const RISK_DASHBOARD_CASE_STATUSES = [
   'IN_PROGRESS',
   'PENDING_REVIEW',
   'STUDENT_NOT_FOUND',
+  'AWAITING_REFERRAL_OUTCOME',
   'RESOLVED',
 ] as const;
 export const RISK_DASHBOARD_STUDENT_GROUPS = ['RISK', 'WATCHLIST'] as const;

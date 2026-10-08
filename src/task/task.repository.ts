@@ -289,6 +289,37 @@ export interface RoundLineLinkRow {
   magic_link: string | null;
 }
 
+/**
+ * Where a referral stands in ส่งต่อ → รอผล → พิจารณา → ผล, the way the
+ * กลุ่มเสี่ยง tab reads a case (owner, 2026-10-08):
+ *   - `AWAITING_REFERRAL_OUTCOME` its case sits in รอผลการส่งต่อ, no result yet
+ *   - `PENDING_REVIEW` the result is in and the case is back in รอพิจารณา
+ *     because of it — the newest referral, nobody sent out on the case since
+ *   - otherwise its own status: `COMPLETED` / `NOT_SUCCEEDED` once the reviewer
+ *     has moved on
+ * Uses the `referral` and `c` aliases of the queries below.
+ */
+const REFERRAL_STAGE_SQL = `CASE
+  WHEN c.status = 'AWAITING_REFERRAL_OUTCOME'
+    AND referral.status_code IN ('REFERRED', 'ACCEPTED')
+    THEN 'AWAITING_REFERRAL_OUTCOME'
+  WHEN c.status = 'PENDING_REVIEW'
+    AND referral.status_code IN ('COMPLETED', 'NOT_SUCCEEDED')
+    AND NOT EXISTS (
+      SELECT 1 FROM case_referrals newer_referral
+      WHERE newer_referral.case_id = referral.case_id
+        AND (newer_referral.referred_at, newer_referral.id) > (referral.referred_at, referral.id)
+    )
+    AND NOT EXISTS (
+      SELECT 1 FROM tasks later_task
+      WHERE later_task.case_id = referral.case_id
+        AND later_task.deleted_at IS NULL
+        AND later_task.created_at > referral.referred_at
+    )
+    THEN 'PENDING_REVIEW'
+  ELSE referral.status_code
+END`;
+
 @Injectable()
 export class TaskRepository {
   private readonly logger = new Logger(TaskRepository.name);
@@ -837,7 +868,9 @@ export class TaskRepository {
       SELECT c.id
       FROM cases c
       WHERE c.student_uuid = $1
-        AND c.status IN ('OPEN', 'IN_PROGRESS', 'PENDING_REVIEW', 'STUDENT_NOT_FOUND')
+        AND c.status IN (
+          'OPEN', 'IN_PROGRESS', 'PENDING_REVIEW', 'STUDENT_NOT_FOUND', 'AWAITING_REFERRAL_OUTCOME'
+        )
         AND c.deleted_at IS NULL${scopeSql}
       ORDER BY c.created_at DESC, c.id DESC
       LIMIT 1
@@ -922,6 +955,38 @@ export class TaskRepository {
    * `ASSIST` moves a case across phases, so closing or referring an assistance
    * case keeps `ASSISTANCE` on the record for history.
    */
+  /**
+   * Whether closing this case now ends a referral that worked: its latest
+   * referral came back สำเร็จ and nobody was sent out on the case after it.
+   * A visit or an assistance round handed out since then is what the case is
+   * being closed on instead.
+   */
+  async closesAsSucceededReferral(caseId: number, executor: QueryExecutor): Promise<boolean> {
+    const result = await executor.query<{ succeeded: boolean }>(
+      `
+        SELECT EXISTS (
+          SELECT 1
+          FROM case_referrals referral
+          WHERE referral.case_id = $1
+            AND referral.status_code = 'COMPLETED'
+            AND NOT EXISTS (
+              SELECT 1 FROM case_referrals newer
+              WHERE newer.case_id = referral.case_id
+                AND (newer.referred_at, newer.id) > (referral.referred_at, referral.id)
+            )
+            AND NOT EXISTS (
+              SELECT 1 FROM tasks task
+              WHERE task.case_id = referral.case_id
+                AND task.deleted_at IS NULL
+                AND task.created_at > referral.referred_at
+            )
+        ) AS succeeded
+      `,
+      [caseId],
+    );
+    return result.rows[0]?.succeeded === true;
+  }
+
   async transitionPendingReviewCase(
     caseId: number,
     nextStatus: string,
@@ -2456,7 +2521,7 @@ export class TaskRepository {
     const scopeQuery = this.buildCaseScopeQuery(actor, 1);
     const scopeSql = scopeQuery.sql ? ` AND ${scopeQuery.sql}` : '';
     const result = await this.query<CountRow>(
-      `SELECT count(*) FROM cases c WHERE c.status IN ('OPEN', 'IN_PROGRESS', 'PENDING_REVIEW', 'STUDENT_NOT_FOUND') AND c.deleted_at IS NULL${scopeSql}`,
+      `SELECT count(*) FROM cases c WHERE c.status IN ('OPEN', 'IN_PROGRESS', 'PENDING_REVIEW', 'STUDENT_NOT_FOUND', 'AWAITING_REFERRAL_OUTCOME') AND c.deleted_at IS NULL${scopeSql}`,
       scopeQuery.params,
     );
 
@@ -2464,7 +2529,13 @@ export class TaskRepository {
   }
 
   async countAtRiskStudents(actor?: ActorContext): Promise<number> {
-    const activeStatuses = ['OPEN', 'IN_PROGRESS', 'PENDING_REVIEW', 'STUDENT_NOT_FOUND'];
+    const activeStatuses = [
+      'OPEN',
+      'IN_PROGRESS',
+      'PENDING_REVIEW',
+      'STUDENT_NOT_FOUND',
+      'AWAITING_REFERRAL_OUTCOME',
+    ];
     const scopeQuery = this.buildCaseScopeQuery(actor, 2);
     const scopeSql = scopeQuery.sql ? ` AND ${scopeQuery.sql}` : '';
     const result = await this.query<CountRow>(
@@ -3025,6 +3096,85 @@ export class TaskRepository {
     );
   }
 
+  /**
+   * Locks a referral and its case for recording the agency's result. Only the
+   * case's latest referral can take a result: an older one was already
+   * superseded by a later referral and is history.
+   */
+  async lockCaseReferralForResult(
+    caseId: number,
+    referralId: string,
+    actor: CaseScopeContext,
+    executor: QueryExecutor,
+  ): Promise<QueryResultRow | null> {
+    const scopeQuery = this.buildCaseScopeQuery(actor, 3);
+    const scopeSql = scopeQuery.sql ? ` AND ${scopeQuery.sql}` : '';
+    const result = await executor.query<QueryResultRow>(
+      `
+        SELECT referral.id, referral.status_code, c.status AS case_status,
+          c.school_id, c.student_uuid::text, c.student_name,
+          EXISTS (
+            SELECT 1 FROM case_referral_results recorded
+            WHERE recorded.case_referral_id = referral.id
+          ) AS has_result,
+          NOT EXISTS (
+            SELECT 1 FROM case_referrals newer
+            WHERE newer.case_id = referral.case_id
+              AND (newer.referred_at, newer.id) > (referral.referred_at, referral.id)
+          ) AS is_latest
+        FROM case_referrals referral
+        JOIN cases c ON c.id = referral.case_id AND c.deleted_at IS NULL
+        WHERE referral.id = $1 AND referral.case_id = $2${scopeSql}
+        FOR UPDATE OF referral, c
+      `,
+      [referralId, caseId, ...scopeQuery.params],
+    );
+    return result.rows[0] ?? null;
+  }
+
+  /**
+   * Writes the result, moves the referral to its outcome status and the case
+   * out of รอผลการส่งต่อ back to รอพิจารณา in one go. The caller holds the
+   * row locks.
+   */
+  async recordCaseReferralResult(
+    data: {
+      caseId: number;
+      referralId: string;
+      referralStatusCode: 'COMPLETED' | 'NOT_SUCCEEDED';
+      nextCaseStatus: string;
+      note: string;
+      recordedByUserId: number | null;
+    },
+    executor: QueryExecutor,
+  ): Promise<boolean> {
+    await executor.query(
+      `
+        INSERT INTO case_referral_results (case_referral_id, result_note, recorded_by_user_id)
+        VALUES ($1, $2, $3)
+      `,
+      [data.referralId, data.note, data.recordedByUserId],
+    );
+    await executor.query(
+      `
+        UPDATE case_referrals
+        SET status_code = $2, updated_by = $3
+        WHERE id = $1
+      `,
+      [data.referralId, data.referralStatusCode, data.recordedByUserId],
+    );
+    const transitioned = await executor.query(
+      `
+        UPDATE cases
+        SET status = $2, completion_outcome_code = NULL, updated_by = $3
+        WHERE id = $1 AND status = 'AWAITING_REFERRAL_OUTCOME' AND deleted_at IS NULL
+        RETURNING id
+      `,
+      [data.caseId, data.nextCaseStatus, data.recordedByUserId],
+    );
+    return transitioned.rows.length === 1;
+  }
+
   async findCaseReviewById(reviewId: string): Promise<QueryResultRow | null> {
     const result = await this.query<QueryResultRow>(
       `
@@ -3539,7 +3689,7 @@ export class TaskRepository {
       (scope.sql ? ` AND ${scope.sql}` : '') + this.buildCaseAreaFilterSql(filters, params);
     const result = await this.query<QueryResultRow>(
       `
-      SELECT referral.status_code, agency.agency_name,
+      SELECT referral.status_code, ${REFERRAL_STAGE_SQL} AS stage_code, agency.agency_name,
         COUNT(*)::int AS referral_count,
         COUNT(*) FILTER (
           WHERE referral.status_code IN ('REFERRED', 'ACCEPTED')
@@ -3549,8 +3699,8 @@ export class TaskRepository {
       JOIN cases c ON c.id = referral.case_id AND c.deleted_at IS NULL
       JOIN referral_agencies agency ON agency.id = referral.referral_agency_id
       WHERE 1=1${scopeSql}
-      GROUP BY referral.status_code, agency.agency_name
-      ORDER BY referral.status_code, agency.agency_name
+      GROUP BY referral.status_code, stage_code, agency.agency_name
+      ORDER BY referral.status_code, stage_code, agency.agency_name
       `,
       params,
     );
@@ -3600,6 +3750,10 @@ export class TaskRepository {
       filterParams.push(filters.statusCode);
       whereSql += ` AND referral.status_code = $${filterParams.length}`;
     }
+    if (filters.stageCode) {
+      filterParams.push(filters.stageCode);
+      whereSql += ` AND (${REFERRAL_STAGE_SQL}) = $${filterParams.length}`;
+    }
     if (filters.searchTerm) {
       filterParams.push(`%${escapeLikePattern(filters.searchTerm)}%`);
       whereSql += ` AND (c.student_name ILIKE $${filterParams.length} ESCAPE '\\' OR agency.agency_name ILIKE $${filterParams.length} ESCAPE '\\')`;
@@ -3619,6 +3773,7 @@ export class TaskRepository {
           student."RoomID_Onec"::text AS room,
           person.photo_storage_key, person.updated_at AS photo_updated_at,
           referral.status_code, referral.referred_at,
+          ${REFERRAL_STAGE_SQL} AS stage_code,
           agency.agency_name, kind.label_th AS agency_kind_label
         FROM case_referrals referral
         JOIN cases c ON c.id = referral.case_id AND c.deleted_at IS NULL
@@ -3645,15 +3800,24 @@ export class TaskRepository {
         SELECT referral.id, referral.case_review_id, referral.referral_agency_id,
           agency.agency_name, agency.agency_kind_code,
           kind.label_th AS agency_kind_label_th, referral.status_code,
+          status.label_th AS status_label_th, status.badge_variant AS status_badge_variant,
           referral.referred_at, referral.referral_note,
           COALESCE(
             NULLIF(trim(concat_ws(' ', actor."FirstName", actor."LastName")), ''),
             actor.username
-          ) AS referred_by
+          ) AS referred_by,
+          result.result_note, result.recorded_at AS result_recorded_at,
+          COALESCE(
+            NULLIF(trim(concat_ws(' ', recorder."FirstName", recorder."LastName")), ''),
+            recorder.username
+          ) AS result_recorded_by
         FROM case_referrals referral
         JOIN referral_agencies agency ON agency.id = referral.referral_agency_id
         JOIN referral_agency_kinds kind ON kind.code = agency.agency_kind_code
+        LEFT JOIN case_referral_statuses status ON status.code = referral.status_code
         LEFT JOIN users actor ON actor.id = referral.referred_by_user_id
+        LEFT JOIN case_referral_results result ON result.case_referral_id = referral.id
+        LEFT JOIN users recorder ON recorder.id = result.recorded_by_user_id
         WHERE referral.case_id = $1
         ORDER BY referral.referred_at DESC, referral.id DESC
       `,

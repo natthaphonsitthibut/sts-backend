@@ -467,6 +467,11 @@ const ACTION_DEFINITIONS: Record<string, AuditActionDefinition> = {
     label: 'ส่งต่อหน่วยงาน',
     detailKeys: [{ key: 'completionOutcome', label: 'ผลการดำเนินการ' }],
   },
+  CASE_REFERRAL_RESULT: {
+    domain: 'cases',
+    label: 'บันทึกผลการส่งต่อ',
+    detailKeys: [{ key: 'resultCode', label: 'ผลการส่งต่อ' }],
+  },
   CASE_ASSIST: {
     domain: 'cases',
     label: 'ให้ความช่วยเหลือ',

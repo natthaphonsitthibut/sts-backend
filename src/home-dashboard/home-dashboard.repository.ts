@@ -1425,11 +1425,18 @@ export class HomeDashboardRepository {
     const result = await this.query<{
       referred: number | string;
       accepted: number | string;
+      pending: number | string;
     }>(
       `
         SELECT
           COUNT(*)::int AS referred,
-          COUNT(*) FILTER (WHERE referral.status_code IN ('ACCEPTED', 'COMPLETED'))::int AS accepted
+          COUNT(*) FILTER (WHERE referral.status_code IN ('ACCEPTED', 'COMPLETED'))::int AS accepted,
+          -- Only a case still in รอผลการส่งต่อ is waiting: ยังไม่สำเร็จ is an
+          -- answer, and referrals from before outcome tracking closed their case.
+          COUNT(*) FILTER (
+            WHERE c.status = 'AWAITING_REFERRAL_OUTCOME'
+              AND referral.status_code IN ('REFERRED', 'ACCEPTED')
+          )::int AS pending
         FROM case_referrals referral
         JOIN cases c ON c.id = referral.case_id
         LEFT JOIN schools sc ON sc.id = c.school_id
@@ -1463,7 +1470,7 @@ export class HomeDashboardRepository {
     return {
       referred,
       accepted,
-      pending: Math.max(referred - accepted, 0),
+      pending: toNumber(row.pending),
       byAgency: byAgency.rows.map((entry) => ({
         key: String(entry.key),
         label: String(entry.label),

@@ -84,6 +84,7 @@ export class StatsController {
         grade: query.grade?.trim() || undefined,
         room: query.room?.trim() || undefined,
         statusCode: query.statusCode?.trim() || undefined,
+        stageCode: query.stageCode,
         searchTerm: query.searchTerm?.trim() || undefined,
       },
       query.page,

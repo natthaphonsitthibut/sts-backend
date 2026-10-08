@@ -23,6 +23,7 @@ import { CaseService } from './case.service';
 import {
   CancelCaseAssignmentDto,
   OpenCaseDto,
+  RecordReferralResultDto,
   ReviewCaseDto,
   SendRoundLineDto,
 } from './dto/task.dto';
@@ -105,6 +106,19 @@ export class CaseController {
       const status = message === 'Case not found' ? HttpStatus.NOT_FOUND : HttpStatus.BAD_REQUEST;
       throw new HttpException(message, status);
     }
+  }
+
+  @UseGuards(AuthGuard, PermissionsGuard)
+  @RequirePermission('case:review')
+  @Post(':caseId/referrals/:referralId/result')
+  @HttpCode(HttpStatus.OK)
+  async recordReferralResult(
+    @Param('caseId', ParseIntPipe) caseId: number,
+    @Param('referralId', new ParseUUIDPipe()) referralId: string,
+    @Body() body: RecordReferralResultDto,
+    @CurrentUser() actor?: AuthenticatedRequestUser,
+  ) {
+    return await this.caseService.recordReferralResult(caseId, referralId, body, actor);
   }
 
   @Get(':caseId/tasks')

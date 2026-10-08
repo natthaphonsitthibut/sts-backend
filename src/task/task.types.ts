@@ -58,6 +58,8 @@ export interface FollowUpAreaFilters {
 
 export interface ReferralDrilldownFilters extends FollowUpAreaFilters {
   statusCode?: string;
+  /** Where the referral stands in the flow; see `REFERRAL_STAGE_SQL`. */
+  stageCode?: string;
   searchTerm?: string;
 }
 
@@ -71,7 +73,13 @@ export interface RiskDashboardFilters {
   schoolId?: number;
   academicYear?: number;
   semester?: number;
-  caseStatus?: 'OPEN' | 'IN_PROGRESS' | 'PENDING_REVIEW' | 'STUDENT_NOT_FOUND' | 'RESOLVED';
+  caseStatus?:
+    | 'OPEN'
+    | 'IN_PROGRESS'
+    | 'PENDING_REVIEW'
+    | 'STUDENT_NOT_FOUND'
+    | 'AWAITING_REFERRAL_OUTCOME'
+    | 'RESOLVED';
   /**
    * Narrows the watchlist to one concern level. Unset lists every level, so the
    * three level counts always add up to the number of rows.

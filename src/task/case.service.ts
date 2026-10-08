@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ConflictException,
   ForbiddenException,
   Injectable,
   Logger,
@@ -15,7 +16,12 @@ import { buildStudentTermAddress } from '../common/utils/student-address.util';
 import { encodeMediaVersion } from '../common/utils/media-version.util';
 import { RiskProfileService } from '../risk-profile/risk-profile.service';
 import { StudentGeocodeCacheService } from '../student-geocode/student-geocode-cache.service';
-import { CancelCaseAssignmentDto, OpenCaseDto, ReviewCaseDto } from './dto/task.dto';
+import {
+  CancelCaseAssignmentDto,
+  OpenCaseDto,
+  RecordReferralResultDto,
+  ReviewCaseDto,
+} from './dto/task.dto';
 import { CaseTrackingOptionsService } from './case-tracking-options.service';
 import { TaskPolicyService } from './task-policy.service';
 import { TaskRepository, type CaseScopeContext } from './task.repository';
@@ -278,9 +284,19 @@ export class CaseService {
       agency_kind_code: this.normalizeText(row.agency_kind_code),
       agency_kind_label: this.normalizeText(row.agency_kind_label_th),
       status_code: this.normalizeText(row.status_code),
+      status_label: this.normalizeText(row.status_label_th) || null,
+      status_badge_variant: this.normalizeText(row.status_badge_variant) || null,
       referred_at: row.referred_at ?? null,
       referred_by: this.normalizeText(row.referred_by) || null,
       referral_note: this.normalizeText(row.referral_note) || null,
+      result:
+        row.result_recorded_at == null
+          ? null
+          : {
+              note: this.normalizeText(row.result_note),
+              recorded_at: row.result_recorded_at,
+              recorded_by: this.normalizeText(row.result_recorded_by) || null,
+            },
     };
   }
 
@@ -601,6 +617,7 @@ export class CaseService {
     }
     const nextStatus = reviewAction.targetStatus;
     const reviewId = crypto.randomUUID();
+    let completionOutcomeCode = reviewAction.completionOutcomeCode;
 
     try {
       const caseRecord = await this.taskRepository.findCaseById(caseId, undefined, currentActor);
@@ -630,10 +647,19 @@ export class CaseService {
         if (referralAgencyId !== null && !referralAgency) {
           throw new BadRequestException('หน่วยงานส่งต่อไม่ถูกต้องหรือถูกปิดใช้งาน');
         }
+        // ปิดเคส straight after the agency reported สำเร็จ closes the case as
+        // ส่งต่อหน่วยงาน, the outcome a referral used to close with on its own
+        // (owner, 2026-10-08).
+        if (
+          reviewAction.code === 'CLOSE' &&
+          (await this.taskRepository.closesAsSucceededReferral(caseId, executor))
+        ) {
+          completionOutcomeCode = 'REFERRED_AGENCY';
+        }
         const transitioned = await this.taskRepository.transitionPendingReviewCase(
           caseId,
           nextStatus,
-          reviewAction.completionOutcomeCode,
+          completionOutcomeCode,
           executor,
           currentActor,
           reviewAction.targetWorkflowPhaseCode,
@@ -694,7 +720,7 @@ export class CaseService {
         targetId: String(caseId),
         metadata: {
           reviewAction: reviewAction.code,
-          completionOutcome: reviewAction.completionOutcomeCode,
+          completionOutcome: completionOutcomeCode,
           targetWorkflowPhase: reviewAction.targetWorkflowPhaseCode,
           resolutionOutcome: reviewAction.requiresResolutionOutcome ? resolutionOutcome : null,
           referralAgencyId,
@@ -709,7 +735,7 @@ export class CaseService {
           studentName: this.normalizeText(caseRecord.student_name) || null,
           schoolId: this.normalizeNumber(caseRecord.school_id),
           nextStatus,
-          completionOutcomeCode: reviewAction.completionOutcomeCode,
+          completionOutcomeCode,
           actorUserId: resolveAuditActorId(actor),
         });
       } catch (error) {
@@ -735,7 +761,7 @@ export class CaseService {
         success: true,
         case_id: caseId,
         case_status: nextStatus,
-        completion_outcome_code: reviewAction.completionOutcomeCode,
+        completion_outcome_code: completionOutcomeCode,
         review: reviewRecord || null,
       };
     } catch (err) {
@@ -743,6 +769,111 @@ export class CaseService {
       this.logger.error(`reviewCase error: ${message}`);
       throw err;
     }
+  }
+
+  /**
+   * บันทึกผลการส่งต่อ: what the agency reported, told to the school by phone,
+   * letter or LINE. Either answer hands the case back to รอพิจารณา, the same
+   * way a follow-up report does, and the reviewer picks the next step — ปิดเคส,
+   * another visit, or another referral — with the usual actions (owner,
+   * 2026-10-08). One result per referral; a second attempt is a conflict.
+   */
+  async recordReferralResult(
+    caseId: number,
+    referralId: string,
+    body: RecordReferralResultDto,
+    actor?: AuthenticatedRequestUser,
+  ) {
+    const currentActor = this.taskPolicyService.ensureActor(actor);
+    if (!this.taskPolicyService.hasPermission(currentActor, 'case:review')) {
+      throw new ForbiddenException('ไม่มีสิทธิ์บันทึกผลการส่งต่อ');
+    }
+    const note = clean(this.normalizeText(body.result_note)) || null;
+    if (!note) {
+      throw new BadRequestException('กรุณาสรุปผลจากหน่วยงาน');
+    }
+    const nextStatus = 'PENDING_REVIEW';
+    const referralStatusCode = body.result_code === 'SUCCEEDED' ? 'COMPLETED' : 'NOT_SUCCEEDED';
+    const actorId = resolveAuditActorId(currentActor);
+
+    const locked = await this.taskRepository.withTransaction(async (executor) => {
+      const referral = await this.taskRepository.lockCaseReferralForResult(
+        caseId,
+        referralId,
+        currentActor,
+        executor,
+      );
+      if (!referral) {
+        throw new NotFoundException('ไม่พบการส่งต่อนี้');
+      }
+      if (referral.has_result === true) {
+        throw new ConflictException('บันทึกผลการส่งต่อนี้ไปแล้ว');
+      }
+      if (
+        referral.is_latest !== true ||
+        this.normalizeText(referral.case_status) !== 'AWAITING_REFERRAL_OUTCOME'
+      ) {
+        throw new ConflictException('เคสนี้ไม่ได้รอผลการส่งต่อนี้แล้ว');
+      }
+      const transitioned = await this.taskRepository.recordCaseReferralResult(
+        {
+          caseId,
+          referralId,
+          referralStatusCode,
+          nextCaseStatus: nextStatus,
+          note,
+          recordedByUserId: actorId,
+        },
+        executor,
+      );
+      if (!transitioned) {
+        throw new ConflictException('เคสนี้ไม่ได้รอผลการส่งต่อนี้แล้ว');
+      }
+      return referral;
+    });
+
+    await this.auditLog.record({
+      actorUserId: actorId,
+      actorLabel: this.actorLabel(currentActor),
+      action: 'CASE_REFERRAL_RESULT',
+      targetType: 'case',
+      targetId: String(caseId),
+      metadata: { referralId, resultCode: body.result_code, nextStatus },
+      ip: null,
+    });
+
+    try {
+      await this.notificationsService.notifyCaseStatusChanged({
+        caseId,
+        studentName: this.normalizeText(locked.student_name) || null,
+        schoolId: this.normalizeNumber(locked.school_id),
+        nextStatus,
+        completionOutcomeCode: null,
+        actorUserId: actorId,
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.logger.error(`Failed to notify referral result after commit: ${message}`);
+    }
+    const studentUuid = this.normalizeText(locked.student_uuid) || null;
+    if (studentUuid) {
+      await this.riskProfileService
+        ?.requestStudentRecalculation([studentUuid], 'case-review')
+        .catch((error) => {
+          const message = error instanceof Error ? error.message : String(error);
+          this.logger.error(`Failed to enqueue referral result risk recalculation: ${message}`);
+        });
+    }
+
+    const referrals = await this.taskRepository.listCaseReferrals(caseId);
+    const recorded = referrals.find((row) => this.normalizeText(row.id) === referralId);
+    return {
+      success: true,
+      data: {
+        referral: recorded ? this.mapCaseReferral(recorded) : null,
+        case_status: nextStatus,
+      },
+    };
   }
 
   async getTasksByCase(caseId: number, actor?: AuthenticatedRequestUser) {

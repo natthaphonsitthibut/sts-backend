@@ -129,6 +129,8 @@ export class TaskStatsService {
       };
     };
     const byStatus: Record<string, number> = {};
+    // The register's cards: where each referral stands in the flow.
+    const byStage: Record<string, number> = {};
     const byAgency = new Map<string, number>();
     let referralTotal = 0;
     let overdue = 0;
@@ -138,6 +140,8 @@ export class TaskStatsService {
       const count = Number(row.referral_count ?? 0);
       byStatus[status] = (byStatus[status] ?? 0) + count;
       byAgency.set(agencyName, (byAgency.get(agencyName) ?? 0) + count);
+      const stage = String(row.stage_code);
+      byStage[stage] = (byStage[stage] ?? 0) + count;
       referralTotal += count;
       overdue += Number(row.overdue_count ?? 0);
     });
@@ -156,6 +160,7 @@ export class TaskStatsService {
           total: referralTotal,
           overdue,
           byStatus,
+          byStage,
           byAgency: [...byAgency.entries()].map(([agencyName, count]) => ({ agencyName, count })),
         },
         repeatedUnsuccessfulCaseCount,
@@ -196,6 +201,8 @@ export class TaskStatsService {
           grade: row.grade ?? null,
           room: row.room ?? null,
           statusCode: row.status_code,
+          stageCode: row.stage_code,
+          awaitingResult: row.stage_code === 'AWAITING_REFERRAL_OUTCOME',
           referredAt: row.referred_at,
           agencyName: row.agency_name,
           agencyKindLabel: row.agency_kind_label,

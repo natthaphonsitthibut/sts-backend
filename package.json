@@ -52,6 +52,8 @@
     "smoke:student-import-quarantine-browser": "DB_NAME=sts_smoke SMOKE_BACKEND_URL=http://127.0.0.1:3001 SMOKE_FRONTEND_URL=http://127.0.0.1:5174 node scripts/smoke-student-import-quarantine-browser.js",
     "smoke:current-enrollment": "DB_NAME=sts_smoke node scripts/smoke-current-enrollment.js",
     "smoke:case-assistance": "DB_NAME=sts_smoke REDIS_URL= node scripts/smoke-case-assistance.js",
+    "smoke:referral-outcomes": "DB_NAME=sts_smoke REDIS_URL= node scripts/smoke-referral-outcomes.js",
+    "smoke:referral-outcomes-browser": "DB_NAME=sts_smoke REDIS_URL= SMOKE_BACKEND_URL=http://localhost:3001 SMOKE_FRONTEND_URL=http://localhost:5175 SMOKE_CHROME_DEBUG_PORT=9294 node scripts/smoke-referral-outcomes-browser.js",
     "smoke:notifications": "DB_NAME=sts_smoke node scripts/smoke-notifications.js",
     "smoke:data-export": "DB_NAME=sts_smoke REDIS_URL=${REDIS_URL:-redis://localhost:6379} DATA_EXPORT_QUEUE_NAME=sts-smoke-data-export node scripts/smoke-data-export.js",
     "smoke:data-export-browser": "DB_NAME=sts_smoke SMOKE_BACKEND_URL=http://127.0.0.1:3001 SMOKE_FRONTEND_URL=http://127.0.0.1:5174 SMOKE_CHROME_DEBUG_PORT=9251 node scripts/smoke-data-export-browser.js",

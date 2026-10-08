@@ -290,7 +290,9 @@ export class RiskProfileRepository {
             LIMIT 1
           ) latest_task ON true
           WHERE c.deleted_at IS NULL
-            AND c.status IN ('OPEN', 'IN_PROGRESS', 'PENDING_REVIEW', 'STUDENT_NOT_FOUND')
+            AND c.status IN (
+              'OPEN', 'IN_PROGRESS', 'PENDING_REVIEW', 'STUDENT_NOT_FOUND', 'AWAITING_REFERRAL_OUTCOME'
+            )
           GROUP BY c.student_uuid
         ),
         metrics AS (

@@ -1,4 +1,9 @@
-import { BadRequestException, ForbiddenException, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  ForbiddenException,
+  NotFoundException,
+} from '@nestjs/common';
 import type { AuthenticatedRequestUser } from '../auth';
 import { AuditLogService } from '../audit-log/audit-log.service';
 import type { NotificationsService } from '../notifications/notifications.service';
@@ -23,6 +28,8 @@ function buildActor(
   };
 }
 
+const REFERRAL_ID = '22222222-2222-4222-8222-222222222222';
+
 describe('CaseService', () => {
   let service: CaseService;
   let taskRepository: jest.Mocked<
@@ -46,6 +53,9 @@ describe('CaseService', () => {
       | 'listCaseReferrals'
       | 'listStudentFollowUpHistory'
       | 'listActiveReferralAgencies'
+      | 'lockCaseReferralForResult'
+      | 'recordCaseReferralResult'
+      | 'closesAsSucceededReferral'
     >
   >;
   let auditLog: jest.Mocked<Pick<AuditLogService, 'record'>>;
@@ -87,6 +97,7 @@ describe('CaseService', () => {
       }),
       insertCaseReferral: jest.fn().mockResolvedValue(undefined),
       transitionPendingReviewCase: jest.fn().mockResolvedValue(true),
+      closesAsSucceededReferral: jest.fn().mockResolvedValue(false),
       findCaseReviewById: jest.fn().mockResolvedValue({
         id: 'review-id',
         case_id: 10,
@@ -99,6 +110,17 @@ describe('CaseService', () => {
       listCaseReferrals: jest.fn().mockResolvedValue([]),
       listStudentFollowUpHistory: jest.fn().mockResolvedValue([]),
       listActiveReferralAgencies: jest.fn().mockResolvedValue([]),
+      lockCaseReferralForResult: jest.fn().mockResolvedValue({
+        id: REFERRAL_ID,
+        status_code: 'REFERRED',
+        case_status: 'AWAITING_REFERRAL_OUTCOME',
+        school_id: 10010002,
+        student_uuid: '11111111-1111-4111-8111-111111111111',
+        student_name: 'เด็ก ทดสอบ',
+        has_result: false,
+        is_latest: true,
+      }),
+      recordCaseReferralResult: jest.fn().mockResolvedValue(true),
     };
     auditLog = {
       record: jest.fn().mockResolvedValue(undefined),
@@ -118,9 +140,9 @@ describe('CaseService', () => {
             return Promise.resolve({
               code,
               label: 'ส่งต่อหน่วยงาน',
-              targetStatus: 'RESOLVED',
+              targetStatus: 'AWAITING_REFERRAL_OUTCOME',
               requiresResolutionOutcome: false,
-              completionOutcomeCode: 'REFERRED_AGENCY',
+              completionOutcomeCode: null,
               requiredPermission: 'case:review',
               availablePhaseCode: null,
               targetWorkflowPhaseCode: null,
@@ -425,8 +447,9 @@ describe('CaseService', () => {
       buildActor(['dashboard', 'case:assign', 'case:review']),
     );
 
-    expect(result.case_status).toBe('RESOLVED');
-    expect(result.completion_outcome_code).toBe('REFERRED_AGENCY');
+    // Referring parks the case until the agency's result is recorded.
+    expect(result.case_status).toBe('AWAITING_REFERRAL_OUTCOME');
+    expect(result.completion_outcome_code).toBeNull();
     expect(taskRepository.insertCaseReview).toHaveBeenCalledWith(
       expect.objectContaining({
         caseId: 10,
@@ -465,7 +488,9 @@ describe('CaseService', () => {
         },
         buildActor(['dashboard', 'case:assign', 'case:review']),
       ),
-    ).resolves.toEqual(expect.objectContaining({ success: true, case_status: 'RESOLVED' }));
+    ).resolves.toEqual(
+      expect.objectContaining({ success: true, case_status: 'AWAITING_REFERRAL_OUTCOME' }),
+    );
     expect(taskRepository.transitionPendingReviewCase).toHaveBeenCalled();
     expect(taskRepository.insertCaseReview).toHaveBeenCalled();
   });
@@ -532,6 +557,30 @@ describe('CaseService', () => {
       referralAgencyId: null,
       proposedAssistanceMeasureCodes: [],
     });
+  });
+
+  it('closes as ส่งต่อหน่วยงาน right after the agency reported สำเร็จ', async () => {
+    taskRepository.closesAsSucceededReferral.mockResolvedValueOnce(true);
+
+    const result = await service.reviewCase(
+      10,
+      { review_action: 'CLOSE', review_note: 'หน่วยงานช่วยเหลือสำเร็จ ปิดเคส' },
+      buildActor(['dashboard', 'case:review']),
+    );
+
+    expect(taskRepository.closesAsSucceededReferral).toHaveBeenCalledWith(10, undefined);
+    expect(taskRepository.transitionPendingReviewCase).toHaveBeenCalledWith(
+      10,
+      'RESOLVED',
+      'REFERRED_AGENCY',
+      undefined,
+      expect.objectContaining({ id: 1 }),
+      null,
+    );
+    expect(result.completion_outcome_code).toBe('REFERRED_AGENCY');
+    expect(auditLog.record.mock.calls[0]?.[0].metadata).toEqual(
+      expect.objectContaining({ completionOutcome: 'REFERRED_AGENCY' }),
+    );
   });
 
   it('sends a follow-up case into the assistance phase on ASSIST', async () => {
@@ -676,5 +725,131 @@ describe('CaseService', () => {
 
     expect(taskRepository.findCaseById).not.toHaveBeenCalled();
     expect(taskRepository.withTransaction).not.toHaveBeenCalled();
+  });
+
+  describe('recordReferralResult', () => {
+    const director = () => buildActor(['dashboard', 'case:assign', 'case:review']);
+
+    it('hands the case back to review when the agency succeeded', async () => {
+      const result = await service.recordReferralResult(
+        10,
+        REFERRAL_ID,
+        { result_code: 'SUCCEEDED', result_note: '  นักเรียนกลับมาเรียนแล้ว  ' },
+        director(),
+      );
+
+      expect(taskRepository.lockCaseReferralForResult).toHaveBeenCalledWith(
+        10,
+        REFERRAL_ID,
+        expect.objectContaining({ data_scope: { school_ids: [10010002] } }),
+        undefined,
+      );
+      expect(taskRepository.recordCaseReferralResult).toHaveBeenCalledWith(
+        {
+          caseId: 10,
+          referralId: REFERRAL_ID,
+          referralStatusCode: 'COMPLETED',
+          nextCaseStatus: 'PENDING_REVIEW',
+          note: 'นักเรียนกลับมาเรียนแล้ว',
+          recordedByUserId: 1,
+        },
+        undefined,
+      );
+      expect(result.data.case_status).toBe('PENDING_REVIEW');
+      expect(auditLog.record).toHaveBeenCalledWith(
+        expect.objectContaining({
+          action: 'CASE_REFERRAL_RESULT',
+          targetId: '10',
+          metadata: {
+            referralId: REFERRAL_ID,
+            resultCode: 'SUCCEEDED',
+            nextStatus: 'PENDING_REVIEW',
+          },
+        }),
+      );
+    });
+
+    it('hands the case back to review when the agency did not succeed', async () => {
+      const result = await service.recordReferralResult(
+        10,
+        REFERRAL_ID,
+        { result_code: 'NOT_SUCCEEDED', result_note: 'ติดต่อครอบครัวไม่ได้' },
+        director(),
+      );
+
+      expect(taskRepository.recordCaseReferralResult).toHaveBeenCalledWith(
+        expect.objectContaining({
+          referralStatusCode: 'NOT_SUCCEEDED',
+          nextCaseStatus: 'PENDING_REVIEW',
+        }),
+        undefined,
+      );
+      expect(result.data.case_status).toBe('PENDING_REVIEW');
+      expect(notificationsService.notifyCaseStatusChanged).toHaveBeenCalledWith(
+        expect.objectContaining({ caseId: 10, nextStatus: 'PENDING_REVIEW' }),
+      );
+    });
+
+    it('rejects an account without case:review before touching data', async () => {
+      await expect(
+        service.recordReferralResult(
+          10,
+          REFERRAL_ID,
+          { result_code: 'SUCCEEDED', result_note: 'สำเร็จ' },
+          buildActor(['dashboard']),
+        ),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+      expect(taskRepository.withTransaction).not.toHaveBeenCalled();
+    });
+
+    it('rejects a blank note', async () => {
+      await expect(
+        service.recordReferralResult(
+          10,
+          REFERRAL_ID,
+          { result_code: 'SUCCEEDED', result_note: '   ' },
+          director(),
+        ),
+      ).rejects.toBeInstanceOf(BadRequestException);
+      expect(taskRepository.withTransaction).not.toHaveBeenCalled();
+    });
+
+    it('returns 404 for a referral outside the actor scope', async () => {
+      taskRepository.lockCaseReferralForResult.mockResolvedValueOnce(null);
+      await expect(
+        service.recordReferralResult(
+          10,
+          REFERRAL_ID,
+          { result_code: 'SUCCEEDED', result_note: 'สำเร็จ' },
+          director(),
+        ),
+      ).rejects.toBeInstanceOf(NotFoundException);
+      expect(taskRepository.recordCaseReferralResult).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ['already has a result', { has_result: true }],
+      ['is not the latest referral', { is_latest: false }],
+      ['belongs to a case no longer waiting', { case_status: 'RESOLVED' }],
+    ])('refuses a referral that %s', async (_label, overrides) => {
+      taskRepository.lockCaseReferralForResult.mockResolvedValueOnce({
+        id: REFERRAL_ID,
+        status_code: 'REFERRED',
+        case_status: 'AWAITING_REFERRAL_OUTCOME',
+        has_result: false,
+        is_latest: true,
+        ...overrides,
+      });
+      await expect(
+        service.recordReferralResult(
+          10,
+          REFERRAL_ID,
+          { result_code: 'NOT_SUCCEEDED', result_note: 'ยังไม่สำเร็จ' },
+          director(),
+        ),
+      ).rejects.toBeInstanceOf(ConflictException);
+      expect(taskRepository.recordCaseReferralResult).not.toHaveBeenCalled();
+      expect(auditLog.record).not.toHaveBeenCalled();
+    });
   });
 });
