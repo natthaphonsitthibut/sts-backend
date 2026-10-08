@@ -57,7 +57,6 @@ describe('CaseService', () => {
       | 'lockCaseReferralForResult'
       | 'recordCaseReferralResult'
       | 'lockReferralLinkForReport'
-      | 'closesAsSucceededReferral'
     >
   >;
   let auditLog: jest.Mocked<Pick<AuditLogService, 'record'>>;
@@ -99,7 +98,6 @@ describe('CaseService', () => {
       }),
       insertCaseReferral: jest.fn().mockResolvedValue(undefined),
       transitionPendingReviewCase: jest.fn().mockResolvedValue(true),
-      closesAsSucceededReferral: jest.fn().mockResolvedValue(false),
       findCaseReviewById: jest.fn().mockResolvedValue({
         id: 'review-id',
         case_id: 10,
@@ -571,30 +569,6 @@ describe('CaseService', () => {
       referralAgencyId: null,
       proposedAssistanceMeasureCodes: [],
     });
-  });
-
-  it('closes as ส่งต่อหน่วยงาน right after the agency reported สำเร็จ', async () => {
-    taskRepository.closesAsSucceededReferral.mockResolvedValueOnce(true);
-
-    const result = await service.reviewCase(
-      10,
-      { review_action: 'CLOSE', review_note: 'หน่วยงานช่วยเหลือสำเร็จ ปิดเคส' },
-      buildActor(['dashboard', 'case:review']),
-    );
-
-    expect(taskRepository.closesAsSucceededReferral).toHaveBeenCalledWith(10, undefined);
-    expect(taskRepository.transitionPendingReviewCase).toHaveBeenCalledWith(
-      10,
-      'RESOLVED',
-      'REFERRED_AGENCY',
-      undefined,
-      expect.objectContaining({ id: 1 }),
-      null,
-    );
-    expect(result.completion_outcome_code).toBe('REFERRED_AGENCY');
-    expect(auditLog.record.mock.calls[0]?.[0].metadata).toEqual(
-      expect.objectContaining({ completionOutcome: 'REFERRED_AGENCY' }),
-    );
   });
 
   it('sends a follow-up case into the assistance phase on ASSIST', async () => {

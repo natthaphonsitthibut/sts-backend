@@ -1,45 +1,48 @@
 import { NotificationsService } from './notifications.service';
 
 describe('NotificationsService', () => {
-  it('fans out a typed case-status notification', async () => {
-    const repository = {
-      fanOut: jest.fn().mockResolvedValue([7, 8]),
-      findCaseStatusNotificationContext: jest.fn().mockResolvedValue({
-        completionOutcomeLabel: 'ปิดเคส',
-        latestAbsentDate: '2026-08-15',
-        latestTeacherComment: null,
-        assignedTeacherName: 'ครูทดสอบ',
-        reasonFlagged: 'ขาดเรียนสะสม 3 วัน',
-        resultSummary: 'ผู้ปกครองรับทราบและจะติดตามการมาเรียน',
-        reviewNote: 'เห็นควรปิดเคส',
-        reviewSummary: null,
-      }),
-    };
-    const service = new NotificationsService(repository as never);
+  it.each(['CLOSED', 'REFERRED_AGENCY'])(
+    'shows only เสร็จสิ้น for closed notification outcome %s',
+    async (completionOutcomeCode) => {
+      const repository = {
+        fanOut: jest.fn().mockResolvedValue([7, 8]),
+        findCaseStatusNotificationContext: jest.fn().mockResolvedValue({
+          completionOutcomeLabel: 'ปิดเคส',
+          latestAbsentDate: '2026-08-15',
+          latestTeacherComment: null,
+          assignedTeacherName: 'ครูทดสอบ',
+          reasonFlagged: 'ขาดเรียนสะสม 3 วัน',
+          resultSummary: 'ผู้ปกครองรับทราบและจะติดตามการมาเรียน',
+          reviewNote: 'เห็นควรปิดเคส',
+          reviewSummary: null,
+        }),
+      };
+      const service = new NotificationsService(repository as never);
 
-    await expect(
-      service.notifyCaseStatusChanged({
-        caseId: 11,
-        studentName: 'เด็กชาย ทดสอบระบบ',
-        schoolId: 10010002,
-        nextStatus: 'RESOLVED',
-        completionOutcomeCode: 'CLOSED',
-        actorUserId: 4,
-      }),
-    ).resolves.toEqual([7, 8]);
+      await expect(
+        service.notifyCaseStatusChanged({
+          caseId: 11,
+          studentName: 'เด็กชาย ทดสอบระบบ',
+          schoolId: 10010002,
+          nextStatus: 'RESOLVED',
+          completionOutcomeCode,
+          actorUserId: 4,
+        }),
+      ).resolves.toEqual([7, 8]);
 
-    expect(repository.fanOut).toHaveBeenCalledWith(
-      expect.objectContaining({
-        typeCode: 'CASE_STATUS_CHANGED',
-        caseId: 11,
-        caseStatusCode: 'RESOLVED',
-        title: 'เคสเปลี่ยนสถานะ: เสร็จสิ้น : ปิดเคส',
-        studentNameSnapshot: 'เด็กชาย ทดสอบระบบ',
-        excludeUserId: 4,
-        reasonText: 'ผลการพิจารณา: เห็นควรปิดเคส',
-      }),
-    );
-  });
+      expect(repository.fanOut).toHaveBeenCalledWith(
+        expect.objectContaining({
+          typeCode: 'CASE_STATUS_CHANGED',
+          caseId: 11,
+          caseStatusCode: 'RESOLVED',
+          title: 'เคสเปลี่ยนสถานะ: เสร็จสิ้น',
+          studentNameSnapshot: 'เด็กชาย ทดสอบระบบ',
+          excludeUserId: 4,
+          reasonText: 'ผลการพิจารณา: เห็นควรปิดเคส',
+        }),
+      );
+    },
+  );
 
   it('maps an assigned case to its assignee and latest teacher comment', async () => {
     const repository = {

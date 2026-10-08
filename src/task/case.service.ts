@@ -632,7 +632,9 @@ export class CaseService {
     }
     const nextStatus = reviewAction.targetStatus;
     const reviewId = crypto.randomUUID();
-    let completionOutcomeCode = reviewAction.completionOutcomeCode;
+    // A closed case has one outcome; referral results belong to their own flow.
+    const completionOutcomeCode =
+      reviewAction.code === 'CLOSE' ? 'CLOSED' : reviewAction.completionOutcomeCode;
 
     try {
       const caseRecord = await this.taskRepository.findCaseById(caseId, undefined, currentActor);
@@ -655,15 +657,6 @@ export class CaseService {
         throw new BadRequestException('พิจารณาได้เฉพาะเคสที่มีรายงานติดตามรอพิจารณา');
       }
       await this.taskRepository.withTransaction(async (executor) => {
-        // ปิดเคส straight after the agency reported สำเร็จ closes the case as
-        // ส่งต่อหน่วยงาน, the outcome a referral used to close with on its own
-        // (owner, 2026-10-08).
-        if (
-          reviewAction.code === 'CLOSE' &&
-          (await this.taskRepository.closesAsSucceededReferral(caseId, executor))
-        ) {
-          completionOutcomeCode = 'REFERRED_AGENCY';
-        }
         const transitioned = await this.taskRepository.transitionPendingReviewCase(
           caseId,
           nextStatus,

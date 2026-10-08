@@ -762,8 +762,6 @@ export class TaskRepository {
         completion_outcome.label_th AS completion_outcome_label,
         c.workflow_phase_code,
         CASE
-          WHEN c.status = 'RESOLVED' AND completion_outcome.label_th IS NOT NULL
-            THEN CONCAT(case_status.label_th, ' : ', completion_outcome.label_th)
           WHEN c.status IN ('OPEN', 'IN_PROGRESS', 'PENDING_REVIEW')
             AND case_phase.label_th IS NOT NULL
             THEN CONCAT(case_status.label_th, ' : ', case_phase.label_th)
@@ -956,38 +954,6 @@ export class TaskRepository {
    * `ASSIST` moves a case across phases, so closing or referring an assistance
    * case keeps `ASSISTANCE` on the record for history.
    */
-  /**
-   * Whether closing this case now ends a referral that worked: its latest
-   * referral came back สำเร็จ and nobody was sent out on the case after it.
-   * A visit or an assistance round handed out since then is what the case is
-   * being closed on instead.
-   */
-  async closesAsSucceededReferral(caseId: number, executor: QueryExecutor): Promise<boolean> {
-    const result = await executor.query<{ succeeded: boolean }>(
-      `
-        SELECT EXISTS (
-          SELECT 1
-          FROM case_referrals referral
-          WHERE referral.case_id = $1
-            AND referral.status_code = 'COMPLETED'
-            AND NOT EXISTS (
-              SELECT 1 FROM case_referrals newer
-              WHERE newer.case_id = referral.case_id
-                AND (newer.referred_at, newer.id) > (referral.referred_at, referral.id)
-            )
-            AND NOT EXISTS (
-              SELECT 1 FROM tasks task
-              WHERE task.case_id = referral.case_id
-                AND task.deleted_at IS NULL
-                AND task.created_at > referral.referred_at
-            )
-        ) AS succeeded
-      `,
-      [caseId],
-    );
-    return result.rows[0]?.succeeded === true;
-  }
-
   async transitionPendingReviewCase(
     caseId: number,
     nextStatus: string,
@@ -1310,8 +1276,6 @@ export class TaskRepository {
         c.status,
         c.workflow_phase_code,
         CASE
-          WHEN c.status = 'RESOLVED' AND completion_outcome.label_th IS NOT NULL
-            THEN CONCAT(case_status.label_th, ' : ', completion_outcome.label_th)
           WHEN c.status IN ('OPEN', 'IN_PROGRESS', 'PENDING_REVIEW')
             AND case_phase.label_th IS NOT NULL
             THEN CONCAT(case_status.label_th, ' : ', case_phase.label_th)
@@ -1547,8 +1511,6 @@ export class TaskRepository {
         c.completion_outcome_code,
         c.workflow_phase_code,
         CASE
-          WHEN c.status = 'RESOLVED' AND completion_outcome.label_th IS NOT NULL
-            THEN CONCAT(case_status.label_th, ' : ', completion_outcome.label_th)
           WHEN c.status IN ('OPEN', 'IN_PROGRESS', 'PENDING_REVIEW')
             AND case_phase.label_th IS NOT NULL
             THEN CONCAT(case_status.label_th, ' : ', case_phase.label_th)
@@ -2287,8 +2249,6 @@ export class TaskRepository {
         completion_outcome.label_th AS completion_outcome_label,
         c.workflow_phase_code,
         CASE
-          WHEN c.status = 'RESOLVED' AND completion_outcome.label_th IS NOT NULL
-            THEN CONCAT(case_status.label_th, ' : ', completion_outcome.label_th)
           WHEN c.status IN ('OPEN', 'IN_PROGRESS', 'PENDING_REVIEW')
             AND case_phase.label_th IS NOT NULL
             THEN CONCAT(case_status.label_th, ' : ', case_phase.label_th)

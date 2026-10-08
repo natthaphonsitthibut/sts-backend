@@ -110,16 +110,7 @@ export class NotificationsService {
     actorUserId: number | null;
     completionOutcomeCode?: string | null;
   }): Promise<number[]> {
-    const completionLabel =
-      event.completionOutcomeCode === 'CLOSED'
-        ? 'ปิดเคส'
-        : event.completionOutcomeCode === 'REFERRED_AGENCY'
-          ? 'ส่งต่อหน่วยงาน'
-          : null;
-    const baseStatusLabel = CASE_STATUS_LABELS[event.nextStatus] ?? event.nextStatus;
-    const statusLabel = completionLabel
-      ? `${baseStatusLabel} : ${completionLabel}`
-      : baseStatusLabel;
+    const statusLabel = CASE_STATUS_LABELS[event.nextStatus] ?? event.nextStatus;
     // Notification recipients have already passed permission and data-scope
     // filtering in the repository, so show the student's real name here.
     const student = event.studentName?.trim() || 'นักเรียน';

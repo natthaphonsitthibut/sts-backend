@@ -292,9 +292,20 @@ async function main() {
     );
     state = await caseState();
     assert(
-      state.status === 'RESOLVED' && state.completion_outcome_code === 'REFERRED_AGENCY',
+      state.status === 'RESOLVED' && state.completion_outcome_code === 'CLOSED',
       `case after ปิดเคส is ${JSON.stringify(state)}`,
     );
+    for (const completion of ['REFERRED_AGENCY', 'CLOSED']) {
+      await dataSource.query(`UPDATE cases SET completion_outcome_code = $2 WHERE id = $1`,
+        [caseId, completion]);
+      const detail = await caseService.getCase(caseId, director);
+      assert(detail.data.display_status_label === 'เสร็จสิ้น',
+        `closed case display for ${completion} is ${detail.data.display_status_label}`);
+      assert(detail.data.completion_outcome_code === completion,
+        'simplifying the display removed the recorded completion outcome');
+    }
+    await dataSource.query(`UPDATE cases SET completion_outcome_code = 'CLOSED' WHERE id = $1`, [caseId]);
+    console.log('ok both closed-case outcomes display เสร็จสิ้น only; recorded outcome stays intact');
     await expectStages({ [firstReferralId]: 'NOT_SUCCEEDED', [secondReferralId]: 'COMPLETED' });
     const rows = await dataSource.query(
       `SELECT referral.status_code, COUNT(result.case_referral_id)::int AS results

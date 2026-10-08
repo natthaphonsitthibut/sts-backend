@@ -470,7 +470,9 @@ async function main() {
     assert(
       reportStep.text.includes(`${REPORTER.given} ${REPORTER.family}`) &&
         reportStep.text.includes('AraID') &&
-        reportStep.text.includes('สถานะการส่งต่อ : สำเร็จ') &&
+        reportStep.text.includes('สถานะการส่งต่อ : รอพิจารณา') &&
+        reportStep.text.includes('ผลการส่งต่อ') &&
+        reportStep.text.includes('สำเร็จ') &&
         reportStep.text.includes(REPORT_NOTE),
       `report step reads: ${reportStep.text}`,
     );
