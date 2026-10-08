@@ -127,12 +127,8 @@ export class StudentsRepository {
     }
 
     if (filters.searchTerm) {
-      // Match name OR student code, preserving the previous client-side filter
-      // which searched both the full name and the PersonID_Onec ("รหัส").
       params.push(`%${filters.searchTerm}%`);
-      conditions.push(
-        `((s."FirstName_Onec" || ' ' || s."LastName_Onec") ILIKE $${params.length} OR s."PersonID_Onec" ILIKE $${params.length})`,
-      );
+      conditions.push(`(s."FirstName_Onec" || ' ' || s."LastName_Onec") ILIKE $${params.length}`);
     }
 
     if (typeof filters.studentStatusCode === 'number') {

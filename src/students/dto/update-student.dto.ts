@@ -40,6 +40,7 @@ export class StudentContactDto {
   @IsOptional()
   @Transform(trimOptionalText)
   @IsEmail({}, { message: 'รูปแบบอีเมลไม่ถูกต้อง' })
+  @MaxLength(254, { message: 'อีเมลต้องไม่เกิน 254 ตัวอักษร' })
   email?: string | null;
 
   @IsOptional()
@@ -88,6 +89,7 @@ export class StudentGuardianInputDto {
   @IsOptional()
   @Transform(trimOptionalText)
   @IsEmail({}, { message: 'รูปแบบอีเมลไม่ถูกต้อง' })
+  @MaxLength(254, { message: 'อีเมลต้องไม่เกิน 254 ตัวอักษร' })
   email?: string | null;
 
   @IsOptional()

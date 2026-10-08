@@ -45,7 +45,10 @@ import {
   UpdateSchoolTeacherMembershipDto,
 } from './dto/school-structure.dto';
 import { multerConfig } from '../common/interceptors/file-upload.interceptor';
-import { SchoolStructureService } from './school-structure.service';
+import {
+  CLASSROOM_ATTENDANCE_HISTORY_READ_PERMISSIONS,
+  SchoolStructureService,
+} from './school-structure.service';
 import { CLASSROOM_COMMENT_READER_PERMISSIONS } from '../teacher-comments/teacher-comments.service';
 
 @UseGuards(AuthGuard, PermissionsGuard)
@@ -289,7 +292,7 @@ export class SchoolStructureController {
 
   @Get('classrooms/:classroomId/attendance-history')
   @RequirePermission()
-  @RequireAnyPermission('classrooms', 'manage-school-structure', 'attendance')
+  @RequireAnyPermission(...CLASSROOM_ATTENDANCE_HISTORY_READ_PERMISSIONS)
   listClassroomAttendanceHistory(
     @Param('classroomId', ParseIntPipe) classroomId: number,
     @Query() query: ListClassroomAttendanceHistoryDto,

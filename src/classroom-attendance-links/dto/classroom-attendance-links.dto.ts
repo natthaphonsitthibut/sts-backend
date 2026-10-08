@@ -65,6 +65,14 @@ export class ListClassroomAttendanceLinksDto {
   homeroomStatus?: 'ASSIGNED' | 'UNASSIGNED';
 
   @IsOptional()
+  @IsIn(['teacherName', 'classroomCount', 'linkStatus', 'lineStatus'])
+  sortBy?: 'teacherName' | 'classroomCount' | 'linkStatus' | 'lineStatus';
+
+  @IsOptional()
+  @IsIn(['asc', 'desc'])
+  sortDirection?: 'asc' | 'desc';
+
+  @IsOptional()
   @Type(() => Number)
   @IsInt()
   @Min(1)

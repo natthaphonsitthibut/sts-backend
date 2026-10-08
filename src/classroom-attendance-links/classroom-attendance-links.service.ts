@@ -216,6 +216,8 @@ export class ClassroomAttendanceLinksService {
       search: query.search,
       gradeLevelId: query.gradeLevelId,
       linkStatus: query.linkStatus,
+      sortBy: query.sortBy,
+      sortDirection: query.sortDirection,
       page: query.page,
       limit: query.limit,
       scope: this.actorScope(actor),

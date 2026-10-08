@@ -51,4 +51,14 @@ describe('credential rules', () => {
       await messagesFor(LoginDto, { username: 'a'.repeat(51), password: 'x' }, 'username'),
     ).toEqual(['ชื่อผู้ใช้งานต้องไม่เกิน 50 ตัวอักษร']);
   });
+
+  it('caps account names with Thai errors for direct API requests', async () => {
+    expect(
+      await messagesFor(
+        CreateUserDto,
+        { ...createBody, username: 'burapha.admin', FirstName: 'ก'.repeat(101) },
+        'FirstName',
+      ),
+    ).toContain('ชื่อต้องไม่เกิน 100 ตัวอักษร');
+  });
 });

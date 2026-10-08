@@ -21,6 +21,7 @@ import {
   ReplaceClassroomSubjectsDto,
   SaveClassroomSubjectTeachersDto,
   SaveGradeSchoolSubjectDto,
+  UpdateGradeSchoolSubjectDto,
   UpdateSchoolSubjectDto,
 } from './dto/subjects.dto';
 import { SubjectsService } from './subjects.service';
@@ -77,7 +78,7 @@ export class SubjectsController {
   async updateGradeSchoolSubject(
     @CurrentUser() actor: AuthenticatedRequestUser,
     @Param('schoolSubjectId', ParseIntPipe) schoolSubjectId: number,
-    @Body() body: SaveGradeSchoolSubjectDto,
+    @Body() body: UpdateGradeSchoolSubjectDto,
   ) {
     return await this.subjectsService.saveGradeSchoolSubject(actor, schoolSubjectId, body);
   }

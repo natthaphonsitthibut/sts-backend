@@ -137,10 +137,12 @@ export class CreateUserDto {
 
   @IsString()
   @IsNotEmpty()
+  @MaxLength(100, { message: 'ชื่อต้องไม่เกิน 100 ตัวอักษร' })
   FirstName!: string;
 
   @IsString()
   @IsNotEmpty()
+  @MaxLength(100, { message: 'นามสกุลต้องไม่เกิน 100 ตัวอักษร' })
   LastName!: string;
 
   @IsString()
@@ -154,6 +156,7 @@ export class CreateUserDto {
 
   @IsOptional()
   @IsEmail()
+  @MaxLength(255, { message: 'อีเมลต้องไม่เกิน 255 ตัวอักษร' })
   email?: string;
 
   @IsOptional()
@@ -429,6 +432,7 @@ export class CreateRoleGroupDto {
 
   @IsString()
   @IsNotEmpty()
+  @MaxLength(100, { message: 'ชื่อกลุ่มเมนูต้องไม่เกิน 100 ตัวอักษร' })
   label!: string;
 
   @IsOptional()

@@ -16,7 +16,7 @@ import type { Request } from 'express';
 import { FilesInterceptor } from '@nestjs/platform-express';
 import { TaskService } from './task.service';
 import { Public } from '../auth';
-import { multerConfig } from '../common/interceptors/file-upload.interceptor';
+import { visitReportMulterConfig } from '../common/interceptors/file-upload.interceptor';
 import { processVisitAttachment } from '../common/file-upload/visit-photo.util';
 import { FILE_STORAGE_ADAPTER, type FileStorageAdapter } from '../files/storage/file-storage.types';
 import { getHeaderValue } from './task.types';
@@ -70,12 +70,20 @@ export class SubmissionController {
     return normalized;
   }
 
-  /**
-   * Multipart repeats one field per picked value, so the same key arrives as a
-   * string when a single factor is chosen and as an array when several are.
-   */
+  /** Accept JSON arrays from current clients and repeated fields from older links. */
   private parseOptionCodeList(value: unknown, invalidMessage: string): string[] {
-    const entries = Array.isArray(value) ? value : value == null ? [] : [value];
+    let entries: unknown[];
+    if (typeof value === 'string' && value.trim().startsWith('[')) {
+      try {
+        const parsed: unknown = JSON.parse(value);
+        if (!Array.isArray(parsed)) throw new Error('Expected an array');
+        entries = parsed;
+      } catch {
+        throw new BadRequestException(invalidMessage);
+      }
+    } else {
+      entries = Array.isArray(value) ? value : value == null ? [] : [value];
+    }
     const codes = entries.map((entry) =>
       this.parseOptionCode(typeof entry === 'string' ? entry : undefined, invalidMessage),
     );
@@ -98,7 +106,7 @@ export class SubmissionController {
   }
 
   @Post(':token/submit')
-  @UseInterceptors(FilesInterceptor('photos', 5, multerConfig))
+  @UseInterceptors(FilesInterceptor('photos', 10, visitReportMulterConfig))
   async submitReport(
     @Param('token') token: string,
     @Body() body: Record<string, string>,

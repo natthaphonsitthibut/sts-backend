@@ -2627,7 +2627,7 @@ export class TaskRepository {
     if (filters.searchTerm) {
       params.push(`%${escapeLikePattern(filters.searchTerm)}%`);
       conditions.push(
-        `((s."FirstName_Onec" || ' ' || s."LastName_Onec") ILIKE $${params.length} ESCAPE '\\' OR s."PersonID_Onec" ILIKE $${params.length} ESCAPE '\\')`,
+        `(s."FirstName_Onec" || ' ' || s."LastName_Onec") ILIKE $${params.length} ESCAPE '\\'`,
       );
     }
 

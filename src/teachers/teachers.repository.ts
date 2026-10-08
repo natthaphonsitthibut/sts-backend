@@ -95,10 +95,6 @@ export class TeachersRepository {
       params.push(`%${escapeLikePattern(search)}%`);
       conditions.push(`(
         CONCAT_WS(' ', teacher.first_name, teacher.last_name) ILIKE $${params.length} ESCAPE '\\'
-        OR COALESCE(teacher.citizen_id, '') ILIKE $${params.length} ESCAPE '\\'
-        OR COALESCE(teacher.phone, '') ILIKE $${params.length} ESCAPE '\\'
-        OR COALESCE(teacher.email, '') ILIKE $${params.length} ESCAPE '\\'
-        OR COALESCE(teacher.line_id, '') ILIKE $${params.length} ESCAPE '\\'
       )`);
     }
     if (input.teacherStatus) {

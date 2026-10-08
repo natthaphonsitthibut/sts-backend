@@ -14,13 +14,13 @@ export class CreateStudentDto extends OmitType(UpdateStudentDto, [
   @Transform(trimText)
   @IsString()
   @MinLength(1, { message: 'กรุณาระบุชื่อ' })
-  @MaxLength(100)
+  @MaxLength(100, { message: 'ชื่อต้องไม่เกิน 100 ตัวอักษร' })
   FirstName_Onec!: string;
 
   @Transform(trimText)
   @IsString()
   @MinLength(1, { message: 'กรุณาระบุนามสกุล' })
-  @MaxLength(100)
+  @MaxLength(100, { message: 'นามสกุลต้องไม่เกิน 100 ตัวอักษร' })
   LastName_Onec!: string;
 
   @Transform(trimText)
@@ -33,7 +33,7 @@ export class CreateStudentDto extends OmitType(UpdateStudentDto, [
   @IsOptional()
   @Transform(trimText)
   @IsString()
-  @MaxLength(50)
+  @MaxLength(50, { message: 'เลขหนังสือเดินทางต้องไม่เกิน 50 ตัวอักษร' })
   PassportNumber_Onec?: string;
 
   @Type(() => Number)
