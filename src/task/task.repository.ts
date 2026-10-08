@@ -3246,7 +3246,7 @@ export class TaskRepository {
   /** Recheck and lock the reporting link after the case/referral locks. */
   async lockReferralLinkForReport(linkId: string, referralId: string, executor: QueryExecutor) {
     const result = await executor.query<QueryResultRow>(
-      `SELECT id, status_code, starts_at, expires_at,
+      `SELECT id, status_code, starts_at, expires_at, access_code_revision,
           starts_at <= clock_timestamp() AS has_started,
           expires_at > clock_timestamp() AS has_not_expired
        FROM case_referral_links
@@ -3367,6 +3367,32 @@ export class TaskRepository {
     return String(result.rows[0].id);
   }
 
+  async lockLatestReferralAccessCode(referralId: string, executor: QueryExecutor) {
+    const result = await executor.query<QueryResultRow>(
+      `SELECT id, token_encrypted, access_code_hash, access_code_revision, status_code,
+        expires_at > clock_timestamp() AS has_not_expired
+       FROM case_referral_links WHERE case_referral_id = $1
+       ORDER BY created_at DESC, id DESC LIMIT 1 FOR UPDATE`,
+      [referralId],
+    );
+    return result.rows[0] ?? null;
+  }
+
+  async rotateReferralAccessCode(
+    linkId: string,
+    codeHash: string,
+    codeEncrypted: string,
+    executor: QueryExecutor,
+  ): Promise<number> {
+    const result = await executor.query<{ access_code_revision: number }>(
+      `UPDATE case_referral_links SET access_code_hash = $2, access_code_encrypted = $3,
+        access_code_revision = access_code_revision + 1, failed_code_attempts = 0
+       WHERE id = $1 RETURNING access_code_revision`,
+      [linkId, codeHash, codeEncrypted],
+    );
+    return Number(result.rows[0]?.access_code_revision);
+  }
+
   async findReferralAccessCode(caseId: number, referralId: string, actor: ActorContext) {
     const scopeQuery = this.buildCaseScopeQuery(actor, 3);
     const result = await this.getExecutor().query(
@@ -3398,7 +3424,7 @@ export class TaskRepository {
   private async findReferralLink(whereSql: string, param: string): Promise<QueryResultRow | null> {
     const result = await this.query<QueryResultRow>(
       `
-        SELECT link.id, link.case_referral_id, link.access_code_hash, link.failed_code_attempts,
+        SELECT link.id, link.case_referral_id, link.access_code_hash, link.access_code_revision, link.failed_code_attempts,
           link.status_code, link.starts_at, link.expires_at,
           referral.case_id, referral.referral_note, referral.referred_at,
           agency.agency_name, kind.label_th AS agency_kind_label,
@@ -4047,7 +4073,7 @@ export class TaskRepository {
     }
     if (filters.searchTerm) {
       filterParams.push(`%${escapeLikePattern(filters.searchTerm)}%`);
-      whereSql += ` AND (c.student_name ILIKE $${filterParams.length} ESCAPE '\\' OR agency.agency_name ILIKE $${filterParams.length} ESCAPE '\\')`;
+      whereSql += ` AND c.student_name ILIKE $${filterParams.length} ESCAPE '\\'`;
     }
     const fromSql = `
         FROM case_referrals referral
@@ -4067,6 +4093,7 @@ export class TaskRepository {
           ${REFERRAL_STAGE_SQL} AS stage_code,
           agency.agency_name, kind.label_th AS agency_kind_label,
           latest_link.status_code AS link_status_code, latest_link.expires_at AS link_expires_at,
+          (latest_link.access_code_encrypted IS NOT NULL) AS access_code_available,
           latest_link.token_encrypted AS link_token_encrypted
         FROM case_referrals referral
         JOIN cases c ON c.id = referral.case_id AND c.deleted_at IS NULL
@@ -4077,7 +4104,8 @@ export class TaskRepository {
         JOIN referral_agencies agency ON agency.id = referral.referral_agency_id
         JOIN referral_agency_kinds kind ON kind.code = agency.agency_kind_code
         LEFT JOIN LATERAL (
-          SELECT link.status_code, link.expires_at, link.token_encrypted
+          SELECT link.status_code, link.expires_at, link.token_encrypted,
+            link.access_code_encrypted
           FROM case_referral_links link
           WHERE link.case_referral_id = referral.id
           ORDER BY link.created_at DESC, link.id DESC

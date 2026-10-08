@@ -78,8 +78,8 @@ function maskName(name: unknown): string {
 }
 
 /** Sessions for referral links live beside the task links' in one store. */
-function sessionSubject(linkId: string): string {
-  return `referral-link:${linkId}`;
+function sessionSubject(linkId: string, revision = 0): string {
+  return revision === 0 ? `referral-link:${linkId}` : `referral-link:${linkId}:code:${revision}`;
 }
 
 /**
@@ -237,6 +237,52 @@ export class ReferralLinkService {
     };
   }
 
+  async refreshAccessCode(caseId: number, referralId: string, actor?: AuthenticatedRequestUser) {
+    const currentActor = this.assertCanManage(actor);
+    const actorId = resolveAuditActorId(currentActor);
+    return await this.taskRepository.withTransaction(async (executor) => {
+      const referral = await this.taskRepository.lockCaseReferralForResult(
+        caseId,
+        referralId,
+        currentActor,
+        executor,
+      );
+      this.assertReferralAwaitingResult(referral);
+      const link = await this.taskRepository.lockLatestReferralAccessCode(referralId, executor);
+      if (!link) throw new NotFoundException('ไม่พบลิงก์รายงานผลการส่งต่อ');
+      if (link.status_code !== 'ACTIVE' || link.has_not_expired !== true) {
+        throw new ConflictException('เปลี่ยนรหัสได้เฉพาะลิงก์ที่ยังใช้งานและยังไม่รายงาน');
+      }
+      const token = this.tokenEncryption.decrypt(String(link.token_encrypted));
+      let code: string;
+      do {
+        code = crypto
+          .randomInt(0, 10 ** ACCESS_CODE_DIGITS)
+          .toString()
+          .padStart(ACCESS_CODE_DIGITS, '0');
+      } while (this.hashAccessCode(token, code) === link.access_code_hash);
+      const revision = await this.taskRepository.rotateReferralAccessCode(
+        String(link.id),
+        this.hashAccessCode(token, code),
+        this.tokenEncryption.encrypt(code),
+        executor,
+      );
+      await this.auditLog.recordAtomic(
+        {
+          actorUserId: actorId,
+          actorLabel: this.actorLabel(currentActor),
+          action: 'CASE_REFERRAL_LINK_CODE_REFRESH',
+          targetType: 'case',
+          targetId: String(caseId),
+          metadata: { referralId, linkId: link.id, accessCodeRevision: revision },
+          ip: null,
+        },
+        executor,
+      );
+      return { success: true, data: { access_code: code } };
+    });
+  }
+
   /**
    * ยกเลิกการส่งต่อ: withdraws a sent referral nobody answered, like
    * ยกเลิกการมอบหมาย — its link dies, it reads ยกเลิก with the reason, and the
@@ -317,7 +363,9 @@ export class ReferralLinkService {
       );
     }
 
-    const challenge = await this.araIdChallengeStore.create(ARAID_SCOPE, linkId);
+    const challenge = await this.araIdChallengeStore.create(ARAID_SCOPE, linkId, {
+      accessCodeRevision: Number(link.access_code_revision ?? 0),
+    });
     const verificationUrl = new URL('/araid/authorize', baseUrl);
     verificationUrl.hash = `challenge=${encodeURIComponent(challenge.token)}&scope=${ARAID_SCOPE}`;
     const qrDataUrl = await QRCode.toDataURL(verificationUrl.toString(), {
@@ -345,11 +393,15 @@ export class ReferralLinkService {
         existingAuthorizationToken,
       );
       if (resumed) {
+        const challenge = await this.araIdChallengeStore.read(ARAID_SCOPE, challengeToken);
+        if (!challenge) throw new GoneException('คำขอยืนยัน AraID หมดอายุแล้ว');
+        await this.assertChallengeCurrent(challenge);
         return { authorizationToken: resumed.authorizationToken, expiresAt: resumed.expiresAt };
       }
     }
     const challenge = await this.araIdChallengeStore.read(ARAID_SCOPE, challengeToken);
     if (!challenge) throw new GoneException('คำขอยืนยัน AraID หมดอายุแล้ว');
+    await this.assertChallengeCurrent(challenge);
     const authorization = await this.araIdChallengeStore.claimOrRenew(ARAID_SCOPE, challengeToken);
     if (!authorization) throw new GoneException('คำขอยืนยัน AraID ถูกเปิดใช้หรือหมดอายุแล้ว');
     return authorization;
@@ -374,8 +426,7 @@ export class ReferralLinkService {
       throw new UnauthorizedException('กรุณากรอก PIN AraID ใหม่เพื่อยืนยันลิงก์นี้');
     }
     const linkId = authorization.challenge.subjectId;
-    const link = await this.taskRepository.findReferralLinkById(linkId);
-    this.assertLinkUsable(link);
+    const link = await this.assertChallengeCurrent(authorization.challenge);
     const reporter = await this.resolveReporter(araIdProfileId);
     const approved = await this.araIdChallengeStore.approveAuthorization(
       ARAID_SCOPE,
@@ -398,6 +449,7 @@ export class ReferralLinkService {
   async pollAraIdChallenge(challengeToken: string) {
     const challenge = await this.araIdChallengeStore.read(ARAID_SCOPE, challengeToken);
     if (!challenge) throw new GoneException('คำขอยืนยัน AraID หมดอายุแล้ว');
+    await this.assertChallengeCurrent(challenge);
     if (challenge.status === 'PENDING') {
       return { success: true, data: { status: 'PENDING' as const } };
     }
@@ -414,9 +466,12 @@ export class ReferralLinkService {
     if (!consumed) throw new GoneException('คำขอยืนยัน AraID ถูกใช้แล้ว');
     const reporter = this.readReporter(consumed.context?.reporter);
     if (!reporter) throw new GoneException('คำขอยืนยัน AraID ไม่สมบูรณ์');
-    const sessionToken = await this.magicSessionStore.issue(sessionSubject(consumed.subjectId), {
-      ...reporter,
-    });
+    const sessionToken = await this.magicSessionStore.issue(
+      sessionSubject(consumed.subjectId, Number(consumed.context?.accessCodeRevision ?? 0)),
+      {
+        ...reporter,
+      },
+    );
     return { success: true, data: { status: 'APPROVED' as const, sessionToken } };
   }
 
@@ -558,6 +613,7 @@ export class ReferralLinkService {
       recordedByUserId: null,
       agencyReport: {
         linkId: String(link.id),
+        accessCodeRevision: Number(link.access_code_revision ?? 0),
         actionDate: body.action_date,
         identityProviderCode: reporter.provider,
         providerSubject: reporter.subject,
@@ -663,6 +719,20 @@ export class ReferralLinkService {
     }
   }
 
+  private async assertChallengeCurrent(challenge: {
+    subjectId: string;
+    context: Record<string, unknown>;
+  }): Promise<ReferralLinkRow> {
+    const link = await this.taskRepository.findReferralLinkById(challenge.subjectId);
+    this.assertLinkUsable(link);
+    if (
+      Number(challenge.context.accessCodeRevision ?? 0) !== Number(link.access_code_revision ?? 0)
+    ) {
+      throw new GoneException('รหัสเปลี่ยนแล้ว กรุณากรอกรหัสใหม่และยืนยัน AraID อีกครั้ง');
+    }
+    return link;
+  }
+
   private async findUsableLink(token: string): Promise<ReferralLinkRow> {
     const trimmed = token.trim();
     if (trimmed.length < 32 || trimmed.length > 256) {
@@ -737,7 +807,7 @@ export class ReferralLinkService {
     sessionToken?: string,
   ): Promise<ReporterClaims | null> {
     const claims: MagicSessionClaims | null = await this.magicSessionStore.readVerifiedClaims(
-      sessionSubject(String(link.id)),
+      sessionSubject(String(link.id), Number(link.access_code_revision ?? 0)),
       sessionToken,
     );
     return claims ? this.readReporter(claims) : null;

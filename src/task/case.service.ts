@@ -6,6 +6,7 @@ import {
   Injectable,
   Logger,
   NotFoundException,
+  UnauthorizedException,
 } from '@nestjs/common';
 import { clean } from '../common/utils/helpers';
 import type { AuthenticatedRequestUser } from '../auth';
@@ -784,6 +785,7 @@ export class CaseService {
     recordedByUserId: number | null;
     agencyReport?: {
       linkId: string;
+      accessCodeRevision?: number;
       actionDate: string;
       identityProviderCode: string;
       providerSubject: string;
@@ -821,6 +823,12 @@ export class CaseService {
           executor,
         );
         if (!link) throw new NotFoundException('ไม่พบลิงก์รายงานผลการส่งต่อ');
+        if (
+          Number(link.access_code_revision ?? 0) !==
+          Number(input.agencyReport.accessCodeRevision ?? 0)
+        ) {
+          throw new UnauthorizedException('รหัสเปลี่ยนแล้ว กรุณายืนยันตัวตนด้วยรหัสใหม่');
+        }
         if (link.status_code === 'LOCKED' || !link.has_started) {
           throw new ForbiddenException('ลิงก์ถูกล็อกหรือยังไม่เปิดใช้งาน');
         }

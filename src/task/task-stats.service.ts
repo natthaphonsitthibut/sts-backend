@@ -211,6 +211,7 @@ export class TaskStatsService {
           linkUrl: typeof row.link_url === 'string' ? row.link_url : null,
           linkStatusCode: typeof row.link_status_code === 'string' ? row.link_status_code : null,
           linkExpiresAt: row.link_expires_at ?? null,
+          accessCodeAvailable: row.access_code_available === true,
         };
       }),
       meta: buildPaginationMeta(page, limit, totalCount),

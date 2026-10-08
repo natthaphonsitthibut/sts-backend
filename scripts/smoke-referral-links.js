@@ -9,6 +9,7 @@
  */
 const { ValidationPipe } = require('@nestjs/common');
 const { Test } = require('@nestjs/testing');
+const { ThrottlerGuard } = require('@nestjs/throttler');
 const { JwtService } = require('@nestjs/jwt');
 const { DataSource } = require('typeorm');
 const { AppModule } = require('../dist/app.module');
@@ -42,6 +43,9 @@ function assert(condition, message) {
 
 async function main() {
   const moduleRef = await Test.createTestingModule({ imports: [AppModule] })
+    // Dense state/revision matrix; IP throttling has separate guard tests.
+    // Code-attempt locking, authentication and scope guards remain real.
+    .overrideGuard(ThrottlerGuard).useValue({canActivate:()=>true})
     .overrideProvider(AraIdService)
     .useValue({
       getVerifiedIdentityClaim: async () => ({
@@ -98,7 +102,7 @@ async function main() {
     }
     assert(
       response.status === expectedStatus,
-      `${method} ${path}: expected ${expectedStatus}, received ${response.status} ${raw.slice(0, 200)}`,
+      `${method} ${path.replace(/\/api\/referral-links\/[^/]+/g,'/api/referral-links/[REDACTED]')}: expected ${expectedStatus}, received ${response.status}`,
     );
     return { response, payload };
   };
@@ -207,7 +211,7 @@ async function main() {
         body: sendBody(note, timing),
       });
       const { url, access_code: code, referral_id: referralId } = payload.data;
-      assert(/^\d{6}$/.test(code), `access code is not six digits: ${code}`);
+      assert(/^\d{6}$/.test(code), 'access code must have six digits');
       const token = url.split('/referral-report/')[1];
       assert(token && token.length >= 32, `link url carries no token: ${url}`);
       assert(
@@ -343,6 +347,7 @@ async function main() {
       body: { access_code: locked.code },
     });
     await request('GET', linkPath(locked.token), 403);
+    await request('POST', `/api/cases/${caseId}/referrals/${locked.referralId}/access-code/refresh`,409,{headers:{cookie:directorCookie}});
     const resent = await send('ส่งต่อใหม่หลังลิงก์ถูกล็อก');
     const lockedRow = await referralRow(locked.referralId);
     assert(
@@ -369,6 +374,7 @@ async function main() {
       `cancelled round is ${JSON.stringify(cancelledRow)}`,
     );
     await request('GET', linkPath(resent.token), 410);
+    await request('POST',`/api/cases/${caseId}/referrals/${resent.referralId}/access-code/refresh`,409,{headers:{cookie:directorCookie}});
     await request('POST', cancelPath(resent.referralId), 409, {
       headers: { cookie: directorCookie },
       body: { cancel_reason: 'ยกเลิกซ้ำ' },
@@ -438,7 +444,7 @@ async function main() {
       body: {},
     });
     assert(polled.payload.data.status === 'APPROVED', 'AraID challenge was not approved');
-    const session = { 'x-referral-session': polled.payload.data.sessionToken };
+    let session = { 'x-referral-session': polled.payload.data.sessionToken };
     // The session is for this link only; it is no staff login.
     await request('GET', `/api/cases/${caseId}`, 401, { headers: session });
 
@@ -452,6 +458,86 @@ async function main() {
     assert(data.referral.referral_note === 'ส่งต่อพบนักจิตวิทยา', 'referral reason is missing');
     assert(!('student_uuid' in data) && !('identity_number' in data), 'link leaked an identifier');
     console.log('ok code + AraID open the same student view as the home-visit link');
+
+    const codePath=`/api/cases/${caseId}/referrals/${referralId}/access-code`;
+    const refreshPath=`${codePath}/refresh`;
+    await request('POST',refreshPath,401);
+    await request('POST',refreshPath,403,{headers:{cookie:cookieFor(readerId)}});
+    await request('POST',refreshPath,404,{headers:{cookie:cookieFor(foreignId)}});
+    const newChallenge=async()=>{
+      const result=await request('POST',`${linkPath(link.token)}/araid/challenge`,201,{body:{access_code:link.code}});
+      return result.payload.data.challengeToken;
+    };
+    const claim=async(token)=>{
+      const begun=await request('POST','/api/referral-links/araid/challenge/begin',201,{
+        headers:{'x-referral-araid-challenge':token},body:{}});
+      return responseCookie(begun.response,'araid_referral_link_authorization');
+    };
+    const freshIdentity=()=>araIdCookies.setSession({cookie:(name,value)=>{
+      identityCookie=`${name}=${encodeURIComponent(value)}`;
+    }},'referral-link-smoke-profile');
+    const approve=async(authorizationCookie,status=201)=>{
+      freshIdentity();
+      return await request('POST','/api/referral-links/araid/challenge/approve',status,{
+        headers:{cookie:`${identityCookie}; ${authorizationCookie}`},body:{}});
+    };
+    const pendingBeforeRefresh=await newChallenge();
+    const claimedBeforeRefresh=await newChallenge();
+    const oldAuthorization=await claim(claimedBeforeRefresh);
+    const approvedBeforeRefresh=await newChallenge();
+    await approve(await claim(approvedBeforeRefresh));
+    const [beforeRefresh]=await dataSource.query('SELECT id,token_encrypted,access_code_revision FROM case_referral_links WHERE case_referral_id=$1',[referralId]);
+    assert(Number(beforeRefresh.access_code_revision)===0,'Existing links must start at revision zero');
+    const originalCode=link.code;
+    const refreshed=await request('POST',refreshPath,200,{headers:{cookie:directorCookie}});
+    link.code=refreshed.payload.data.access_code;
+    assert(/^\d{6}$/.test(link.code) && link.code!==originalCode,'Refresh did not replace the six-digit code');
+    assert(refreshed.response.headers.get('cache-control')?.includes('no-store'),'Refresh response must not be cached');
+    const [afterRefresh]=await dataSource.query('SELECT id,token_encrypted,access_code_revision,failed_code_attempts,status_code FROM case_referral_links WHERE case_referral_id=$1',[referralId]);
+    assert(afterRefresh.id===beforeRefresh.id && afterRefresh.token_encrypted===beforeRefresh.token_encrypted && Number(afterRefresh.access_code_revision)===1 && afterRefresh.failed_code_attempts===0 && afterRefresh.status_code==='ACTIVE','Refresh changed the link or failed to advance its revision');
+    assert((await request('GET',codePath,200,{headers:{cookie:directorCookie}})).payload.data.access_code===link.code,'Code view did not return the refreshed code');
+    await request('POST',`${linkPath(link.token)}/araid/challenge`,400,{body:{access_code:originalCode}});
+    for(const token of [pendingBeforeRefresh,claimedBeforeRefresh,approvedBeforeRefresh]){
+      await request('POST','/api/referral-links/araid/challenge/status',410,{headers:{'x-referral-araid-challenge':token},body:{}});
+    }
+    await request('POST','/api/referral-links/araid/challenge/begin',410,{headers:{'x-referral-araid-challenge':pendingBeforeRefresh},body:{}});
+    await request('POST','/api/referral-links/araid/challenge/begin',410,{headers:{'x-referral-araid-challenge':claimedBeforeRefresh,cookie:oldAuthorization},body:{}});
+    await approve(oldAuthorization,410);
+    const oldView=await request('GET',linkPath(link.token),200,{headers:session});
+    assert(oldView.payload.data.auth_required===true,'Old session still exposes verified student details');
+    await request('POST',`${linkPath(link.token)}/report`,401,{headers:session,body:report});
+    const verifyCurrent=async()=>{
+      const token=await newChallenge();await approve(await claim(token));
+      const result=await request('POST','/api/referral-links/araid/challenge/status',201,{headers:{'x-referral-araid-challenge':token},body:{}});
+      return {'x-referral-session':result.payload.data.sessionToken};
+    };
+    session=await verifyCurrent();
+    const originalApply=caseService.applyReferralResult.bind(caseService);
+    caseService.applyReferralResult=async input=>{
+      const changed=await request('POST',refreshPath,200,{headers:{cookie:directorCookie}});
+      link.code=changed.payload.data.access_code;
+      return await originalApply(input);
+    };
+    try{await request('POST',`${linkPath(link.token)}/report`,401,{headers:session,body:report});}
+    finally{caseService.applyReferralResult=originalApply;}
+    const [race]=await dataSource.query('SELECT count(*)::int AS total FROM case_referral_results WHERE case_referral_id=$1',[referralId]);
+    assert(race.total===0 && await caseStatus()==='AWAITING_REFERRAL_OUTCOME','Rotation/report race committed a stale report');
+    session=await verifyCurrent();
+    // Reversible DDL is checked only inside a rolled-back transaction on *_smoke.
+    const {AddReferralAccessCodeRevision20261010100000}=require('../dist/database/migrations/20261010100000-AddReferralAccessCodeRevision');
+    const runner=dataSource.createQueryRunner();await runner.connect();await runner.startTransaction();
+    try{
+      const migration=new AddReferralAccessCodeRevision20261010100000();
+      await migration.down(runner);await migration.up(runner);
+      const [zero]=await runner.query('SELECT access_code_revision FROM case_referral_links WHERE id=$1',[beforeRefresh.id]);
+      assert(zero.access_code_revision===0,'Migration default must preserve revision-zero compatibility');
+      await migration.down(runner);await migration.up(runner);
+      let rejected=false;
+      try{await runner.query('UPDATE case_referral_links SET access_code_revision=-1 WHERE id=$1',[beforeRefresh.id]);}
+      catch(error){rejected=error.code==='23514';}
+      assert(rejected,'Migration CHECK must reject a negative revision');
+    }finally{await runner.rollbackTransaction();await runner.release();}
+    console.log('ok code refresh: auth/scope/no-store, old code/challenges/sessions refused, revision race guarded, migration cycle/default/CHECK');
 
     // 6. One report, never from the future, then the link is spent.
     const tomorrow = new Date(Date.now() + 36 * 3600_000).toISOString().slice(0, 10);
@@ -534,6 +620,7 @@ async function main() {
       `case page result is ${JSON.stringify(shown.result)}`,
     );
     assert(shown.link.status_code === 'USED' && shown.link.url === null, 'spent link is shareable');
+    await request('POST',refreshPath,409,{headers:{cookie:directorCookie}});
     console.log('ok the agency report is filed once, with its reporter, and spends the link');
 
     // 8. Outside its window a link does not open; a link that ran out can be sent again.
@@ -552,6 +639,7 @@ async function main() {
       [expired.token],
     );
     await request('GET', linkPath(expired.token), 410);
+    await request('POST',`/api/cases/${caseId}/referrals/${expired.referralId}/access-code/refresh`,409,{headers:{cookie:directorCookie}});
     await request('POST', `${linkPath(expired.token)}/araid/challenge`, 410, {
       body: { access_code: expired.code },
     });

@@ -140,6 +140,19 @@ export class CaseController {
     return await this.referralLinkService.getAccessCode(caseId, referralId, actor);
   }
 
+  @UseGuards(AuthGuard, PermissionsGuard)
+  @RequirePermission('case:review')
+  @Post(':caseId/referrals/:referralId/access-code/refresh')
+  @HttpCode(HttpStatus.OK)
+  @Header('Cache-Control', 'private, no-store')
+  async refreshReferralAccessCode(
+    @Param('caseId', ParseIntPipe) caseId: number,
+    @Param('referralId', new ParseUUIDPipe()) referralId: string,
+    @CurrentUser() actor?: AuthenticatedRequestUser,
+  ) {
+    return await this.referralLinkService.refreshAccessCode(caseId, referralId, actor);
+  }
+
   /** ยกเลิกการส่งต่อ, like ยกเลิกการมอบหมาย: back to รอส่งต่อ with a reason. */
   @UseGuards(AuthGuard, PermissionsGuard)
   @RequirePermission('case:review')

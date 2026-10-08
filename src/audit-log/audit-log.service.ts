@@ -472,6 +472,11 @@ const ACTION_DEFINITIONS: Record<string, AuditActionDefinition> = {
     label: 'บันทึกผลการส่งต่อ',
     detailKeys: [{ key: 'resultCode', label: 'ผลการส่งต่อ' }],
   },
+  CASE_REFERRAL_LINK_CODE_REFRESH: {
+    domain: 'cases',
+    label: 'เปลี่ยนรหัสสำหรับหน่วยงาน',
+    detailKeys: [{ key: 'accessCodeRevision', label: 'รุ่นรหัส' }],
+  },
   CASE_REFERRAL_LINK_ISSUE: {
     domain: 'cases',
     label: 'ออกลิงก์ให้หน่วยงาน',
