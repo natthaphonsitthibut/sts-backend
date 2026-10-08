@@ -22,7 +22,6 @@ export interface SystemSettingCatalogEntry {
  * values are validated against the entry before they reach the database.
  */
 const GROUP_CASE_RISK = 'เกณฑ์เปิดเคสและระดับความเสี่ยง';
-const GROUP_ABSENCE_MONITOR = 'รอบการตรวจขาดเรียนอัตโนมัติ';
 const GROUP_RISK_RECALC = 'รอบคำนวณระดับความเสี่ยงประจำวัน';
 
 export const SYSTEM_SETTING_CATALOG: SystemSettingCatalogEntry[] = [
@@ -35,26 +34,6 @@ export const SYSTEM_SETTING_CATALOG: SystemSettingCatalogEntry[] = [
     group: GROUP_CASE_RISK,
     description:
       'จำนวนวันขาดเรียนหลังปิดเคสล่าสุด (ไม่ต้องติดต่อกัน) ที่ทำให้นักเรียนเป็นความเสี่ยงและเปิดเคสอัตโนมัติ — นับเป็นวันขาดเมื่อไม่เข้าเรียนทุกคาบที่บันทึกในวันนั้น',
-  },
-  {
-    key: 'ALERT_TRIGGER_TYPE',
-    valueType: 'enum',
-    defaultValue: 'SCHEDULED',
-    group: GROUP_ABSENCE_MONITOR,
-    enumOptions: [
-      { value: 'SCHEDULED', label: 'ตามเวลาที่กำหนด' },
-      { value: 'IMMEDIATE', label: 'ทันทีหลังบันทึกเช็กชื่อ' },
-    ],
-    description:
-      'จังหวะรันตัวตรวจขาดเรียนอัตโนมัติ (SCHEDULED = รันวันละครั้งตามเวลาที่กำหนด, IMMEDIATE = รันทันทีทุกครั้งหลังบันทึกเช็กชื่อ)',
-  },
-  {
-    key: 'ALERT_SCHEDULE_TIME',
-    valueType: 'time',
-    defaultValue: '18:00',
-    group: GROUP_ABSENCE_MONITOR,
-    description:
-      'เวลารันตัวตรวจขาดเรียนอัตโนมัติประจำวัน (HH:MM) — ใช้เมื่อจังหวะรันเป็น SCHEDULED',
   },
   {
     key: 'RISK_RECALC_SCHEDULE_TIME',

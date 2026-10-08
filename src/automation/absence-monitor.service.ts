@@ -76,10 +76,11 @@ export class AbsenceMonitorService {
   /**
    * `studentUuids` limits the pass to those students. Saving a round only moves
    * the counts of the class that was just checked, so the save path scopes the
-   * pass to it and stays fast; the scheduled job runs unscoped.
+   * pass to it and stays fast.
    */
   async checkConsecutiveAbsences(studentUuids?: readonly string[]): Promise<NewCase[]> {
-    this.logger.log('Starting CRON Job: Checking cumulative absences...');
+    if (studentUuids?.length === 0) return [];
+    this.logger.log('Checking cumulative absences after attendance submission');
 
     // One rule opens a case: cumulative absent days reaching the เสี่ยง
     // threshold. The tier ladder (ต่ำ/ปานกลาง) is gone.
@@ -93,6 +94,9 @@ export class AbsenceMonitorService {
 
     try {
       await this.automationRepository.withTransaction(async (executor) => {
+        if (studentUuids) {
+          await this.automationRepository.lockStudentAbsenceChecks(studentUuids, executor);
+        }
         const asOfDate = getBangkokDateString();
         const absentStudents = await this.automationRepository.listCumulativeAbsentStudents(
           thresholdDays,
@@ -244,7 +248,7 @@ export class AbsenceMonitorService {
 
       if (riskProfileStudentUuids.size > 0) {
         await this.riskProfileService
-          ?.requestStudentRecalculation([...riskProfileStudentUuids], 'case-auto-monitor')
+          ?.requestStudentRecalculation([...riskProfileStudentUuids], 'case-auto-monitor', true)
           .catch((error) => {
             const message = error instanceof Error ? error.message : String(error);
             this.logger.error(
@@ -253,10 +257,11 @@ export class AbsenceMonitorService {
           });
       }
     } catch (error) {
-      this.logger.error('Error in checking consecutive absences', error);
+      this.logger.error('Absence monitor failed after attendance submission');
+      throw error;
     }
 
-    this.logger.log('Finished CRON Job: Checking cumulative absences.');
+    this.logger.log('Finished checking cumulative absences.');
     return newCases;
   }
 }

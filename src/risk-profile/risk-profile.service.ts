@@ -123,7 +123,11 @@ export class RiskProfileService implements OnModuleInit, OnApplicationShutdown {
    * to reflect a change the user just made, so the fallback recalculates those
    * students inline. Callers pass a handful of students, not the whole school.
    */
-  async requestStudentRecalculation(studentUuids: string[], reason: string): Promise<void> {
+  async requestStudentRecalculation(
+    studentUuids: string[],
+    reason: string,
+    immediate = false,
+  ): Promise<void> {
     const uniqueStudentUuids = [
       ...new Set(studentUuids.map((value) => value.trim()).filter(Boolean)),
     ];
@@ -134,7 +138,7 @@ export class RiskProfileService implements OnModuleInit, OnApplicationShutdown {
     // expects to see straight away, and those touch a handful of students at
     // most. Recalculate those inline; the debounced queue stays for the bulk
     // paths, where waiting is fine and hammering PostgreSQL is not.
-    if (uniqueStudentUuids.length > INLINE_RECALCULATION_LIMIT) {
+    if (!immediate && uniqueStudentUuids.length > INLINE_RECALCULATION_LIMIT) {
       try {
         await this.enqueueStudents(uniqueStudentUuids, reason);
         return;

@@ -16,7 +16,7 @@ import {
 import { SettingsRepository } from './settings.repository';
 import type { SystemSettingResponse, SystemSettingRow } from './settings.types';
 
-const CRON_REFRESH_KEYS = new Set(['ALERT_TRIGGER_TYPE', 'ALERT_SCHEDULE_TIME']);
+const RETIRED_ALERT_KEYS = new Set(['ALERT_TRIGGER_TYPE', 'ALERT_SCHEDULE_TIME']);
 const RISK_PROFILE_REFRESH_KEYS = new Set(['CASE_RISK_HIGH_ABSENCE_DAYS']);
 const RISK_RECALC_CRON_REFRESH_KEYS = new Set(['RISK_RECALC_SCHEDULE_TIME']);
 
@@ -40,6 +40,7 @@ export class SettingsService implements OnModuleInit {
     try {
       const rows = await this.settingsRepository.listSettings();
       for (const row of rows) {
+        if (RETIRED_ALERT_KEYS.has(row.setting_key)) continue;
         const entry = findSystemSettingCatalogEntry(row.setting_key);
         if (!entry) {
           this.logger.warn(
@@ -78,11 +79,13 @@ export class SettingsService implements OnModuleInit {
     const rows = await this.settingsRepository.listSettings();
     // Catalog order groups related settings (risk ladder, SLA, monitor cadence)
     // instead of the alphabetical order the table would give us.
-    const sorted = [...rows].sort(
-      (a, b) =>
-        getSystemSettingSortIndex(a.setting_key) - getSystemSettingSortIndex(b.setting_key) ||
-        a.setting_key.localeCompare(b.setting_key),
-    );
+    const sorted = rows
+      .filter((row) => !RETIRED_ALERT_KEYS.has(row.setting_key))
+      .sort(
+        (a, b) =>
+          getSystemSettingSortIndex(a.setting_key) - getSystemSettingSortIndex(b.setting_key) ||
+          a.setting_key.localeCompare(b.setting_key),
+      );
     return sorted.map((row) => this.toResponse(row));
   }
 
@@ -149,10 +152,6 @@ export class SettingsService implements OnModuleInit {
       },
     );
 
-    if (changed && CRON_REFRESH_KEYS.has(key)) {
-      this.logger.log(`Setting ${key} changed. Triggering dynamic cron refresh.`);
-      await this.automationService.refreshDynamicCron();
-    }
     if (changed && RISK_RECALC_CRON_REFRESH_KEYS.has(key)) {
       this.logger.log(`Setting ${key} changed. Re-registering daily risk recalculation.`);
       await this.riskProfileService?.refreshDailyRecalcCron().catch((error) => {

@@ -42,6 +42,24 @@ export class AutomationRepository {
     });
   }
 
+  async lockStudentAbsenceChecks(
+    studentUuids: readonly string[],
+    executor: QueryExecutor,
+  ): Promise<void> {
+    if (studentUuids.length === 0) return;
+    // Stable order prevents deadlocks when simultaneous lessons share students.
+    // Transaction locks serialize case lookup + creation across app instances.
+    await executor.query(
+      `SELECT pg_advisory_xact_lock(hashtextextended('absence-monitor:' || student_uuid::text, 0))
+       FROM (
+         SELECT DISTINCT student_uuid
+         FROM unnest($1::uuid[]) AS requested(student_uuid)
+         ORDER BY student_uuid
+       ) ordered_students`,
+      [[...studentUuids]],
+    );
+  }
+
   async getSystemSettingValue(key: string, executor?: QueryExecutor): Promise<string | null> {
     const queryExecutor = this.getExecutor(executor);
     const result = await queryExecutor.query<SettingValueRow>(
@@ -226,7 +244,10 @@ export class AutomationRepository {
       `UPDATE cases SET deleted_at = now() WHERE id = $1 AND status = $2 AND deleted_at IS NULL`,
       [id, 'OPEN'],
     );
-    return result.rowCount > 0;
+    if (result.rowCount === 0) return false;
+    // Remove obsolete alerts atomically with the false-positive case.
+    await queryExecutor.query('DELETE FROM notifications WHERE case_id = $1', [id]);
+    return true;
   }
 
   async findActiveAbsenceCaseByStudent(

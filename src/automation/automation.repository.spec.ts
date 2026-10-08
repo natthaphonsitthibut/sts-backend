@@ -1,6 +1,21 @@
 import { AutomationRepository } from './automation.repository';
 
 describe('AutomationRepository', () => {
+  it('removes obsolete notifications in the same transaction as a cancelled auto-case', async () => {
+    const query = jest.fn().mockResolvedValue({ rows: [], rowCount: 1 });
+    const repository = new AutomationRepository({} as never);
+    await expect(repository.deleteOpenCaseById(77, { query })).resolves.toBe(true);
+    expect(query.mock.calls).toHaveLength(2);
+    expect(query.mock.calls[1]).toEqual(['DELETE FROM notifications WHERE case_id = $1', [77]]);
+  });
+
+  it('keeps notifications when the case has already progressed beyond OPEN', async () => {
+    const query = jest.fn().mockResolvedValue({ rows: [], rowCount: 0 });
+    const repository = new AutomationRepository({} as never);
+    await expect(repository.deleteOpenCaseById(77, { query })).resolves.toBe(false);
+    expect(query.mock.calls).toHaveLength(1);
+  });
+
   it('counts cumulative absent days with the ประวัติการเข้าเรียน day verdict', async () => {
     const queries: Array<{ sql: string; params?: unknown[] }> = [];
     const queryRunner = {

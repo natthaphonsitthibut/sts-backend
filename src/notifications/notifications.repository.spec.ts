@@ -43,6 +43,7 @@ describe('NotificationsRepository', () => {
     expect(sql).toContain('case_id, case_status_code, student_name_snapshot');
     expect(sql).toContain('u.permissions ? nt.required_permission');
     expect(sql).toContain("u.data_origin_code <> 'AUTOMATED_TEST'");
+    expect(sql).toContain('notification_case.deleted_at IS NULL');
     expect(params?.at(14)).toBe('IN_PROGRESS');
   });
 
@@ -70,6 +71,7 @@ describe('NotificationsRepository', () => {
     const { sql } = getLastQuery();
     expect(sql).toContain('u.permissions ? nt.required_permission');
     expect(sql).toContain('n.case_id IS NULL AND n.student_person_uuid IS NULL');
+    expect(sql).toContain('notification_case.deleted_at IS NULL');
     expect(sql).toContain("jsonb_typeof(u.data_scope->'school_ids') = 'array'");
   });
 });
