@@ -886,9 +886,11 @@ export class AuditLogService {
     // The whole log opens for whoever holds บันทึกการใช้งานทั้งหมด — a council or
     // a school ผู้ดูแลระบบ alike (owner, 2026-09-28) — and still only shows events
     // inside the actor's own scope (`appendScopeConditions`).
-    const allowed = DOMAIN_PERMISSIONS[domain].some((permission) =>
-      hasPermission(actor.roles, actor.permissions, permission),
-    );
+    const allowed =
+      hasPermission(actor.roles, actor.permissions, 'audit-log:all') ||
+      DOMAIN_PERMISSIONS[domain].some((permission) =>
+        hasPermission(actor.roles, actor.permissions, permission),
+      );
     if (!allowed || actor.data_scope?.own_only === true) {
       throw new ForbiddenException('ไม่มีสิทธิ์ดูประวัติส่วนนี้');
     }
