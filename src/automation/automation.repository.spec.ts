@@ -99,7 +99,7 @@ describe('AutomationRepository', () => {
     expect(queries[0].sql).toContain("attendance.session_kind = 'SUBJECT'");
   });
 
-  it('deduplicates against active absence cases, not only OPEN cases', async () => {
+  it('reuses every active case regardless of its opening reason', async () => {
     const queries: Array<{ sql: string; params?: unknown[] }> = [];
     const queryRunner = {
       connect: jest.fn().mockResolvedValue(undefined),
@@ -114,7 +114,7 @@ describe('AutomationRepository', () => {
     };
     const repository = new AutomationRepository(dataSource as never);
 
-    const result = await repository.findActiveAbsenceCaseByStudent(
+    const result = await repository.findActiveCaseByStudent(
       'student-uuid-1',
       'สมชาย ใจดี',
       10010002,
@@ -133,10 +133,36 @@ describe('AutomationRepository', () => {
       'student-uuid-1',
       'สมชาย ใจดี',
       10010002,
-      ['ขาดเรียนสะสม%', 'ขาดเรียนหลังปิดเคสล่าสุด%', 'ขาดเรียนติดต่อกัน%'],
     ]);
     expect(queries[0].sql).toContain('status = ANY($1::text[])');
-    expect(queries[0].sql).toContain('reason_flagged LIKE ANY($5::text[])');
+    expect(queries[0].sql).not.toContain('reason_flagged');
+    expect(queries[0].sql).toContain('($4::int IS NULL OR school_id = $4)');
+    expect(queries[0].sql).toContain('$4::int IS NOT NULL AND student_uuid IS NULL');
+  });
+
+  it('shares enrollment row locks with manual case opening in stable order', async () => {
+    const query = jest.fn().mockResolvedValue({ rows: [], rowCount: 0 });
+    const repository = new AutomationRepository({} as never);
+    const students = ['11111111-1111-4111-8111-111111111111'];
+    await repository.lockStudentAbsenceChecks(students, { query });
+    expect(query).toHaveBeenCalledTimes(2);
+    const [sql, params] = query.mock.calls[1] as [string, unknown[]];
+    expect(sql).toContain('FROM student_term');
+    expect(sql).toContain('ORDER BY student_uuid FOR UPDATE');
+    expect(params).toEqual([students]);
+  });
+
+  it('excludes user and teacher opened cases from automatic cancellation', async () => {
+    const query = jest.fn().mockResolvedValue({ rows: [], rowCount: 0 });
+    const repository = new AutomationRepository({} as never);
+    await repository.listOpenAbsenceCases({ query });
+    await repository.deleteOpenCaseById(77, { query });
+    for (const [sql] of query.mock.calls as [string, unknown[]][]) {
+      expect(sql).toContain('created_by IS NULL');
+      expect(sql).toContain('created_by_teacher_id IS NULL');
+      expect(sql).toContain('reason_flagged LIKE ANY(');
+    }
+    expect(query).toHaveBeenCalledTimes(2);
   });
 
   it('loads school scope for open absence cases used by legacy auto-cancel fallback', async () => {

@@ -114,6 +114,15 @@ export class AbsenceMonitorService {
           executor,
           studentUuids,
         );
+        if (!studentUuids) {
+          await this.automationRepository.lockStudentAbsenceChecks(
+            [
+              ...absentUuidSet,
+              ...openCases.map((openCase) => this.normalizeText(openCase.student_uuid)),
+            ].filter((uuid) => uuid.length > 0),
+            executor,
+          );
+        }
         const evaluableUuidSet = new Set(
           await this.automationRepository.listEvaluableStudentUuids(
             openCases
@@ -171,7 +180,7 @@ export class AbsenceMonitorService {
               ? student.school_id_onec
               : null;
 
-          const existingCase = await this.automationRepository.findActiveAbsenceCaseByStudent(
+          const existingCase = await this.automationRepository.findActiveCaseByStudent(
             studentUuid ?? '',
             studentName,
             schoolId,

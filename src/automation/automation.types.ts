@@ -32,7 +32,7 @@ export interface CaseAutoCancelAuditEvent {
  */
 export type CaseRiskTier = 'HIGH';
 
-export interface ActiveAbsenceCaseRow extends Record<string, unknown> {
+export interface ActiveCaseRow extends Record<string, unknown> {
   id: number;
   risk_tier: string | null;
 }

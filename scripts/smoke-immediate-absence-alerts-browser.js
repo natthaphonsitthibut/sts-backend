@@ -21,10 +21,11 @@ if (process.env.NODE_ENV === 'production' || !(process.env.DB_NAME || '').endsWi
 }
 function assert(value, message) { if (!value) throw new Error(message); }
 const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-async function cleanupFixture(db, { classroom, person, student, user }) {
+async function cleanupFixture(db, { classroom, person, student, user, foreignCase }) {
   if (classroom) {
       const runner=db.createQueryRunner(); await runner.connect(); await runner.startTransaction();
       try {
+        if(foreignCase)await runner.query('DELETE FROM cases WHERE id=$1 AND student_uuid IS NULL AND created_by=$2',[foreignCase,user]);
         await runner.query('DELETE FROM notifications WHERE case_id IN (SELECT id FROM cases WHERE student_uuid=$1)',[student]);
         await runner.query('DELETE FROM student_risk_profiles WHERE student_uuid=$1',[student]);
         await runner.query('DELETE FROM cases WHERE student_uuid=$1',[student]);
@@ -70,7 +71,7 @@ async function main() {
   const person = randomUUID();
   const student = randomUUID();
   const suffix = randomUUID().slice(0, 8);
-  let classroom, offering, user, chrome, socket, profile;
+  let classroom, offering, user, foreignCase, chrome, socket, profile;
   let id = 0;
   const pending = new Map();
   const send = (method, params = {}) => new Promise((resolve, reject) => {
@@ -136,9 +137,14 @@ async function main() {
       "FirstName","LastName",role,data_scope,must_change_password,data_origin_code)
       VALUES ($1,'NOT_A_LOGIN_CREDENTIAL','ACTIVE',$2::jsonb,'ทดสอบ','แจ้งเตือน',
         'ADMIN',$3::jsonb,FALSE,'AUTOMATED_TEST') RETURNING id`,
-      [`immediate_alert_${suffix}`,JSON.stringify(['attendance','settings','review-cases']),
+      [`immediate_alert_${suffix}`,JSON.stringify(['attendance','settings','review-cases','case:assign','dashboard']),
         JSON.stringify({global:true})]);
     user = Number(actor.id);
+    const [otherSchool] = await db.query('SELECT id FROM schools WHERE id<>$1 ORDER BY id LIMIT 1',[context.school_id]);
+    assert(otherSchool,'Need a second school to test legacy name scope');
+    const [foreign] = await db.query(`INSERT INTO cases(student_name,school_id,reason_flagged,status,created_by)
+      VALUES ('ทดสอบ แจ้งเตือนทันที',$1,'ผู้ปกครองขอติดตามเรื่องการเดินทาง','OPEN',$2) RETURNING id`,[otherSchool.id,user]);
+    foreignCase=Number(foreign.id);
     // Frozen fixture roster isolates this test from existing classroom students.
     const sessions = [];
     for (const date of [context.first_date,context.second_date,context.third_date]) {
@@ -224,14 +230,61 @@ async function main() {
     assert(reverted.alerts===0,'Obsolete notifications remained after correction');
     const [normal] = await db.query('SELECT risk_tier,open_case_count FROM student_risk_profiles WHERE student_uuid=$1',[student]);
     assert(normal?.risk_tier==='NORMAL' && normal.open_case_count===0,'Risk status did not revert immediately');
+    // A manual reason may also begin with ขาดเรียน; its opener determines
+    // whether attendance correction is allowed to remove the case.
+    const manualReason='ขาดเรียนสะสมและผู้ปกครองขอให้ติดตามเรื่องการเดินทาง';
+    const manual=await request('/api/cases',{student_id:student,reason:manualReason});
+    assert(manual.status===200 && manual.body.created===true,'Manual case creation failed');
+    const manualId=Number(manual.body.data.id);
+    let latestVersion=corrected.body.data.lockVersion;
+    for(const status of ['OPEN','IN_PROGRESS','PENDING_REVIEW','STUDENT_NOT_FOUND','AWAITING_REFERRAL','AWAITING_REFERRAL_OUTCOME']){
+      await db.query('UPDATE cases SET status=$1 WHERE id=$2',[status,manualId]);
+      const submitted=await request(`/api/attendance/check-in/sessions/${sessions[2]}/submit`,{
+        ...marks,correctionReason:'ทดสอบเกณฑ์ขาดร่วมกับเคสที่เปิดเอง',expectedLockVersion:latestVersion});
+      assert(submitted.status===201,`Manual ${status} attendance submit failed`);
+      latestVersion=submitted.body.data.lockVersion;
+      const liveCases=await db.query('SELECT id,status,reason_flagged FROM cases WHERE student_uuid=$1 AND deleted_at IS NULL',[student]);
+      assert(liveCases.length===1 && Number(liveCases[0].id)===manualId && liveCases[0].status===status && liveCases[0].reason_flagged===manualReason,
+        `Manual ${status} case was duplicated or changed`);
+    }
+    await db.query("UPDATE cases SET status='OPEN' WHERE id=$1",[manualId]);
+    const manualBaseline=await counts();
+    const manualCorrection=await request(`/api/attendance/check-in/sessions/${sessions[2]}/submit`,{
+      exceptions:[],correctionReason:'แก้เช็กชื่อโดยคงงานติดตามของครู',expectedLockVersion:latestVersion});
+    assert(manualCorrection.status===201,'Manual-case attendance correction failed');
+    assert(JSON.stringify(await counts())===JSON.stringify(manualBaseline),'Manual case or its notification was removed after correction');
+    const [kept]=await db.query('SELECT reason_flagged,deleted_at FROM cases WHERE id=$1',[manualId]);
+    assert(!kept.deleted_at && kept.reason_flagged===manualReason,'Manual opening reason was lost');
+    await db.query('UPDATE cases SET deleted_at=now() WHERE id=$1',[manualId]);
+    latestVersion=manualCorrection.body.data.lockVersion;
+    // Exercise creation in both routes concurrently and retry it several times.
+    for(let round=0;round<3;round++){
+      const raceReason='ครูขอให้ติดตามการเดินทางและประสานครอบครัว';
+      const [opened,submitted]=await Promise.all([
+        request('/api/cases',{student_id:student,reason:raceReason}),
+        request(`/api/attendance/check-in/sessions/${sessions[2]}/submit`,{
+          ...marks,correctionReason:'ตรวจการแข่งขันเปิดเคสกับบันทึกขาด',expectedLockVersion:latestVersion}),
+      ]);
+      assert(opened.status===200 && submitted.status===201,'Manual/automatic creation race returned an error');
+      const active=await db.query('SELECT id,reason_flagged FROM cases WHERE student_uuid=$1 AND deleted_at IS NULL',[student]);
+      assert(active.length===1 && Number(active[0].id)===Number(opened.body.data.id),'Manual/automatic creation race made duplicate cases');
+      if(opened.body.created)assert(active[0].reason_flagged===raceReason,'Automatic monitor replaced the manual reason');
+      await db.query('UPDATE cases SET deleted_at=now() WHERE id=$1',[active[0].id]);
+      const reset=await request(`/api/attendance/check-in/sessions/${sessions[2]}/submit`,{
+        exceptions:[],correctionReason:'คืนข้อมูลก่อนทดสอบการแข่งขันรอบถัดไป',expectedLockVersion:submitted.body.data.lockVersion});
+      assert(reset.status===201,'Race fixture attendance reset failed');
+      latestVersion=reset.body.data.lockVersion;
+    }
+    const [foreignKept]=await db.query('SELECT deleted_at FROM cases WHERE id=$1',[foreignCase]);
+    assert(foreignKept && !foreignKept.deleted_at,'Case in another school was affected');
     const settings=await request('/api/settings');
     assert(settings.status===200,'Settings request failed');
     assert(!JSON.stringify(settings.body).includes('ALERT_TRIGGER_TYPE') &&
       !JSON.stringify(settings.body).includes('ALERT_SCHEDULE_TIME'),'Legacy cadence settings still exposed');
-    console.log('PASS Chrome check-in: immediate case/notification, repeated/concurrent checks, correction, no cron/settings');
+    console.log('PASS Chrome check-in: immediate/correction, manual six states, preserved manual reason/notification, three manual-auto races, school scope, no cron/settings');
   } finally {
     socket?.close(); chrome?.kill('SIGTERM');
-    await cleanupFixture(db, {classroom, person, student, user});
+    await cleanupFixture(db, {classroom, person, student, user, foreignCase});
     await app.close();
     if(profile){await pause(300);fs.rmSync(profile,{recursive:true,force:true});}
   }
