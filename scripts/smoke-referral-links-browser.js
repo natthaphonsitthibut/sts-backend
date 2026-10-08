@@ -288,7 +288,7 @@ async function main() {
       'ส่งต่อ did not ask to confirm',
     );
     await chrome.evaluate(`${visibleButton('ยืนยัน')}.click()`);
-    // The code is revealed once in the shared one-time-secret dialog.
+    // The code is revealed in the shared one-time-secret dialog.
     const codeDialog = `[...document.querySelectorAll('[role="dialog"]')].find((dialog) =>
       dialog.innerText.includes('รหัสสำหรับหน่วยงาน'))`;
     await waitFor(
@@ -307,7 +307,7 @@ async function main() {
       .then((payload) => payload.data.referrals[0].link.url)`);
     const linkToken = String(issuedUrl).split('/referral-report/')[1];
     assert(linkToken, `the case does not share the agency link: ${issuedUrl}`);
-    console.log('ok รอส่งต่อ shows the form; ส่งต่อ issues the link and reveals its code once');
+    console.log('ok รอส่งต่อ shows the form; ส่งต่อ issues the link and reveals its stable code');
 
     // 2. รอผลการส่งต่อ: the sent referral is the active step, with the round's tools.
     await openCasePage();
@@ -327,12 +327,80 @@ async function main() {
       `[...document.querySelectorAll('[data-referral-link-panel] button')].map((button) => button.getAttribute('aria-label') || button.innerText.trim())`,
     );
     assert(
-      JSON.stringify(tools) === JSON.stringify(['แชร์ลิงก์', 'ยกเลิกการส่งต่อ']),
+      JSON.stringify(tools) === JSON.stringify(['แชร์ลิงก์', 'ดูรหัส', 'ยกเลิกการส่งต่อ']),
       `the sent referral's tools are ${tools}`,
     );
     console.log(
       'ok รอผลการส่งต่อ makes the sent referral the active step with แชร์ / ยกเลิกการส่งต่อ',
     );
+
+    await chrome.evaluate(
+      `document.querySelector('[data-referral-link-panel] [aria-label="แชร์ลิงก์"]').click()`,
+    );
+    await waitFor(
+      async () => await chrome.evaluate(`Boolean(document.querySelector('[role="dialog"]'))`),
+      'share dialog missing',
+    );
+    const shareCopy = await chrome.evaluate(`document.querySelector('[role="dialog"]').innerText`);
+    assert(
+      shareCopy.includes('AraID') && shareCopy.includes('แจ้งรหัสแยก'),
+      'referral share instructions missing',
+    );
+    assert(
+      !shareCopy.includes('ส่งถึงครู') && !shareCopy.includes('Auto LINE'),
+      'agency share offers automatic LINE',
+    );
+    for (const channel of ['LINE', 'Messenger', 'Gmail', 'Discord'])
+      assert(shareCopy.includes(channel), `share channel ${channel} missing`);
+    await chrome.call('Input.dispatchKeyEvent', {
+      type: 'keyDown',
+      key: 'Escape',
+      code: 'Escape',
+      windowsVirtualKeyCode: 27,
+    });
+    await chrome.call('Input.dispatchKeyEvent', {
+      type: 'keyUp',
+      key: 'Escape',
+      code: 'Escape',
+      windowsVirtualKeyCode: 27,
+    });
+    await wait(300);
+    for (let read = 0; read < 2; read++) {
+      await chrome.evaluate(`${visibleButton('ดูรหัส')}.click()`);
+      await waitFor(
+        async () => await chrome.evaluate(`Boolean(${codeDialog})`),
+        'view code dialog missing',
+      );
+      const sameCode = await chrome.evaluate(
+        `(${codeDialog}.innerText.match(/\\b\\d{6}\\b/) || [''])[0]`,
+      );
+      assert(sameCode === accessCode, 'viewing code changed it');
+      await chrome.evaluate(`${visibleButton('เสร็จสิ้น')}.click()`);
+      await wait(250);
+    }
+    console.log(
+      'ok shared dialog has normal channels, no automatic LINE; repeated code view is stable',
+    );
+
+    await chrome.call('Page.navigate', { url: `${FRONTEND_URL}/student-risk-report/referrals` });
+    const registerCodeButton = `[...document.querySelectorAll('a[aria-label]')]
+      .find(a => a.offsetParent !== null && a.getAttribute('href') === '/cases/${caseId}')
+      ?.parentElement.querySelector('button[aria-label="ดูรหัส"]')`;
+    await waitFor(
+      async () => await chrome.evaluate(`Boolean(${registerCodeButton})`),
+      'register code button missing',
+    );
+    await chrome.evaluate(`${registerCodeButton}.click()`);
+    await waitFor(
+      async () => await chrome.evaluate(`Boolean(${codeDialog})`),
+      'register code dialog missing',
+    );
+    assert(
+      await chrome.evaluate(`${codeDialog}.innerText.includes(${JSON.stringify(accessCode)})`),
+      'register showed a different code',
+    );
+    await chrome.evaluate(`${visibleButton('เสร็จสิ้น')}.click()`);
+    console.log('ok the register uses the credential action and reveals the same code');
 
     // 2. The agency: wrong code, right code, AraID, the home-visit view.
     await chrome.call('Page.navigate', { url: `${FRONTEND_URL}/referral-report/${linkToken}` });
@@ -480,7 +548,13 @@ async function main() {
       reportStep.active && reportStep.buttons.includes('ปิดเคส'),
       `review buttons are not on the report step: ${JSON.stringify(reportStep)}`,
     );
-    fs.writeFileSync('/tmp/sts-referral-status-mobile.png', Buffer.from((await chrome.call('Page.captureScreenshot', { format: 'png' })).result.data, 'base64'));
+    fs.writeFileSync(
+      '/tmp/sts-referral-status-mobile.png',
+      Buffer.from(
+        (await chrome.call('Page.captureScreenshot', { format: 'png' })).result.data,
+        'base64',
+      ),
+    );
     console.log('ok the case page names the agency reporter and reviews from that step');
 
     // 5. The register shares only an open link: this one is spent.
@@ -518,59 +592,95 @@ async function main() {
       { review_action: 'REFER_AGENCY', review_note: 'ทดสอบยกเลิกการส่งต่อรอบใหม่' },
       director,
     );
-    const cancelRound = await referralLinkService.sendReferral(caseId, {
-      referral_agency_id: Number(agency.id),
-      referral_note: 'ส่งต่อรอบใหม่สำหรับทดสอบการยกเลิก',
-      starts_at: new Date(Date.now() - 60_000).toISOString(),
-      expires_at: new Date(Date.now() + 86_400_000).toISOString(),
-    }, director);
+    const cancelRound = await referralLinkService.sendReferral(
+      caseId,
+      {
+        referral_agency_id: Number(agency.id),
+        referral_note: 'ส่งต่อรอบใหม่สำหรับทดสอบการยกเลิก',
+        starts_at: new Date(Date.now() - 60_000).toISOString(),
+        expires_at: new Date(Date.now() + 86_400_000).toISOString(),
+      },
+      director,
+    );
     await openCasePage();
     await chrome.evaluate(`${visibleButton('ยกเลิกการส่งต่อ')}.click()`);
     const cancelDialog = `[...document.querySelectorAll('[role="dialog"]')]
       .find((dialog) => dialog.innerText.includes('ยกเลิกการส่งต่อ'))`;
-    await waitFor(async () => await chrome.evaluate(`Boolean(${cancelDialog})`),
-      'cancel reason dialog did not open');
+    await waitFor(
+      async () => await chrome.evaluate(`Boolean(${cancelDialog})`),
+      'cancel reason dialog did not open',
+    );
     await chrome.evaluate(`${visibleButton('ยืนยัน', cancelDialog)}.click()`);
-    assert(await chrome.evaluate(`${cancelDialog}.innerText.includes('กรุณาระบุเหตุผลการยกเลิก')`),
-      'empty cancellation reason was accepted');
-    assert((await dataSource.query('SELECT status FROM cases WHERE id = $1', [caseId]))[0].status
-      === 'AWAITING_REFERRAL_OUTCOME', 'empty reason changed the case');
+    assert(
+      await chrome.evaluate(`${cancelDialog}.innerText.includes('กรุณาระบุเหตุผลการยกเลิก')`),
+      'empty cancellation reason was accepted',
+    );
+    assert(
+      (await dataSource.query('SELECT status FROM cases WHERE id = $1', [caseId]))[0].status ===
+        'AWAITING_REFERRAL_OUTCOME',
+      'empty reason changed the case',
+    );
     await setField('[role="dialog"] textarea', '   ');
     await chrome.evaluate(`${visibleButton('ยืนยัน', cancelDialog)}.click()`);
-    assert(await chrome.evaluate(`${cancelDialog}.innerText.includes('กรุณาระบุเหตุผลการยกเลิก')`),
-      'whitespace cancellation reason was accepted');
+    assert(
+      await chrome.evaluate(`${cancelDialog}.innerText.includes('กรุณาระบุเหตุผลการยกเลิก')`),
+      'whitespace cancellation reason was accepted',
+    );
     await chrome.evaluate(`${visibleButton('ยกเลิก', cancelDialog)}.click()`);
     await chrome.evaluate(`${visibleButton('ยกเลิกการส่งต่อ')}.click()`);
-    assert(await chrome.evaluate(`${cancelDialog}.querySelector('textarea').value === ''`),
-      'reopening cancel dialog retained the previous reason');
+    assert(
+      await chrome.evaluate(`${cancelDialog}.querySelector('textarea').value === ''`),
+      'reopening cancel dialog retained the previous reason',
+    );
     await wait(350);
-    fs.writeFileSync('/tmp/sts-referral-cancel-dialog.png', Buffer.from((await chrome.call('Page.captureScreenshot', { format: 'png' })).result.data, 'base64'));
+    fs.writeFileSync(
+      '/tmp/sts-referral-cancel-dialog.png',
+      Buffer.from(
+        (await chrome.call('Page.captureScreenshot', { format: 'png' })).result.data,
+        'base64',
+      ),
+    );
     const cancelReason = 'หน่วยงานแจ้งให้เปลี่ยนวันนัดหมาย';
     await setField('[role="dialog"] textarea', cancelReason);
     await chrome.evaluate(`${visibleButton('ยืนยัน', cancelDialog)}.click()`);
-    await waitFor(async () => await chrome.evaluate(`!document.querySelector('[role="dialog"]')
+    await waitFor(
+      async () =>
+        await chrome.evaluate(`!document.querySelector('[role="dialog"]')
       && Boolean(document.querySelector('[data-referral-form]'))`),
-      'confirmed cancellation did not restore the referral form');
-    const [cancelled] = await dataSource.query(`SELECT c.status AS case_status,
+      'confirmed cancellation did not restore the referral form',
+    );
+    const [cancelled] = await dataSource.query(
+      `SELECT c.status AS case_status,
       r.status_code AS referral_status, l.status_code AS link_status, l.cancel_reason,
       l.cancelled_by_user_id, l.cancelled_at
       FROM cases c JOIN case_referrals r ON r.case_id = c.id
       JOIN case_referral_links l ON l.case_referral_id = r.id
-      WHERE c.id = $1 AND r.id = $2`, [caseId, cancelRound.data.referral_id]);
-    assert(cancelled.case_status === 'AWAITING_REFERRAL'
-      && cancelled.referral_status === 'CANCELLED' && cancelled.link_status === 'REVOKED'
-      && cancelled.cancel_reason === cancelReason && cancelled.cancelled_at
-      && Number(cancelled.cancelled_by_user_id) === actorId,
-      'dialog cancellation did not persist status/reason/actor/time');
+      WHERE c.id = $1 AND r.id = $2`,
+      [caseId, cancelRound.data.referral_id],
+    );
+    assert(
+      cancelled.case_status === 'AWAITING_REFERRAL' &&
+        cancelled.referral_status === 'CANCELLED' &&
+        cancelled.link_status === 'REVOKED' &&
+        cancelled.cancel_reason === cancelReason &&
+        cancelled.cancelled_at &&
+        Number(cancelled.cancelled_by_user_id) === actorId,
+      'dialog cancellation did not persist status/reason/actor/time',
+    );
     const cancelledText = await chrome.evaluate('document.body.innerText');
-    assert(cancelledText.includes(cancelReason) && cancelledText.includes('รอส่งต่อ'),
-      'cancelled round did not show its reason and waiting status');
+    assert(
+      cancelledText.includes(cancelReason) && cancelledText.includes('รอส่งต่อ'),
+      'cancelled round did not show its reason and waiting status',
+    );
     const cancelledToken = cancelRound.data.url.split('/referral-report/')[1];
     const revokedStatus = await chrome.evaluate(`fetch(${JSON.stringify(
-      `${BACKEND_URL}/api/referral-links/`)} + ${JSON.stringify(cancelledToken)})
+      `${BACKEND_URL}/api/referral-links/`,
+    )} + ${JSON.stringify(cancelledToken)})
       .then((response) => response.status)`);
     assert(revokedStatus === 410, 'cancelled round link still opens');
-    console.log('ok cancel dialog rejects blank/whitespace, resets on reopen, persists reason/actor/time, restores form and revokes link');
+    console.log(
+      'ok cancel dialog rejects blank/whitespace, resets on reopen, persists reason/actor/time, restores form and revokes link',
+    );
 
     console.log('Referral link browser smoke passed');
   } finally {

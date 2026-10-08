@@ -117,7 +117,7 @@ export class ReferralLinkService {
    * agency, issues the link and its access code, and moves the case to
    * รอผลการส่งต่อ. A case whose last referral's link ran out or locked before
    * any result can be sent again; that referral closes as ยกเลิก, like a
-   * round whose link expired. The access code is returned here once.
+   * round whose link expired. The code stays bound to this link and can be viewed again by the school.
    */
   async sendReferral(caseId: number, body: SendReferralDto, actor?: AuthenticatedRequestUser) {
     const currentActor = this.assertCanManage(actor);
@@ -169,6 +169,7 @@ export class ReferralLinkService {
           tokenHash: hashToken(token),
           tokenEncrypted: this.tokenEncryption.encrypt(token),
           accessCodeHash: this.hashAccessCode(token, accessCode),
+          accessCodeEncrypted: this.tokenEncryption.encrypt(accessCode),
           startsAt,
           expiresAt,
           createdByUserId: actorId,
@@ -185,7 +186,7 @@ export class ReferralLinkService {
         executor,
       );
       if (!moved) throw new ConflictException('ส่งต่อได้เฉพาะเคสที่รอส่งต่อ');
-      return { referralId, linkId, caseRow };
+      return { referralId, linkId, caseRow, replacedReferral: replacing };
     });
 
     await this.auditLog.record({
@@ -200,6 +201,12 @@ export class ReferralLinkService {
         referralAgencyId: body.referral_agency_id,
         startsAt: startsAt.toISOString(),
         expiresAt: expiresAt.toISOString(),
+        ...(sent.replacedReferral
+          ? {
+              replacedReferralId: sent.replacedReferral.referralId,
+              replacementReason: sent.replacedReferral.reason,
+            }
+          : {}),
       },
       ip: null,
     });
@@ -214,6 +221,19 @@ export class ReferralLinkService {
         starts_at: startsAt.toISOString(),
         expires_at: expiresAt.toISOString(),
       },
+    };
+  }
+
+  async getAccessCode(caseId: number, referralId: string, actor?: AuthenticatedRequestUser) {
+    const currentActor = this.assertCanManage(actor);
+    const row = await this.taskRepository.findReferralAccessCode(caseId, referralId, currentActor);
+    if (!row) throw new NotFoundException('ไม่พบลิงก์ส่งต่อในเคสนี้');
+    if (typeof row.access_code_encrypted !== 'string') {
+      throw new ConflictException('ลิงก์เดิมไม่รองรับการดูรหัส กรุณายกเลิกและส่งต่อใหม่');
+    }
+    return {
+      success: true,
+      data: { access_code: this.tokenEncryption.decrypt(row.access_code_encrypted) },
     };
   }
 
@@ -258,7 +278,7 @@ export class ReferralLinkService {
       action: 'CASE_REFERRAL_LINK_REVOKE',
       targetType: 'case',
       targetId: String(caseId),
-      metadata: { referralId },
+      metadata: { referralId, cancelReason: reason },
       ip: null,
     });
     await this.notifyCaseStatus(caseId, referral, 'AWAITING_REFERRAL', actorId);
@@ -586,6 +606,12 @@ export class ReferralLinkService {
       caseRow.latest_has_result === true
     ) {
       return null;
+    }
+    if (caseRow.latest_link_status == null && caseRow.latest_referral_status === 'REFERRED') {
+      return {
+        referralId: caseRow.latest_referral_id,
+        reason: 'การส่งต่อเดิมยังไม่มีลิงก์รายงานผล',
+      };
     }
     if (caseRow.latest_link_status === 'LOCKED') {
       return {

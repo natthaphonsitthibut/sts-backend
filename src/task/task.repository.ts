@@ -3337,6 +3337,7 @@ export class TaskRepository {
       tokenHash: string;
       tokenEncrypted: string;
       accessCodeHash: string;
+      accessCodeEncrypted: string;
       startsAt: Date;
       expiresAt: Date;
       createdByUserId: number | null;
@@ -3346,10 +3347,10 @@ export class TaskRepository {
     const result = await executor.query<{ id: string }>(
       `
         INSERT INTO case_referral_links (
-          case_referral_id, token_hash, token_encrypted, access_code_hash,
+          case_referral_id, token_hash, token_encrypted, access_code_hash, access_code_encrypted,
           starts_at, expires_at, created_by_user_id
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
         RETURNING id
       `,
       [
@@ -3357,12 +3358,28 @@ export class TaskRepository {
         data.tokenHash,
         data.tokenEncrypted,
         data.accessCodeHash,
+        data.accessCodeEncrypted,
         data.startsAt,
         data.expiresAt,
         data.createdByUserId,
       ],
     );
     return String(result.rows[0].id);
+  }
+
+  async findReferralAccessCode(caseId: number, referralId: string, actor: ActorContext) {
+    const scopeQuery = this.buildCaseScopeQuery(actor, 3);
+    const result = await this.getExecutor().query(
+      `SELECT link.access_code_encrypted
+       FROM cases c
+       JOIN case_referrals referral ON referral.case_id = c.id
+       JOIN case_referral_links link ON link.case_referral_id = referral.id
+       WHERE c.id = $1 AND referral.id = $2 AND c.deleted_at IS NULL
+         ${scopeQuery.sql ? `AND ${scopeQuery.sql}` : ''}
+       ORDER BY link.created_at DESC, link.id DESC LIMIT 1`,
+      [caseId, referralId, ...scopeQuery.params],
+    );
+    return result.rows[0] ?? null;
   }
 
   /**

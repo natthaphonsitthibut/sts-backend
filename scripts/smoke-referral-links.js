@@ -135,7 +135,7 @@ async function main() {
     );
     assert(agency, 'need one active referral agency');
 
-    const fixtureUser = async (username, permissions) => {
+    const fixtureUser = async (username, permissions, scopedSchoolId = schoolId) => {
       const [row] = await dataSource.query(
         `INSERT INTO users (username, password, "FirstName", "LastName", status, permissions,
            role, data_scope, must_change_password, data_origin_code)
@@ -144,7 +144,7 @@ async function main() {
          ON CONFLICT (username) DO UPDATE SET status = 'ACTIVE', permissions = $2::jsonb,
            data_scope = $3::jsonb, data_origin_code = 'AUTOMATED_TEST'
          RETURNING id`,
-        [username, JSON.stringify(permissions), JSON.stringify({ school_ids: [schoolId] })],
+        [username, JSON.stringify(permissions), JSON.stringify({ school_ids: [scopedSchoolId] })],
       );
       userIds.push(Number(row.id));
       return Number(row.id);
@@ -152,6 +152,11 @@ async function main() {
     const directorPermissions = ['dashboard', 'case:assign', 'case:review'];
     const directorId = await fixtureUser(USERNAME, directorPermissions);
     const readerId = await fixtureUser(READER_USERNAME, ['dashboard']);
+    const foreignId = await fixtureUser(
+      'referral_link_smoke_foreign',
+      directorPermissions,
+      schoolId + 999999,
+    );
     const director = {
       id: directorId,
       username: USERNAME,
@@ -209,6 +214,50 @@ async function main() {
         (await caseStatus()) === 'AWAITING_REFERRAL_OUTCOME',
         'sending did not move the case to รอผลการส่งต่อ',
       );
+      const codePath = `/api/cases/${caseId}/referrals/${referralId}/access-code`;
+      await request('GET', codePath, 401);
+      await request('GET', codePath, 403, { headers: { cookie: cookieFor(readerId) } });
+      await request('GET', codePath, 404, { headers: { cookie: cookieFor(foreignId) } });
+      const first = await request('GET', codePath, 200, { headers: { cookie: directorCookie } });
+      const second = await request('GET', codePath, 200, { headers: { cookie: directorCookie } });
+      assert(
+        first.payload.data.access_code === code && second.payload.data.access_code === code,
+        'viewing a code changed it',
+      );
+      assert(
+        first.response.headers.get('cache-control') === 'private, no-store',
+        'code response can be cached',
+      );
+      await request(
+        'GET',
+        `/api/cases/${caseId + 999999}/referrals/${referralId}/access-code`,
+        404,
+        { headers: { cookie: directorCookie } },
+      );
+      const [stored] = await dataSource.query(
+        'SELECT access_code_encrypted FROM case_referral_links WHERE case_referral_id = $1',
+        [referralId],
+      );
+      assert(
+        stored.access_code_encrypted !== code && stored.access_code_encrypted.startsWith('v1:'),
+        'code was not encrypted',
+      );
+      await dataSource.query(
+        'UPDATE case_referral_links SET access_code_encrypted = NULL WHERE case_referral_id = $1',
+        [referralId],
+      );
+      await request('GET', codePath, 409, { headers: { cookie: directorCookie } });
+      await dataSource.query(
+        'UPDATE case_referral_links SET access_code_encrypted = $2 WHERE case_referral_id = $1',
+        [referralId, stored.access_code_encrypted],
+      );
+      const detail = await request('GET', `/api/cases/${caseId}`, 200, {
+        headers: { cookie: directorCookie },
+      });
+      assert(
+        !JSON.stringify(detail.payload).includes('access_code'),
+        'case read leaked code fields',
+      );
       return { token, code, referralId };
     };
     const cancelPath = (referralId) => `/api/cases/${caseId}/referrals/${referralId}/cancel`;
@@ -248,7 +297,31 @@ async function main() {
 
     // 2. Wrong codes count down and the fifth locks the link; a locked round
     //    can be sent again, which closes it as ยกเลิก.
+    // A pending referral created before report links existed has no link/code.
+    const [legacyReferral] = await dataSource.query(
+      `INSERT INTO case_referrals (
+      case_review_id, case_id, referral_agency_id, referred_by_user_id, referral_note, referred_at)
+      SELECT review.id, $1, $2, $3, 'การส่งต่อเดิมก่อนมีลิงก์', now() - interval '1 hour'
+      FROM case_reviews review WHERE review.case_id = $1 AND review.review_action = 'REFER_AGENCY'
+      ORDER BY review.reviewed_at DESC LIMIT 1 RETURNING id`,
+      [caseId, Number(agency.id), directorId],
+    );
+    await dataSource.query(`UPDATE cases SET status = 'AWAITING_REFERRAL_OUTCOME' WHERE id = $1`, [
+      caseId,
+    ]);
+    await request('POST', sendPath, 403, {
+      headers: { cookie: cookieFor(readerId) },
+      body: sendBody('ออกลิงก์รายการเดิม'),
+    });
     const locked = await send('ส่งต่อพบนักจิตวิทยา');
+    assert(
+      (await referralRow(legacyReferral.id)).status_code === 'CANCELLED',
+      'pending legacy referral without a link could not be replaced',
+    );
+    console.log(
+      'ok pending legacy referral without a link can issue a new round with URL/code; permission gate remains',
+    );
+
     await request('POST', sendPath, 409, {
       headers: { cookie: directorCookie },
       body: sendBody('ส่งซ้ำระหว่างรอผล'),
@@ -386,7 +459,10 @@ async function main() {
       headers: session,
       body: { ...report, action_date: tomorrow },
     });
-    await request('POST', `${linkPath(link.token)}/report`, 400, { headers: session, body: { ...report, action_date: '2026-02-31' } });
+    await request('POST', `${linkPath(link.token)}/report`, 400, {
+      headers: session,
+      body: { ...report, action_date: '2026-02-31' },
+    });
     await request('POST', `${linkPath(link.token)}/report`, 200, {
       headers: session,
       body: report,
@@ -418,17 +494,23 @@ async function main() {
     );
     // PostgreSQL CHECK must reject NULL as well as empty reporter fields.
     for (const [field, value] of [
-      ['reporter_identity_provider_code', null], ['reporter_provider_subject', null],
-      ['reporter_name', null], ['action_date', null],
-      ['reporter_provider_subject', '   '], ['reporter_name', '   '],
+      ['reporter_identity_provider_code', null],
+      ['reporter_provider_subject', null],
+      ['reporter_name', null],
+      ['action_date', null],
+      ['reporter_provider_subject', '   '],
+      ['reporter_name', '   '],
     ]) {
       const runner = dataSource.createQueryRunner();
       await runner.connect();
       await runner.startTransaction();
       let rejected = false;
       try {
-        await runner.query(`UPDATE case_referral_results SET ${field} = $2
-          WHERE case_referral_id = $1`, [referralId, value]);
+        await runner.query(
+          `UPDATE case_referral_results SET ${field} = $2
+          WHERE case_referral_id = $1`,
+          [referralId, value],
+        );
       } catch (error) {
         rejected = error.code === '23514';
       } finally {
@@ -473,15 +555,25 @@ async function main() {
     await request('POST', `${linkPath(expired.token)}/araid/challenge`, 410, {
       body: { access_code: expired.code },
     });
-    const sends = await Promise.all([1, 2].map(() => fetch(`${baseUrl}${sendPath}`, {
-      method: 'POST', headers: { 'content-type': 'application/json', cookie: directorCookie },
-      body: JSON.stringify(sendBody('ส่งต่อมูลนิธิอีกครั้ง')),
-    })));
-    const sendStatuses = sends.map(response => response.status).sort((a, b) => a - b);
-    assert(JSON.stringify(sendStatuses) === JSON.stringify([201, 409]),
-      `simultaneous replacement sends returned ${sendStatuses}`);
-    const sent = (await sends.find(response => response.status === 201).json()).data;
-    const raceRound = { token: sent.url.split('/referral-report/')[1], referralId: sent.referral_id };
+    const sends = await Promise.all(
+      [1, 2].map(() =>
+        fetch(`${baseUrl}${sendPath}`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json', cookie: directorCookie },
+          body: JSON.stringify(sendBody('ส่งต่อมูลนิธิอีกครั้ง')),
+        }),
+      ),
+    );
+    const sendStatuses = sends.map((response) => response.status).sort((a, b) => a - b);
+    assert(
+      JSON.stringify(sendStatuses) === JSON.stringify([201, 409]),
+      `simultaneous replacement sends returned ${sendStatuses}`,
+    );
+    const sent = (await sends.find((response) => response.status === 201).json()).data;
+    const raceRound = {
+      token: sent.url.split('/referral-report/')[1],
+      referralId: sent.referral_id,
+    };
     console.log('ok simultaneous replacement sends issue exactly one new round');
     const expiredRow = await referralRow(expired.referralId);
     assert(
@@ -494,32 +586,52 @@ async function main() {
 
     // The report and the school's cancellation race for the same round.
     const [raceLink] = await dataSource.query(
-      `SELECT id FROM case_referral_links WHERE case_referral_id = $1`, [raceRound.referralId]);
-    const raceSession = await app.get(MagicSessionStoreService).issue(`referral-link:${raceLink.id}`,
-      { provider: 'ARAID', subject: 'smoke-referral-araid-subject', name: REPORTER_NAME });
+      `SELECT id FROM case_referral_links WHERE case_referral_id = $1`,
+      [raceRound.referralId],
+    );
+    const raceSession = await app
+      .get(MagicSessionStoreService)
+      .issue(`referral-link:${raceLink.id}`, {
+        provider: 'ARAID',
+        subject: 'smoke-referral-araid-subject',
+        name: REPORTER_NAME,
+      });
     const attempts = await Promise.all([
       fetch(`${baseUrl}${linkPath(raceRound.token)}/report`, {
-        method: 'POST', headers: { 'content-type': 'application/json', 'x-referral-session': raceSession },
+        method: 'POST',
+        headers: { 'content-type': 'application/json', 'x-referral-session': raceSession },
         body: JSON.stringify(report),
       }),
       fetch(`${baseUrl}${cancelPath(raceRound.referralId)}`, {
-        method: 'POST', headers: { 'content-type': 'application/json', cookie: directorCookie },
+        method: 'POST',
+        headers: { 'content-type': 'application/json', cookie: directorCookie },
         body: JSON.stringify({ cancel_reason: 'ทดสอบยกเลิกพร้อมรายงาน' }),
       }),
     ]);
-    const statuses = attempts.map(response => response.status).sort((a, b) => a - b);
-    assert(statuses[0] === 200 && [409, 410].includes(statuses[1]),
-      `report/cancel race returned ${statuses}`);
-    const [raceState] = await dataSource.query(`SELECT c.status AS case_status,
+    const statuses = attempts.map((response) => response.status).sort((a, b) => a - b);
+    assert(
+      statuses[0] === 200 && [409, 410].includes(statuses[1]),
+      `report/cancel race returned ${statuses}`,
+    );
+    const [raceState] = await dataSource.query(
+      `SELECT c.status AS case_status,
         r.status_code AS referral_status, l.status_code AS link_status,
         EXISTS (SELECT 1 FROM case_referral_results result WHERE result.case_referral_id = r.id) AS has_result
       FROM case_referrals r JOIN cases c ON c.id = r.case_id
-      JOIN case_referral_links l ON l.case_referral_id = r.id WHERE r.id = $1`, [raceRound.referralId]);
-    assert(raceState.has_result
-      ? raceState.case_status === 'PENDING_REVIEW' && raceState.link_status === 'USED'
-      : raceState.case_status === 'AWAITING_REFERRAL' && raceState.referral_status === 'CANCELLED'
-        && raceState.link_status === 'REVOKED', 'report/cancel race left mixed states');
-    console.log('ok simultaneous report/cancel has one winner with consistent case/referral/link state');
+      JOIN case_referral_links l ON l.case_referral_id = r.id WHERE r.id = $1`,
+      [raceRound.referralId],
+    );
+    assert(
+      raceState.has_result
+        ? raceState.case_status === 'PENDING_REVIEW' && raceState.link_status === 'USED'
+        : raceState.case_status === 'AWAITING_REFERRAL' &&
+            raceState.referral_status === 'CANCELLED' &&
+            raceState.link_status === 'REVOKED',
+      'report/cancel race left mixed states',
+    );
+    console.log(
+      'ok simultaneous report/cancel has one winner with consistent case/referral/link state',
+    );
     console.log('Referral link smoke passed');
   } finally {
     if (caseId) {

@@ -2,6 +2,7 @@ import {
   Body,
   Controller,
   Get,
+  Header,
   HttpCode,
   HttpException,
   HttpStatus,
@@ -113,17 +114,30 @@ export class CaseController {
 
   /**
    * ส่งต่อ, the referral's มอบหมาย: agency, reason and the link's window. The
-   * agency's access code comes back only in this response.
+   * agency's access code is also available to an authorized reviewer.
    */
   @UseGuards(AuthGuard, PermissionsGuard)
   @RequirePermission('case:review')
   @Post(':caseId/referrals')
+  @Header('Cache-Control', 'private, no-store')
   async sendReferral(
     @Param('caseId', ParseIntPipe) caseId: number,
     @Body() body: SendReferralDto,
     @CurrentUser() actor?: AuthenticatedRequestUser,
   ) {
     return await this.referralLinkService.sendReferral(caseId, body, actor);
+  }
+
+  @UseGuards(AuthGuard, PermissionsGuard)
+  @RequirePermission('case:review')
+  @Get(':caseId/referrals/:referralId/access-code')
+  @Header('Cache-Control', 'private, no-store')
+  async getReferralAccessCode(
+    @Param('caseId', ParseIntPipe) caseId: number,
+    @Param('referralId', new ParseUUIDPipe()) referralId: string,
+    @CurrentUser() actor?: AuthenticatedRequestUser,
+  ) {
+    return await this.referralLinkService.getAccessCode(caseId, referralId, actor);
   }
 
   /** ยกเลิกการส่งต่อ, like ยกเลิกการมอบหมาย: back to รอส่งต่อ with a reason. */

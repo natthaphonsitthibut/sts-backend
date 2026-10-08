@@ -286,10 +286,15 @@ async function main() {
     );
     const tools = await chrome.evaluate(rowTools);
     assert(
-      tools.length === 1 && tools[0].label === 'แชร์ลิงก์' && tools[0].disabled === false,
+      tools.length === 2 &&
+        tools[0].label === 'แชร์ลิงก์' &&
+        tools[1].label === 'ดูรหัส' &&
+        tools.every((tool) => tool.disabled === false),
       `the waiting row's tools are ${JSON.stringify(tools)}`,
     );
-    console.log('ok งานส่งต่อ shows the flow cards; the row tools are ดูรายละเอียดเคส + แชร์');
+    console.log(
+      'ok งานส่งต่อ shows the flow cards; the row tools are ดูรายละเอียดเคส + แชร์ + ดูรหัส',
+    );
     await openCasePage();
 
     // 2. Phone width: the card and its button stay inside the screen.
@@ -324,10 +329,16 @@ async function main() {
       'the recorded note is not on the referral step',
     );
     const afterNotYet = await chrome.evaluate(referralStepText(-1));
-    assert(afterNotYet.includes('สถานะการส่งต่อ : รอพิจารณา'),
-      'unsuccessful referral result is used as its workflow status');
-    assert(await chrome.evaluate(`document.querySelector('[data-referral-result] input[aria-label="ผลการส่งต่อ"]').value === 'ยังไม่สำเร็จ'`),
-      'unsuccessful result was lost from the separate outcome field');
+    assert(
+      afterNotYet.includes('สถานะการส่งต่อ : รอพิจารณา'),
+      'unsuccessful referral result is used as its workflow status',
+    );
+    assert(
+      await chrome.evaluate(
+        `document.querySelector('[data-referral-result] input[aria-label="ผลการส่งต่อ"]').value === 'ยังไม่สำเร็จ'`,
+      ),
+      'unsuccessful result was lost from the separate outcome field',
+    );
     // The reviewer decides the next step right under the referral that failed.
     await waitFor(
       async () => await chrome.evaluate(buttonInNewestReferral('ส่งต่อหน่วยงานอีกครั้ง')),
@@ -377,19 +388,28 @@ async function main() {
     );
     await openCasePage();
     const finalText = await chrome.evaluate('document.body.innerText');
-    assert(finalText.includes('สถานะการติดตาม : เสร็จสิ้น') && !finalText.includes('เสร็จสิ้น :'),
-      'closed case status still includes a completion outcome suffix');
-    const finishedReferralStates = await chrome.evaluate(`[...document.querySelectorAll('[data-referral-result]')]
+    assert(
+      finalText.includes('สถานะการติดตาม : เสร็จสิ้น') && !finalText.includes('เสร็จสิ้น :'),
+      'closed case status still includes a completion outcome suffix',
+    );
+    const finishedReferralStates =
+      await chrome.evaluate(`[...document.querySelectorAll('[data-referral-result]')]
       .map(step => ({ text: step.innerText,
         result: step.querySelector('input[aria-label="ผลการส่งต่อ"]').value }))`);
-    assert(finishedReferralStates.length === 2
-      && finishedReferralStates.every(step => step.text.includes('สถานะการส่งต่อ : เสร็จสิ้น'))
-      && finishedReferralStates[0].result === 'ยังไม่สำเร็จ'
-      && finishedReferralStates[1].result === 'สำเร็จ',
-      'finished referral statuses do not match tracking status or their results changed');
-    console.log('ok tracking/referral statuses both read เสร็จสิ้น; outcome fields retain สำเร็จ / ยังไม่สำเร็จ');
+    assert(
+      finishedReferralStates.length === 2 &&
+        finishedReferralStates.every((step) => step.text.includes('สถานะการส่งต่อ : เสร็จสิ้น')) &&
+        finishedReferralStates[0].result === 'ยังไม่สำเร็จ' &&
+        finishedReferralStates[1].result === 'สำเร็จ',
+      'finished referral statuses do not match tracking status or their results changed',
+    );
+    console.log(
+      'ok tracking/referral statuses both read เสร็จสิ้น; outcome fields retain สำเร็จ / ยังไม่สำเร็จ',
+    );
     console.log('ok closed case status reads สถานะการติดตาม : เสร็จสิ้น only');
-    console.log('ok สำเร็จ returned the case to รอพิจารณา and ปิดเคส uses the same closed outcome after agency success');
+    console.log(
+      'ok สำเร็จ returned the case to รอพิจารณา and ปิดเคส uses the same closed outcome after agency success',
+    );
     console.log('Referral outcome browser smoke passed');
   } finally {
     chrome?.close();
