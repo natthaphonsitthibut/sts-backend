@@ -8,6 +8,7 @@ import { buildDataScopeQuery } from '../common/utils/authorization';
 import { escapeLikePattern, normalizeScalar } from '../common/utils/helpers';
 import { TokenEncryptionService } from '../common/crypto/token-encryption.service';
 import { encodeMediaVersion } from '../common/utils/media-version.util';
+import { CASE_COMMENT_COMPLETION_BASELINE_SQL } from './case-comment-baseline.sql';
 import type {
   ActorContext,
   DataScope,
@@ -978,6 +979,56 @@ export class TaskRepository {
       [nextStatus, completionOutcomeCode, nextPhaseCode ?? null, caseId, ...scopeQuery.params],
     );
     return result.rows.length === 1;
+  }
+
+  /** Lock the case before checking its newest round; never reuse an older success. */
+  async lockCaseWithSuccessfulLatestOutcome(
+    caseId: number,
+    executor: QueryExecutor,
+    actor?: ActorContext,
+  ): Promise<boolean> {
+    const scopeQuery = this.buildCaseScopeQuery(actor, 2);
+    const scopeSql = scopeQuery.sql ? ` AND ${scopeQuery.sql}` : '';
+    const locked = await executor.query(
+      `SELECT c.id FROM cases c WHERE c.id = $1 AND c.status = 'PENDING_REVIEW'
+         AND c.deleted_at IS NULL${scopeSql} FOR UPDATE OF c`,
+      [caseId, ...scopeQuery.params],
+    );
+    if (locked.rows.length !== 1) return false;
+    // A separate statement gets a fresh snapshot after any concurrent writer
+    // releases the case lock, so its newest result cannot be read stale.
+    const result = await executor.query(
+      `SELECT (
+         SELECT round.outcome_code = 'SUCCEEDED'
+         FROM (
+           SELECT task.created_at AS started_at, task.id::text AS round_id,
+             submission.task_execution_outcome_code AS outcome_code
+           FROM tasks task
+           LEFT JOIN LATERAL (
+             SELECT report.task_execution_outcome_code
+             FROM task_links link
+             JOIN task_submissions report ON report.task_link_id = link.id
+             WHERE link.task_id = task.id AND link.deleted_at IS NULL
+               AND report.deleted_at IS NULL
+             ORDER BY report.submitted_at DESC, report.id DESC LIMIT 1
+           ) submission ON TRUE
+           WHERE task.case_id = c.id AND task.deleted_at IS NULL
+           UNION ALL
+           SELECT referral.referred_at, referral.id::text,
+             CASE WHEN result.case_referral_id IS NOT NULL
+               AND referral.status_code = 'COMPLETED' THEN 'SUCCEEDED'
+               ELSE 'NOT_SUCCEEDED' END
+           FROM case_referrals referral
+           LEFT JOIN case_referral_results result ON result.case_referral_id = referral.id
+           WHERE referral.case_id = c.id
+         ) round
+         ORDER BY round.started_at DESC, round.round_id DESC LIMIT 1
+       ) AS can_close
+       FROM cases c
+       WHERE c.id = $1`,
+      [caseId],
+    );
+    return result.rows[0]?.can_close === true;
   }
 
   /**
@@ -2732,6 +2783,7 @@ export class TaskRepository {
           latest_comment.concern_level_code,
           latest_comment.concern_level_label,
           COALESCE(comment_totals.comment_count, 0) AS comment_count,
+          COALESCE(comment_totals.pending_comment_count, 0) AS pending_comment_count,
           COALESCE(
             latest_comment.problem_description,
             CASE
@@ -2753,6 +2805,9 @@ export class TaskRepository {
         LEFT JOIN grade_levels gl ON s."GradeLevelID_Onec" = gl.id
         LEFT JOIN schools sc ON s."SchoolID_Onec" = sc.id
         LEFT JOIN student_risk_profiles profile ON profile.student_uuid = s.student_uuid
+        LEFT JOIN LATERAL (
+          ${CASE_COMMENT_COMPLETION_BASELINE_SQL}
+        ) comment_baseline ON TRUE
         LEFT JOIN LATERAL (
           SELECT c.id, c.status, c.updated_at, c.reason_flagged
           FROM cases c
@@ -2798,14 +2853,18 @@ export class TaskRepository {
             ON concern_level.code = comment.concern_level_code
           WHERE comment.classroom_id = s.classroom_id
             AND comment.person_uuid = s.person_uuid
-          -- Severity first, recency only to break a tie: a student whose most
-          -- recent note is routine but who was flagged น่ากังวล last week must
-          -- still read as น่ากังวล.
-          ORDER BY concern_level.sort_order DESC, comment.created_at DESC, comment.id DESC
+          -- Prefer this round's observations over completed history. Within
+          -- the round, severity wins and recency breaks ties.
+          ORDER BY
+            (comment.created_at > COALESCE(comment_baseline.completed_at, '-infinity'::timestamptz)) DESC,
+            concern_level.sort_order DESC, comment.created_at DESC, comment.id DESC
           LIMIT 1
         ) latest_comment ON TRUE
         LEFT JOIN LATERAL (
-          SELECT COUNT(*)::int AS comment_count
+          SELECT COUNT(*)::int AS comment_count,
+            COUNT(*) FILTER (
+              WHERE comment.created_at > COALESCE(comment_baseline.completed_at, '-infinity'::timestamptz)
+            )::int AS pending_comment_count
           FROM classroom_student_comments comment
           WHERE comment.classroom_id = s.classroom_id
             AND comment.person_uuid = s.person_uuid
@@ -2969,6 +3028,7 @@ export class TaskRepository {
           concern_level_code,
           concern_level_label,
           comment_count,
+          pending_comment_count,
           teacher_comment
         FROM filtered
         ORDER BY ${orderBy}

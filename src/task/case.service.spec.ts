@@ -47,6 +47,7 @@ describe('CaseService', () => {
       | 'findActiveReferralAgency'
       | 'insertCaseReferral'
       | 'transitionPendingReviewCase'
+      | 'lockCaseWithSuccessfulLatestOutcome'
       | 'findCaseReviewById'
       | 'listTasksByCase'
       | 'listCaseReviews'
@@ -98,6 +99,7 @@ describe('CaseService', () => {
       }),
       insertCaseReferral: jest.fn().mockResolvedValue(undefined),
       transitionPendingReviewCase: jest.fn().mockResolvedValue(true),
+      lockCaseWithSuccessfulLatestOutcome: jest.fn().mockResolvedValue(true),
       findCaseReviewById: jest.fn().mockResolvedValue({
         id: 'review-id',
         case_id: 10,
@@ -569,6 +571,23 @@ describe('CaseService', () => {
       referralAgencyId: null,
       proposedAssistanceMeasureCodes: [],
     });
+  });
+
+  it('refuses CLOSE when the newest round has no successful outcome', async () => {
+    taskRepository.lockCaseWithSuccessfulLatestOutcome.mockResolvedValueOnce(false);
+    await expect(
+      service.reviewCase(
+        10,
+        {
+          review_action: 'CLOSE',
+          review_note: 'พยายามปิดผลที่ไม่สำเร็จ',
+        },
+        buildActor(['dashboard', 'case:review']),
+      ),
+    ).rejects.toBeInstanceOf(BadRequestException);
+    expect(taskRepository.transitionPendingReviewCase).not.toHaveBeenCalled();
+    expect(taskRepository.insertCaseReview).not.toHaveBeenCalled();
+    expect(auditLog.record).not.toHaveBeenCalled();
   });
 
   it('sends a follow-up case into the assistance phase on ASSIST', async () => {

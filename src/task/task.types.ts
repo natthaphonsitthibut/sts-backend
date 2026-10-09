@@ -155,6 +155,7 @@ export interface RiskDashboardRow extends QueryResultRow {
   concern_level_label: string | null;
   /** Every observation recorded for this student, not just the one shown. */
   comment_count: number | string;
+  pending_comment_count?: number | string;
   teacher_comment: string | null;
 }
 

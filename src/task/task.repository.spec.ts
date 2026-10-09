@@ -465,7 +465,7 @@ describe('TaskRepository', () => {
     // add up to the rows on screen.
     expect(queries[1].sql).not.toContain('concern_level_code =');
     expect(queries[0].sql).toContain(
-      'ORDER BY concern_level.sort_order DESC, comment.created_at DESC, comment.id DESC',
+      'concern_level.sort_order DESC, comment.created_at DESC, comment.id DESC',
     );
     expect(queries[2].sql).toContain(
       'ORDER BY problem_category_label DESC NULLS LAST, student_name ASC',

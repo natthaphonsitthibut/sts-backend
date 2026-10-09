@@ -658,6 +658,23 @@ export class CaseService {
         throw new BadRequestException('พิจารณาได้เฉพาะเคสที่มีรายงานติดตามรอพิจารณา');
       }
       await this.taskRepository.withTransaction(async (executor) => {
+        if (
+          nextStatus === 'RESOLVED' &&
+          !(await this.taskRepository.lockCaseWithSuccessfulLatestOutcome(
+            caseId,
+            executor,
+            currentActor,
+          ))
+        ) {
+          this.logger.warn({
+            event: 'case_close_rejected',
+            caseId,
+            reason: 'LATEST_OUTCOME_NOT_SUCCEEDED',
+          });
+          throw new BadRequestException(
+            'ปิดเคสได้เมื่อผลการติดตาม ช่วยเหลือ หรือส่งต่อล่าสุดสำเร็จแล้วเท่านั้น',
+          );
+        }
         const transitioned = await this.taskRepository.transitionPendingReviewCase(
           caseId,
           nextStatus,
