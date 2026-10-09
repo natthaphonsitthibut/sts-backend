@@ -1,6 +1,7 @@
 /** Local owner-requested case roster; real students/teachers/agencies and normal services.
  * Dry-run by default. --apply consumes an AraID record JSON from stdin (PIN never logged).
- * Re-running resumes the same reason-tagged cases without rotating issued links.
+ * Re-running maintains the recorded local roster without rotating issued links.
+ * Missing roster cases require an explicit new preparation, never replacements.
  */
 const { NestFactory } = require('@nestjs/core');
 const { DataSource } = require('typeorm');
@@ -22,6 +23,7 @@ const SCHOOL = Number(
   (process.argv.find((a) => a.startsWith('--school=')) || '--school=10010004').split('=')[1],
 );
 const PREFIX = 'ติดตามการมาเรียนและประสานครอบครัว รอบตุลาคม 2569';
+const ROSTER_CASE_IDS = Array.from({length:21},(_,index)=>3354+index);
 const STATES = [
   ['OPEN', 'รอมอบหมาย'],
   ['IN_PROGRESS', 'รอติดตาม'],
@@ -46,7 +48,7 @@ async function main() {
     const links = app.get(ReferralLinkService),
       ara = app.get(AraIdService);
     const [admin] = await db.query(`SELECT id FROM users WHERE status='ACTIVE' AND role='ADMIN'
-      AND data_origin_code <> 'AUTOMATED_TEST' ORDER BY id LIMIT 1`);
+      AND data_origin_code IS DISTINCT FROM 'AUTOMATED_TEST' ORDER BY id LIMIT 1`);
     if (!admin) throw new Error('No real active administrator');
     let cookie = '';
     app.get(SessionCookieService).setSession(
@@ -66,18 +68,11 @@ async function main() {
     if (!agencies.length) throw new Error('No real referral agency');
     const existing = await db.query(
       `SELECT id,status,reason_flagged FROM cases WHERE school_id=$1
-      AND deleted_at IS NULL AND reason_flagged LIKE $2 ORDER BY id`,
-      [SCHOOL, `${PREFIX}%`],
+      AND deleted_at IS NULL AND (reason_flagged LIKE $2 OR id=ANY($3::int[])) ORDER BY id`,
+      [SCHOOL, `${PREFIX}%`,ROSTER_CASE_IDS],
     );
-    const students = await db.query(
-      `SELECT s.student_uuid FROM student_term s
-      JOIN student_current_enrollment_resolution e ON e.selected_student_uuid=s.student_uuid AND e.resolution_state='ACTIVE'
-      WHERE s."SchoolID_Onec"=$1 AND NOT EXISTS (SELECT 1 FROM cases c WHERE c.student_uuid=s.student_uuid AND c.deleted_at IS NULL)
-      ORDER BY s.student_uuid LIMIT 21`,
-      [SCHOOL],
-    );
-    if (students.length + existing.length < 21)
-      throw new Error('Not enough eligible real students');
+    if (APPLY && (existing.length !== 21 || ROSTER_CASE_IDS.some(id=>!existing.some(row=>Number(row.id)===id))))
+      throw new Error('Recorded local roster is incomplete; refusing to create replacement cases');
     const legacy = await db.query(
       `SELECT c.id, r.id AS referral_id FROM cases c
       JOIN LATERAL (SELECT id FROM case_referrals WHERE case_id=c.id ORDER BY referred_at DESC,id DESC LIMIT 1) r ON true
@@ -117,19 +112,11 @@ async function main() {
         },
         actor,
       );
-    let studentIndex = 0;
-    for (const [target, label] of STATES)
+    for (const [target] of STATES)
       for (let index = 1; index <= 3; index++) {
-        const reason = `${PREFIX} — ${label} ${index}`;
-        let row = existing.find((c) => c.reason_flagged === reason);
-        if (!row) {
-          const opened = await cases.openCase(
-            { student_id: students[studentIndex++].student_uuid, reason },
-            actor,
-          );
-          if (!opened.created) throw new Error('Student unexpectedly already has a case');
-          row = { id: opened.data.id, status: 'OPEN' };
-        }
+        const position = STATES.findIndex(([state]) => state === target) * 3 + index - 1;
+        const row = existing.find(c=>Number(c.id)===ROSTER_CASE_IDS[position]);
+        if (!row) throw new Error('Recorded local case slot is missing');
         const id = Number(row.id);
         if (row.status === target) continue;
         if (row.status === 'OPEN' && target !== 'OPEN') {
@@ -276,8 +263,8 @@ async function main() {
       JSON.stringify({
         legacyReportsPrepared: repaired,
         counts: await db.query(
-          `SELECT status,count(*)::int AS count FROM cases WHERE school_id=$1 AND deleted_at IS NULL AND reason_flagged LIKE $2 GROUP BY status ORDER BY status`,
-          [SCHOOL, `${PREFIX}%`],
+          `SELECT status,count(*)::int AS count FROM cases WHERE school_id=$1 AND deleted_at IS NULL AND (reason_flagged LIKE $2 OR id=ANY($3::int[])) GROUP BY status ORDER BY status`,
+          [SCHOOL, `${PREFIX}%`,ROSTER_CASE_IDS],
         ),
       }),
     );
