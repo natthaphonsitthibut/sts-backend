@@ -1,6 +1,12 @@
-import { BadGatewayException, Logger, ServiceUnavailableException } from '@nestjs/common';
+import {
+  BadGatewayException,
+  Logger,
+  NotFoundException,
+  ServiceUnavailableException,
+} from '@nestjs/common';
 import type { AuthenticatedRequestUser } from '../auth';
 import type { QueryEnvelope } from './dto/nl-query.dto';
+import { NlConversationService } from './nl-conversation.service';
 import { NlQueryLogService } from './nl-query-log.service';
 import { NlQueryService } from './nl-query.service';
 
@@ -50,6 +56,7 @@ const envelope: QueryEnvelope = {
 describe('NlQueryService', () => {
   let fetchMock: jest.MockedFunction<typeof fetch>;
   let log: jest.Mocked<Pick<NlQueryLogService, 'begin' | 'complete' | 'fail'>>;
+  let conversations: jest.Mocked<Pick<NlConversationService, 'historyFor' | 'appendTurn'>>;
   let service: NlQueryService;
 
   beforeEach(() => {
@@ -61,9 +68,14 @@ describe('NlQueryService', () => {
       complete: jest.fn().mockResolvedValue(undefined),
       fail: jest.fn().mockResolvedValue(undefined),
     };
+    conversations = {
+      historyFor: jest.fn().mockResolvedValue([]),
+      appendTurn: jest.fn().mockResolvedValue('c-new'),
+    };
     service = new NlQueryService(
       { url: 'http://python.test', apiKey: 'secret', timeoutMs: 60_000 },
       log as unknown as NlQueryLogService,
+      conversations as unknown as NlConversationService,
     );
   });
 
@@ -74,7 +86,10 @@ describe('NlQueryService', () => {
   it('forwards a successful envelope unchanged and completes its audit row', async () => {
     fetchMock.mockResolvedValue(new Response(JSON.stringify(envelope), { status: 200 }));
 
-    await expect(service.query({ question: envelope.question }, actor)).resolves.toEqual(envelope);
+    await expect(service.query({ question: envelope.question }, actor)).resolves.toEqual({
+      ...envelope,
+      conversation_id: 'c-new',
+    });
     expect(log.begin).toHaveBeenCalledWith({
       userId: actor.id,
       dataScope: actor.data_scope,
@@ -104,25 +119,23 @@ describe('NlQueryService', () => {
     );
   });
 
-  it('forwards history as snake_case to the Python service', async () => {
+  it('builds upstream history from the stored conversation, not from the client', async () => {
     fetchMock.mockResolvedValue(new Response(JSON.stringify(envelope), { status: 200 }));
+    conversations.historyFor.mockResolvedValue([
+      { question: 'เด็กเสี่ยงมีเท่าไหร่', answerType: 'clarification', sql: null, rowCount: 0 },
+      { question: 'เสี่ยงสูงภาคเรียนนี้ครับ', answerType: 'result', sql: 'SELECT 1', rowCount: 12 },
+    ]);
 
     await service.query(
       {
         question: envelope.question,
-        history: [
-          { question: 'เด็กเสี่ยงมีเท่าไหร่', answerType: 'clarification', sql: null, rowCount: 0 },
-          {
-            question: 'เสี่ยงสูงภาคเรียนนี้ครับ',
-            answerType: 'result',
-            sql: 'SELECT 1',
-            rowCount: 12,
-          },
-        ],
+        conversationId: 'c1',
+        history: [{ question: 'client lies', answerType: 'result', sql: 'DROP', rowCount: 1 }],
       },
       actor,
     );
 
+    expect(conversations.historyFor).toHaveBeenCalledWith(actor.id, 'c1');
     expect(fetchMock).toHaveBeenCalledWith(
       'http://python.test/api/query',
       expect.objectContaining({
@@ -146,6 +159,70 @@ describe('NlQueryService', () => {
         }),
       }),
     );
+    expect(conversations.appendTurn).toHaveBeenCalledWith(
+      actor.id,
+      'c1',
+      envelope.question,
+      envelope,
+    );
+  });
+
+  it('sends empty history and does not look up a conversation for a first question', async () => {
+    fetchMock.mockResolvedValue(new Response(JSON.stringify(envelope), { status: 200 }));
+
+    await service.query({ question: envelope.question }, actor);
+
+    expect(conversations.historyFor).not.toHaveBeenCalled();
+    expect(conversations.appendTurn).toHaveBeenCalledWith(
+      actor.id,
+      undefined,
+      envelope.question,
+      envelope,
+    );
+  });
+
+  it("404s before auditing or calling Python when the conversation is not the caller's", async () => {
+    conversations.historyFor.mockRejectedValue(new NotFoundException());
+
+    await expect(
+      service.query({ question: envelope.question, conversationId: 'c1' }, actor),
+    ).rejects.toBeInstanceOf(NotFoundException);
+    expect(log.begin).not.toHaveBeenCalled();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('still returns the envelope when saving the turn fails', async () => {
+    fetchMock.mockResolvedValue(new Response(JSON.stringify(envelope), { status: 200 }));
+    conversations.appendTurn.mockRejectedValue(new Error('db down'));
+
+    await expect(
+      service.query({ question: envelope.question, conversationId: 'c1' }, actor),
+    ).resolves.toEqual({ ...envelope, conversation_id: 'c1' });
+    expect(log.complete).toHaveBeenCalledWith(
+      '41',
+      expect.objectContaining({ conversationId: 'c1' }),
+    );
+  });
+
+  it('returns a null conversation_id when a first question could not be saved', async () => {
+    fetchMock.mockResolvedValue(new Response(JSON.stringify(envelope), { status: 200 }));
+    conversations.appendTurn.mockRejectedValue(new Error('db down'));
+
+    await expect(service.query({ question: envelope.question }, actor)).resolves.toEqual({
+      ...envelope,
+      conversation_id: null,
+    });
+  });
+
+  it('records the conversation on the audit row', async () => {
+    fetchMock.mockResolvedValue(new Response(JSON.stringify(envelope), { status: 200 }));
+
+    await service.query({ question: envelope.question }, actor);
+
+    expect(log.complete).toHaveBeenCalledWith(
+      '41',
+      expect.objectContaining({ conversationId: 'c-new' }),
+    );
   });
 
   it('forwards an HTTP 200 business error without turning it into a gateway error', async () => {
@@ -160,9 +237,10 @@ describe('NlQueryService', () => {
     };
     fetchMock.mockResolvedValue(new Response(JSON.stringify(businessError), { status: 200 }));
 
-    await expect(service.query({ question: businessError.question }, actor)).resolves.toEqual(
-      businessError,
-    );
+    await expect(service.query({ question: businessError.question }, actor)).resolves.toEqual({
+      ...businessError,
+      conversation_id: 'c-new',
+    });
     expect(log.complete).toHaveBeenCalledWith(
       '41',
       expect.objectContaining({ status: 'error', errorCode: 'EXEC_FAILED' }),
@@ -185,9 +263,10 @@ describe('NlQueryService', () => {
     };
     fetchMock.mockResolvedValue(new Response(JSON.stringify(emptyResult), { status: 200 }));
 
-    await expect(service.query({ question: emptyResult.question }, actor)).resolves.toEqual(
-      emptyResult,
-    );
+    await expect(service.query({ question: emptyResult.question }, actor)).resolves.toEqual({
+      ...emptyResult,
+      conversation_id: 'c-new',
+    });
   });
 
   it('fails closed without calling Python when the audit anchor cannot be created', async () => {
@@ -207,6 +286,7 @@ describe('NlQueryService', () => {
     );
     expect(log.fail).toHaveBeenCalledWith('41', 'Error: upstream 503');
     expect(log.complete).not.toHaveBeenCalled();
+    expect(conversations.appendTurn).not.toHaveBeenCalled();
   });
 
   it('aborts a timed-out upstream request and returns 502', async () => {
@@ -231,7 +311,10 @@ describe('NlQueryService', () => {
     fetchMock.mockResolvedValue(new Response(JSON.stringify(envelope), { status: 200 }));
     log.complete.mockRejectedValue(new Error('update failed'));
 
-    await expect(service.query({ question: envelope.question }, actor)).resolves.toEqual(envelope);
+    await expect(service.query({ question: envelope.question }, actor)).resolves.toEqual({
+      ...envelope,
+      conversation_id: 'c-new',
+    });
   });
 
   it('caches a successful schema response for five minutes', async () => {

@@ -14,6 +14,9 @@ export class NlQueryLog {
   @Column({ name: 'data_scope', type: 'jsonb', nullable: true })
   dataScope!: DataScope | null;
 
+  @Column({ name: 'conversation_id', type: 'uuid', nullable: true })
+  conversationId!: string | null;
+
   @Column({ name: 'question', type: 'text' })
   question!: string;
 

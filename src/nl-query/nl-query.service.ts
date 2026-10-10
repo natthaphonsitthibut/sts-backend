@@ -8,7 +8,13 @@ import {
 import type { ConfigType } from '@nestjs/config';
 import type { AuthenticatedRequestUser } from '../auth';
 import { nlQueryConfig } from '../config/nl-query.config';
-import type { NlQueryDto, QueryEnvelope, SchemaResponse } from './dto/nl-query.dto';
+import type {
+  NlQueryDto,
+  NlQueryResponse,
+  QueryEnvelope,
+  SchemaResponse,
+} from './dto/nl-query.dto';
+import { NlConversationService } from './nl-conversation.service';
 import { NlQueryLogService } from './nl-query-log.service';
 
 const SCHEMA_CACHE_TTL_MS = 5 * 60 * 1000;
@@ -22,10 +28,15 @@ export class NlQueryService {
     @Inject(nlQueryConfig.KEY)
     private readonly config: ConfigType<typeof nlQueryConfig>,
     private readonly log: NlQueryLogService,
+    private readonly conversations: NlConversationService,
   ) {}
 
-  async query(dto: NlQueryDto, user: AuthenticatedRequestUser): Promise<QueryEnvelope> {
+  async query(dto: NlQueryDto, user: AuthenticatedRequestUser): Promise<NlQueryResponse> {
     const startedAt = Date.now();
+    // Ownership is checked (404) before anything is audited or sent upstream.
+    const history = dto.conversationId
+      ? await this.conversations.historyFor(user.id, dto.conversationId)
+      : [];
     let logId: string;
 
     try {
@@ -48,11 +59,11 @@ export class NlQueryService {
         body: JSON.stringify({
           question: dto.question,
           preferred_chart_type: dto.preferredChartType ?? null,
-          history: (dto.history ?? []).map((turn) => ({
+          history: history.map((turn) => ({
             question: turn.question,
             answer_type: turn.answerType,
-            sql: turn.sql ?? null,
-            row_count: turn.rowCount ?? null,
+            sql: turn.sql,
+            row_count: turn.rowCount,
           })),
         }),
       });
@@ -63,6 +74,18 @@ export class NlQueryService {
         this.logError(`nl_query_log.fail failed (logId=${logId})`, logError);
       }
       throw new BadGatewayException('บริการวิเคราะห์ข้อมูลไม่พร้อมใช้งาน');
+    }
+
+    let conversationId: string | null = dto.conversationId ?? null;
+    try {
+      conversationId = await this.conversations.appendTurn(
+        user.id,
+        dto.conversationId,
+        dto.question,
+        envelope,
+      );
+    } catch (error) {
+      this.logError(`nl_conversation.appendTurn failed (logId=${logId})`, error);
     }
 
     try {
@@ -76,12 +99,13 @@ export class NlQueryService {
         rowCount: envelope.row_count,
         retryCount: envelope.retry_count,
         elapsedMs: Date.now() - startedAt,
+        conversationId,
       });
     } catch (error) {
       this.logError(`nl_query_log.complete failed (logId=${logId})`, error);
     }
 
-    return envelope;
+    return { ...envelope, conversation_id: conversationId };
   }
 
   async schema(): Promise<SchemaResponse> {

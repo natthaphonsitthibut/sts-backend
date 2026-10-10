@@ -43,6 +43,7 @@ describe('NlQueryLogService', () => {
       rowCount: 1,
       retryCount: 0,
       elapsedMs: 50,
+      conversationId: 'c1',
     });
 
     expect(repository.update).toHaveBeenCalledWith(
@@ -51,6 +52,7 @@ describe('NlQueryLogService', () => {
         requestId: 'request-1',
         status: 'ok',
         answerType: 'result',
+        conversationId: 'c1',
         stepsUsed: 1,
         completedAt: expect.any(Date) as Date,
       }),
@@ -68,11 +70,12 @@ describe('NlQueryLogService', () => {
       rowCount: 1,
       retryCount: 0,
       elapsedMs: 50,
+      conversationId: null,
     });
 
     expect(repository.update).toHaveBeenCalledWith(
       '41',
-      expect.objectContaining({ answerType: null, stepsUsed: null }),
+      expect.objectContaining({ answerType: null, stepsUsed: null, conversationId: null }),
     );
   });
 
