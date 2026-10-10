@@ -1,11 +1,14 @@
-import { Type } from 'class-transformer';
+import { Transform, Type } from 'class-transformer';
 import {
   ArrayMaxSize,
   IsArray,
   IsIn,
   IsInt,
+  IsISO8601,
   IsOptional,
   IsString,
+  IsUUID,
+  Max,
   MaxLength,
   Min,
   MinLength,
@@ -150,4 +153,31 @@ export class NlQueryDto {
   @ValidateNested({ each: true })
   @Type(() => PriorTurnDto)
   history?: PriorTurnDto[];
+
+  @IsOptional()
+  @IsUUID()
+  conversationId?: string;
 }
+
+export class RenameConversationDto {
+  @Transform(({ value }: { value: unknown }) => (typeof value === 'string' ? value.trim() : value))
+  @IsString()
+  @MinLength(1)
+  @MaxLength(120)
+  title!: string;
+}
+
+export class ListConversationsQueryDto {
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @Max(50)
+  limit?: number;
+
+  @IsOptional()
+  @IsISO8601()
+  before?: string;
+}
+
+export type NlQueryResponse = QueryEnvelope & { conversation_id: string | null };
