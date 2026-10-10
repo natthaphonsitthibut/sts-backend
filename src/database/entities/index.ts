@@ -29,6 +29,8 @@ import {
 import { RoleEntity, UserEntity } from './user.entities';
 import { AraIdIdentityRecordEntity, AraIdProfileEntity } from './araid.entities';
 import { NlQueryLog } from '../../nl-query/entities/nl-query-log.entity';
+import { NlConversation } from '../../nl-query/entities/nl-conversation.entity';
+import { NlConversationTurn } from '../../nl-query/entities/nl-conversation-turn.entity';
 
 export const DATABASE_ENTITIES = [
   SchoolEntity,
@@ -52,6 +54,8 @@ export const DATABASE_ENTITIES = [
   AraIdProfileEntity,
   AraIdIdentityRecordEntity,
   NlQueryLog,
+  NlConversation,
+  NlConversationTurn,
   RiskFactorEntity,
   AssistanceMeasureEntity,
   EducationalAreaEntity,
@@ -94,4 +98,6 @@ export {
   AraIdProfileEntity,
   AraIdIdentityRecordEntity,
   NlQueryLog,
+  NlConversation,
+  NlConversationTurn,
 };
