@@ -23,6 +23,22 @@ describe('CreateSubjectDto', () => {
     });
   });
 
+  it.each(['ไทย101', 'จีน101', 'อังกฤษ101', 'น้ำ101', 'กุ101', 'กู101', 'กั101', 'ก์101'])(
+    'accepts Thai vowels and marks in %s',
+    async (code) => {
+      await expect(validate({ code, nameTh: 'วิชาทดสอบ' })).resolves.toMatchObject({ code });
+    },
+  );
+
+  it.each(['ก 101', 'ก/101', 'กฯ101', 'ก฿101', 'กๆ101', 'ก๏101', 'ก๚101'])(
+    'rejects punctuation or spaces in %s',
+    async (code) => {
+      await expect(validate({ code, nameTh: 'วิชาทดสอบ' })).rejects.toBeInstanceOf(
+        BadRequestException,
+      );
+    },
+  );
+
   it.each([
     [{ code: 'M21/01', nameTh: 'คณิตศาสตร์' }, 'รหัสวิชาใช้ได้เฉพาะตัวอักษรไทย อังกฤษ และตัวเลข'],
     [{ code: 'A'.repeat(21), nameTh: 'คณิตศาสตร์' }, 'รหัสวิชาต้องไม่เกิน 20 ตัวอักษร'],
