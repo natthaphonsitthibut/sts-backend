@@ -77,10 +77,10 @@ export class FollowUpSummaryQueryDto {
 
 /** Where a referral stands in the register; see `REFERRAL_STAGE_SQL`. */
 export const REFERRAL_STAGE_CODES = [
+  'AWAITING_REFERRAL',
   'AWAITING_REFERRAL_OUTCOME',
   'PENDING_REVIEW',
-  'COMPLETED',
-  'NOT_SUCCEEDED',
+  'RESOLVED',
 ] as const;
 export type ReferralStageCode = (typeof REFERRAL_STAGE_CODES)[number];
 

@@ -303,16 +303,21 @@ export type RoundLineClaimResult =
   | { kind: 'unavailable' };
 
 /**
- * Where a referral stands in ส่งต่อ → รอผล → พิจารณา → ผล, the way the
+ * Where a referral stands in รอส่งต่อ → รอผล → พิจารณา → ผล, the way the
  * กลุ่มเสี่ยง tab reads a case (owner, 2026-10-08):
+ *   - `AWAITING_REFERRAL` its case sits in รอส่งต่อ and nothing was sent yet
+ *     (the register's case-only row, see `REFERRAL_REGISTER_SOURCE_SQL`)
  *   - `AWAITING_REFERRAL_OUTCOME` its case sits in รอผลการส่งต่อ, no result yet
  *   - `PENDING_REVIEW` the result is in and the case is back in รอพิจารณา
  *     because of it — the newest referral, nobody sent out on the case since
- *   - otherwise its own status: `COMPLETED` / `NOT_SUCCEEDED` once the reviewer
- *     has moved on
+ *   - `RESOLVED` the reviewer has moved on from its result. Whether that
+ *     result was สำเร็จ or ยังไม่สำเร็จ stays in `status_code`: the stage reads
+ *     เสร็จสิ้น either way, as the step does on the case page (owner, 2026-10-11)
+ *   - otherwise its own status (a cancelled referral)
  * Uses the `referral` and `c` aliases of the queries below.
  */
 const REFERRAL_STAGE_SQL = `CASE
+  WHEN referral.id IS NULL THEN 'AWAITING_REFERRAL'
   WHEN c.status = 'AWAITING_REFERRAL_OUTCOME'
     AND referral.status_code IN ('REFERRED', 'ACCEPTED')
     THEN 'AWAITING_REFERRAL_OUTCOME'
@@ -330,8 +335,44 @@ const REFERRAL_STAGE_SQL = `CASE
         AND later_task.created_at > referral.referred_at
     )
     THEN 'PENDING_REVIEW'
+  WHEN referral.status_code IN ('COMPLETED', 'NOT_SUCCEEDED') THEN 'RESOLVED'
   ELSE referral.status_code
 END`;
+
+/**
+ * What งานส่งต่อ lists: every referral, plus one row for a case waiting in
+ * รอส่งต่อ — chosen for referral, no agency picked yet — so the whole referral
+ * flow reads on its own tab and none of it on กลุ่มเสี่ยง (owner, 2026-10-11).
+ */
+const REFERRAL_REGISTER_SOURCE_SQL = `(
+  SELECT sent.id, sent.case_id, sent.status_code, sent.referred_at, sent.referral_agency_id
+  FROM case_referrals sent
+  UNION ALL
+  SELECT NULL, pending_case.id, 'AWAITING_REFERRAL', pending_case.updated_at, NULL
+  FROM cases pending_case
+  WHERE pending_case.status = 'AWAITING_REFERRAL' AND pending_case.deleted_at IS NULL
+) referral`;
+
+/**
+ * A case whose current step belongs to the referral flow: waiting to be sent,
+ * waiting on the agency, or resting on a referral nobody followed up with a new
+ * assignment. Those students are listed under งานส่งต่อ, not กลุ่มเสี่ยง. Uses
+ * the `c` alias.
+ */
+const CASE_IN_REFERRAL_FLOW_SQL = `(
+  c.status IN ('AWAITING_REFERRAL', 'AWAITING_REFERRAL_OUTCOME')
+  OR EXISTS (
+    SELECT 1 FROM case_referrals flow_referral
+    WHERE flow_referral.case_id = c.id
+      AND flow_referral.status_code <> 'CANCELLED'
+      AND NOT EXISTS (
+        SELECT 1 FROM tasks flow_task
+        WHERE flow_task.case_id = c.id
+          AND flow_task.deleted_at IS NULL
+          AND flow_task.created_at > flow_referral.referred_at
+      )
+  )
+)`;
 
 @Injectable()
 export class TaskRepository {
@@ -2864,12 +2905,13 @@ export class TaskRepository {
     }
 
     conditions.push('s.deleted_at IS NULL');
-    // A risk row exists only once a case was opened. A watchlist row exists
-    // only after a teacher left a comment for that enrollment's classroom.
-    // Keep that product distinction in SQL before pagination and counting.
+    // A risk row exists only once a case was opened, and leaves for งานส่งต่อ
+    // while that case is in the referral flow. A watchlist row exists only
+    // after a teacher left a comment for that enrollment's classroom. Keep that
+    // product distinction in SQL before pagination and counting.
     const studentGroupConditions =
       filters.studentGroup === 'RISK'
-        ? [...conditions, 'latest_case.id IS NOT NULL']
+        ? [...conditions, 'latest_case.id IS NOT NULL', 'NOT latest_case.in_referral_flow']
         : filters.studentGroup === 'WATCHLIST'
           ? [...conditions, 'latest_comment.id IS NOT NULL']
           : conditions;
@@ -2935,7 +2977,8 @@ export class TaskRepository {
           ${CASE_COMMENT_COMPLETION_BASELINE_SQL}
         ) comment_baseline ON TRUE
         LEFT JOIN LATERAL (
-          SELECT c.id, c.status, c.updated_at, c.reason_flagged
+          SELECT c.id, c.status, c.updated_at, c.reason_flagged,
+            ${CASE_IN_REFERRAL_FLOW_SQL} AS in_referral_flow
           FROM cases c
           WHERE c.student_uuid = s.student_uuid
             AND c.deleted_at IS NULL
@@ -4280,9 +4323,9 @@ export class TaskRepository {
               WHERE recorded.case_referral_id = referral.id
             )
         )::int AS overdue_count
-      FROM case_referrals referral
+      FROM ${REFERRAL_REGISTER_SOURCE_SQL}
       JOIN cases c ON c.id = referral.case_id AND c.deleted_at IS NULL
-      JOIN referral_agencies agency ON agency.id = referral.referral_agency_id
+      LEFT JOIN referral_agencies agency ON agency.id = referral.referral_agency_id
       LEFT JOIN LATERAL (
         SELECT link.status_code, link.expires_at, link.cancelled_at
         FROM case_referral_links link
@@ -4351,9 +4394,8 @@ export class TaskRepository {
       whereSql += ` AND c.student_name ILIKE $${filterParams.length} ESCAPE '\\'`;
     }
     const fromSql = `
-        FROM case_referrals referral
+        FROM ${REFERRAL_REGISTER_SOURCE_SQL}
         JOIN cases c ON c.id = referral.case_id AND c.deleted_at IS NULL
-        JOIN referral_agencies agency ON agency.id = referral.referral_agency_id
         WHERE 1=1${whereSql}`;
     const rowParams = [...filterParams, limit, offset];
     const [rows, count] = await Promise.all([
@@ -4371,14 +4413,14 @@ export class TaskRepository {
           latest_link.status_code AS link_status_code, latest_link.expires_at AS link_expires_at,
           (latest_link.access_code_encrypted IS NOT NULL) AS access_code_available,
           latest_link.token_encrypted AS link_token_encrypted
-        FROM case_referrals referral
+        FROM ${REFERRAL_REGISTER_SOURCE_SQL}
         JOIN cases c ON c.id = referral.case_id AND c.deleted_at IS NULL
         LEFT JOIN schools school ON school.id = c.school_id
         LEFT JOIN student_term student ON student.student_uuid = c.student_uuid
         LEFT JOIN grade_levels grade ON grade.id = student."GradeLevelID_Onec"
         LEFT JOIN student_person person ON person.person_uuid = student.person_uuid
-        JOIN referral_agencies agency ON agency.id = referral.referral_agency_id
-        JOIN referral_agency_kinds kind ON kind.code = agency.agency_kind_code
+        LEFT JOIN referral_agencies agency ON agency.id = referral.referral_agency_id
+        LEFT JOIN referral_agency_kinds kind ON kind.code = agency.agency_kind_code
         LEFT JOIN LATERAL (
           SELECT link.status_code, link.expires_at, link.token_encrypted,
             link.access_code_encrypted

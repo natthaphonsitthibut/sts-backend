@@ -258,8 +258,12 @@ async function main() {
     const registerText = await chrome.evaluate(
       `document.querySelector('[data-referral-register]').innerText`,
     );
-    for (const label of ['รอผลการส่งต่อ', 'รอพิจารณา', 'ส่งต่อสำเร็จ', 'ยังไม่สำเร็จ']) {
+    for (const label of ['รอส่งต่อ', 'รอผลการส่งต่อ', 'รอพิจารณา', 'เสร็จสิ้น', 'ผลการส่งต่อ']) {
       assert(registerText.includes(label), `register card ${label} is missing`);
+    }
+    if (typeof chrome.call === 'function') {
+      const shot = await chrome.call('Page.captureScreenshot', { format: 'png' });
+      require('fs').writeFileSync('/tmp/sts-referral-register.png', Buffer.from((shot.result ?? shot).data, 'base64'));
     }
     for (const retired of ['หน่วยงานรับแล้ว', 'หน่วยงานปฏิเสธ']) {
       assert(!registerText.includes(retired), `register still shows ${retired}`);

@@ -219,7 +219,7 @@ async function main() {
     const metrics=[];
     for(const tab of ['risk','watchlist','referrals']){
       await send('Page.navigate',{url:`http://127.0.0.1:5174/student-risk-report/${tab}`});
-      await waitFor(()=>evaluate(`(()=>{const values=[...document.querySelectorAll('[data-summary-label] [data-summary-value]')];return location.pathname.endsWith('/${tab}') && values.length>0 && values.every(v=>/คน|เคส/.test(v.textContent)) && Boolean(document.querySelector('input[placeholder="ค้นหาชื่อนักเรียน"]'));})()`),`${tab} summary/search missing or still loading`);
+      await waitFor(()=>evaluate(`(()=>{const values=[...document.querySelectorAll('[data-summary-label] [data-summary-value]')];return location.pathname.endsWith('/${tab}') && values.length>0 && values.every(v=>/คน|เคส|รายการ/.test(v.textContent)) && Boolean(document.querySelector('input[placeholder="ค้นหาชื่อนักเรียน"]'));})()`),`${tab} summary/search missing or still loading`);
       metrics.push(await evaluate(`(()=>{const r=document.querySelector('[data-summary-label]').getBoundingClientRect();return {tab:'${tab}',top:r.top,height:r.height,left:r.left};})()`));
     }
     assert(metrics.every(r=>Math.abs(r.top-metrics[0].top)<2 && Math.abs(r.left-metrics[0].left)<2 && Math.abs(r.height-metrics[0].height)<2),'Summary card placement/height differs: '+JSON.stringify(metrics));

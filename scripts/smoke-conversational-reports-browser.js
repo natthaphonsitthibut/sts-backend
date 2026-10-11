@@ -223,7 +223,7 @@ async function main() {
          SELECT 1 FROM cases current_case
          WHERE current_case.student_uuid = enrollment.student_uuid
            AND current_case.deleted_at IS NULL
-           AND current_case.status IN ('OPEN','IN_PROGRESS','PENDING_REVIEW','STUDENT_NOT_FOUND')
+           AND current_case.status IN ('OPEN','IN_PROGRESS','PENDING_REVIEW','STUDENT_NOT_FOUND','AWAITING_REFERRAL_OUTCOME')
        )
        ORDER BY enrollment.student_uuid LIMIT 1`,
     );
@@ -242,7 +242,7 @@ async function main() {
            SELECT 1 FROM cases current_case
            WHERE current_case.student_uuid = enrollment.student_uuid
              AND current_case.deleted_at IS NULL
-             AND current_case.status IN ('OPEN','IN_PROGRESS','PENDING_REVIEW','STUDENT_NOT_FOUND')
+             AND current_case.status IN ('OPEN','IN_PROGRESS','PENDING_REVIEW','STUDENT_NOT_FOUND','AWAITING_REFERRAL_OUTCOME')
          )
        ORDER BY enrollment."SchoolID_Onec", enrollment.student_uuid LIMIT 1`,
       [enrollment.school_id],
@@ -262,7 +262,7 @@ async function main() {
            SELECT 1 FROM cases current_case
            WHERE current_case.student_uuid = enrollment.student_uuid
              AND current_case.deleted_at IS NULL
-             AND current_case.status IN ('OPEN','IN_PROGRESS','PENDING_REVIEW','STUDENT_NOT_FOUND')
+             AND current_case.status IN ('OPEN','IN_PROGRESS','PENDING_REVIEW','STUDENT_NOT_FOUND','AWAITING_REFERRAL_OUTCOME')
          )
        ORDER BY enrollment."SchoolID_Onec", enrollment.student_uuid LIMIT 1`,
       [[Number(enrollment.school_id), Number(secondScopedEnrollment.school_id)]],
@@ -299,7 +299,7 @@ async function main() {
       [observedStudentUuid, observedDisadvantageCode],
     );
     observedDisadvantageWasPresent = existingDisadvantage.present === true;
-    const permissions = ['home', 'dashboard', 'students'];
+    const permissions = ['home', 'dashboard', 'students', 'case:assign', 'case:review'];
     const [actor] = await dataSource.query(
       `INSERT INTO users (username, password, "FirstName", "LastName", status, permissions,
          role, data_scope, must_change_password, data_origin_code)
@@ -445,20 +445,28 @@ async function main() {
     );
     assert(
       await client.evaluate(
-        `document.querySelector('input[name="visit-outcome"]:checked')?.parentElement?.innerText.includes('พบนักเรียน')
-         && !document.querySelector('input[name="visit-outcome"]:checked')?.parentElement?.innerText.includes('ไม่พบนักเรียน')`,
+        // By value, not label text: innerText is empty while the page is mid-layout.
+        `document.querySelector('input[name="visit-outcome"]:checked')?.value === 'FOUND'`,
       ),
-      'previous unsuccessful outcome leaked into the new round',
+      `previous unsuccessful outcome leaked into the new round: ${await client.evaluate(
+        `JSON.stringify([...document.querySelectorAll('input[name="visit-outcome"]')].map((input) => [input.value, input.checked, input.parentElement?.innerText]))`,
+      )}`,
     );
+    // The form no longer asks who was met (owner, 2026-10-11); only the
+    // channel carries over from the previous round.
     assert(
-      (await client.evaluate(`document.querySelector('#contact-person-selection')?.value`)) ===
-        'บุคคลอื่น',
-      'repeat contact did not map to the explicit other-person choice',
+      await client.evaluate(
+        `!document.querySelector('#contact-person-selection') && !document.querySelector('#contact-person-name')
+         && !document.querySelector('form')?.innerText.includes('ผู้ที่พบ')`,
+      ),
+      'VISIT form still asks who was met',
     );
-    assert(
-      (await client.evaluate(`document.querySelector('#contact-person-name')?.value`)) ===
-        'ผู้ติดต่อจากรอบก่อน',
-      'repeat contact prefill was not hydrated',
+    await waitFor(
+      async () =>
+        (await client.evaluate(
+          `document.getElementById('contact-channel')?.parentElement?.querySelector('select')?.value`,
+        )) === 'PHONE',
+      'repeat contact channel prefill was not hydrated',
     );
     assert(
       !(await client.evaluate(
@@ -467,7 +475,11 @@ async function main() {
       )),
       'old event summary leaked into prefill UI',
     );
-    await setInput(client, '#contact-person-name', 'แก้ไขแล้วในรอบใหม่');
+    // Bring the field to mid-screen first: clickText measures an option right
+    // after scrolling to it, and a panel still following that scroll is missed.
+    await client.evaluate(
+      `document.querySelector('#absence-reason-category')?.scrollIntoView({ block: 'center' })`,
+    );
     await client.evaluate(`document.querySelector('#absence-reason-category')?.click()`);
     await client.clickText(absenceReason.category_label);
     await client.evaluate(`document.querySelector('#absence-reason')?.click()`);
@@ -489,7 +501,7 @@ async function main() {
       return Number(row.count) === 1;
     }, 'VISIT final submit did not write exactly once');
     const [visitSubmission] = await dataSource.query(
-      `SELECT task_execution_outcome_code, contact_person_name,
+      `SELECT task_execution_outcome_code, contact_person_name, contact_channel_code,
               absence_reason_category_code, absence_reason_code,
               cause_detail, photo_paths
        FROM task_submissions WHERE task_link_id=$1`,
@@ -499,7 +511,11 @@ async function main() {
       visitSubmission.task_execution_outcome_code === 'SUCCEEDED',
       'VISIT derived outcome is wrong',
     );
-    assert(visitSubmission.contact_person_name === 'แก้ไขแล้วในรอบใหม่', 'VISIT snapshot is wrong');
+    assert(
+      visitSubmission.contact_person_name === null,
+      'VISIT stored a contact person although the form no longer asks for one',
+    );
+    assert(visitSubmission.contact_channel_code === 'PHONE', 'VISIT contact channel snapshot is wrong');
     assert(
       visitSubmission.absence_reason_category_code === absenceReason.category_code,
       'VISIT absence category was not persisted independently',
@@ -642,7 +658,8 @@ async function main() {
     );
     await setInput(client, '#case-note', 'เสนอทุนจากผลการติดตาม');
     await client.evaluate(`document.querySelector('#proposed-assistance-measures')?.click()`);
-    await client.clickText(assistanceMeasure.label_th, `document.querySelector('[role="dialog"]')`);
+    // The option panel is portalled to <body>, outside the dialog subtree.
+    await client.clickText(assistanceMeasure.label_th);
     await client.evaluate(
       `document.querySelector('#case-note')?.dispatchEvent(
         new MouseEvent('mousedown', { bubbles: true }))`,
@@ -720,12 +737,17 @@ async function main() {
       `assistance detail and upload box differ in height: ${JSON.stringify(heights)}`,
     );
     await screenshot(client, 'assist-form');
-    await client.evaluate(
-      `document.querySelector('input[name="assistance-outcome"][value="NOT_SUCCEEDED"]')?.click()`,
-    );
+    // A click that lands before the form is interactive is lost, so repeat it
+    // until the detail field it reveals is there.
     await waitFor(
       async () =>
-        await client.evaluate(`Boolean(document.querySelector('#execution-outcome-detail'))`),
+        await client.evaluate(
+          `(() => {
+            if (document.querySelector('#execution-outcome-detail')) return true;
+            document.querySelector('input[name="assistance-outcome"][value="NOT_SUCCEEDED"]')?.click();
+            return false;
+          })()`,
+        ),
       'ASSIST failure detail missing',
     );
     await setInput(client, '#execution-outcome-detail', 'ผู้ปกครองยังไม่พร้อม');
@@ -756,23 +778,8 @@ async function main() {
       'repeat ASSIST action was not offered after the assistance round',
     );
 
-    // Seed one referral for aggregate and drill-down browser proof.
-    const reviewId = randomUUID();
-    await dataSource.query(
-      `INSERT INTO case_reviews (id, case_id, review_action, review_note, reviewed_by, source_actor_user_id)
-       VALUES ($1,$2,'REFER_AGENCY','smoke referral','Browser',$3)`,
-      [reviewId, caseId, actorId],
-    );
-    const [agency] = await dataSource.query(
-      `SELECT id FROM referral_agencies WHERE is_active=TRUE ORDER BY id LIMIT 1`,
-    );
-    assert(agency, 'no active referral agency for aggregate smoke');
-    await dataSource.query(
-      `INSERT INTO case_referrals (case_review_id, case_id, referral_agency_id, referred_by_user_id)
-       VALUES ($1,$2,$3,$4)`,
-      [reviewId, caseId, agency.id, actorId],
-    );
-    // The risk tab lists students of every school in scope when the header
+    // Checked before the referral below: a referred student leaves กลุ่มเสี่ยง
+    // for งานส่งต่อ. The risk tab lists students of every school in scope when the header
     // filter names none (the report's school filter moved to the header).
     await client.call('Page.navigate', { url: `${FRONTEND_URL}/student-risk-report/risk` });
     await waitFor(
@@ -799,6 +806,22 @@ async function main() {
       'all-schools risk report rendered a student outside the actor scope',
     );
 
+    // Seed one referral for aggregate and drill-down browser proof.
+    const reviewId = randomUUID();
+    await dataSource.query(
+      `INSERT INTO case_reviews (id, case_id, review_action, review_note, reviewed_by, source_actor_user_id)
+       VALUES ($1,$2,'REFER_AGENCY','smoke referral','Browser',$3)`,
+      [reviewId, caseId, actorId],
+    );
+    const [agency] = await dataSource.query(
+      `SELECT id FROM referral_agencies WHERE is_active=TRUE ORDER BY id LIMIT 1`,
+    );
+    assert(agency, 'no active referral agency for aggregate smoke');
+    await dataSource.query(
+      `INSERT INTO case_referrals (case_review_id, case_id, referral_agency_id, referred_by_user_id)
+       VALUES ($1,$2,$3,$4)`,
+      [reviewId, caseId, agency.id, actorId],
+    );
     // The ส่งต่อ tab: counts plus the scoped drill-down of referred students.
     await client.call('Page.navigate', { url: `${FRONTEND_URL}/student-risk-report/referrals` });
     await waitFor(
@@ -810,33 +833,42 @@ async function main() {
       'authorized referral drill-down did not render scoped student row',
     );
 
-    // Executive sees aggregate but never receives or renders PII drill-down.
+    // An executive reads the report like any other role — the full register,
+    // fenced to their own scope (owner, 2026-09-29) — and nothing outside it.
+    await client.call('Page.navigate', { url: `${FRONTEND_URL}/home` });
     await setBrowserSession(client, setSessionCookie(sessionCookieService, executiveId), {
       id: executiveId,
       username: EXECUTIVE_USERNAME,
       roles: ['EXECUTIVE'],
       permissions: ['dashboard'],
     });
-    await client.call('Page.navigate', { url: `${FRONTEND_URL}/student-risk-report/risk` });
+    await client.call('Page.navigate', { url: `${FRONTEND_URL}/student-risk-report/referrals` });
     await waitFor(
       async () =>
-        await client.evaluate(`Boolean(document.querySelector('[data-referral-register]'))`),
-      'executive aggregate-only dashboard did not render',
+        await client.evaluate(
+          `Boolean(document.querySelector('[data-referral-register]'))
+            && document.body.innerText.includes(${JSON.stringify(enrollment.student_name)})`,
+        ),
+      async () =>
+        `executive referral register did not render the in-scope student: ${await client.evaluate(
+          `JSON.stringify({ path: location.pathname, text: document.body.innerText.slice(0, 600) })`,
+        )}`,
     );
+    const executiveRows = JSON.parse(
+      await client.evaluate(
+        `fetch(${JSON.stringify(`${BACKEND_URL}/api/dashboard/referrals?limit=100`)}, { credentials: 'include' })
+          .then((response) => response.json())
+          .then((body) => JSON.stringify(body.data.map((row) => row.schoolId)))`,
+      ),
+    );
+    assert(executiveRows.length > 0, 'executive referral drill-down returned no rows');
     assert(
-      !(await client.evaluate(
-        `document.body.innerText.includes(${JSON.stringify(enrollment.student_name)})`,
-      )),
-      'executive UI rendered a referred student by name',
+      executiveRows.every((schoolId) => Number(schoolId) === Number(enrollment.school_id)),
+      `executive referral drill-down left their school scope: ${[...new Set(executiveRows)].join(', ')}`,
     );
-    const drilldownStatus = await client.evaluate(
-      `fetch(${JSON.stringify(`${BACKEND_URL}/api/dashboard/referrals`)}, { credentials: 'include' })
-        .then((response) => response.status)`,
-    );
-    assert(drilldownStatus === 403, `executive referral drill-down returned ${drilldownStatus}`);
 
     console.log(
-      'conversational reports browser smoke passed (development Google email allow/deny, VISIT/ASSIST one-page forms, contact choice, split absence type/reason, care provenance, reviewer completeness, ASSIST proposal/prefill, single submit, repeat ASSIST, all-schools scoped report, aggregate/drill-down scope)',
+      'conversational reports browser smoke passed (development Google email allow/deny, VISIT/ASSIST one-page forms, contact channel prefill, split absence type/reason, care provenance, reviewer completeness, ASSIST proposal/prefill, single submit, repeat ASSIST, all-schools scoped report, executive scoped register)',
     );
   } finally {
     if (chrome) chrome.close();
