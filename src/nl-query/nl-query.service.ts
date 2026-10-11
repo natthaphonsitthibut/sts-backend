@@ -64,6 +64,7 @@ export class NlQueryService {
             answer_type: turn.answerType,
             sql: turn.sql,
             row_count: turn.rowCount,
+            digest: turn.digest,
           })),
         }),
       });

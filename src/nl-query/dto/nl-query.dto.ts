@@ -44,6 +44,13 @@ export interface QueryColumn {
   semantic_type: SemanticType;
 }
 
+/**
+ * Deterministic description of a Result turn (tables, populations, filters,
+ * grouping, top rows) built by the Python service. Opaque to the backend: store
+ * it with the envelope and replay it in `history` (ADR 0010 / #34).
+ */
+export type TurnDigest = Record<string, unknown>;
+
 export interface QueryEnvelope {
   status: 'ok' | 'error';
   request_id: string;
@@ -51,6 +58,7 @@ export interface QueryEnvelope {
   answer_type?: AnswerType;
   message: string | null;
   steps_used?: number;
+  turn_digest?: TurnDigest | null;
   sql: string | null;
   columns: QueryColumn[];
   rows: Record<string, unknown>[] | null;

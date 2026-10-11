@@ -119,6 +119,21 @@ describe('NlQueryService', () => {
     );
   });
 
+  it('forwards a stored turn digest to the Python service as history[].digest', async () => {
+    fetchMock.mockResolvedValue(new Response(JSON.stringify(envelope), { status: 200 }));
+    const digest = { tables: ['student_risk_profiles'], row_count: 10 };
+    conversations.historyFor.mockResolvedValue([
+      { question: 'จังหวัดเสี่ยงสุด', answerType: 'result', sql: 'SELECT 1', rowCount: 10, digest },
+    ]);
+
+    await service.query({ question: envelope.question, conversationId: 'c1' }, actor);
+
+    const sent = JSON.parse((fetchMock.mock.calls[0][1] as { body: string }).body) as {
+      history: { digest: unknown }[];
+    };
+    expect(sent.history[0].digest).toEqual(digest);
+  });
+
   it('builds upstream history from the stored conversation, not from the client', async () => {
     fetchMock.mockResolvedValue(new Response(JSON.stringify(envelope), { status: 200 }));
     conversations.historyFor.mockResolvedValue([

@@ -1,7 +1,7 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { DataSource, IsNull, LessThan, type Repository } from 'typeorm';
-import type { AnswerType, QueryEnvelope } from './dto/nl-query.dto';
+import type { AnswerType, QueryEnvelope, TurnDigest } from './dto/nl-query.dto';
 import { NlConversation } from './entities/nl-conversation.entity';
 import { NlConversationTurn } from './entities/nl-conversation-turn.entity';
 
@@ -13,6 +13,8 @@ export interface PriorTurnPayload {
   answerType: AnswerType;
   sql: string | null;
   rowCount: number | null;
+  /** Present only for result turns whose envelope carried a digest. */
+  digest?: TurnDigest;
 }
 
 export interface ConversationSummary {
@@ -78,6 +80,9 @@ export class NlConversationService {
         answerType,
         sql: answerType === 'result' ? envelope.sql : null,
         rowCount: envelope.row_count,
+        ...(answerType === 'result' && envelope.turn_digest
+          ? { digest: envelope.turn_digest }
+          : {}),
       }));
   }
 

@@ -88,6 +88,30 @@ describe('NlConversationService', () => {
       ]);
     });
 
+    it('replays turn_digest for result turns only, and omits the key when absent', async () => {
+      conversations.findOne.mockResolvedValue({ id: 'c1' } as never);
+      const digest = { tables: ['case_risk_signals'], row_count: 3 };
+      turns.find.mockResolvedValue([
+        turnRow(3, envelope({ answer_type: 'result', sql: 'SELECT 3', turn_digest: digest })),
+        turnRow(2, envelope({ answer_type: 'result', sql: 'SELECT 2' })),
+        turnRow(
+          1,
+          envelope({
+            answer_type: 'clarification',
+            sql: null,
+            rows: null,
+            row_count: 0,
+            turn_digest: digest,
+          }),
+        ),
+      ] as never);
+
+      const history = await service.historyFor(7, 'c1');
+      expect(history[0]).not.toHaveProperty('digest'); // clarification never carries one
+      expect(history[1]).not.toHaveProperty('digest'); // old envelope without a digest
+      expect(history[2].digest).toEqual(digest);
+    });
+
     it('skips error envelopes and result turns without sql (upstream would reject them)', async () => {
       conversations.findOne.mockResolvedValue({ id: 'c1' } as never);
       turns.find.mockResolvedValue([
