@@ -1646,6 +1646,7 @@ export const DATA_RECORD_ORIGINS_SQL = `
 export function studentCurrentEnrollmentViewSql(
   activeStatusCategory: 'ACTIVE' | 'STUDYING',
   unresolvedStatusCategory: 'UNMAPPED' | 'UNMATCHED',
+  excludeDraftTerms = false,
 ): string {
   return `
   CREATE OR REPLACE VIEW student_current_enrollment_resolution
@@ -1665,6 +1666,13 @@ export function studentCurrentEnrollmentViewSql(
                  enrollment."Semester_Onec" DESC NULLS LAST
       ) AS term_rank
     FROM student_term enrollment
+    ${
+      excludeDraftTerms
+        ? `LEFT JOIN school_terms enrollment_term
+      ON enrollment_term.id = enrollment.school_term_id
+     AND enrollment_term.school_id = enrollment."SchoolID_Onec"`
+        : ''
+    }
     LEFT JOIN student_status status
       ON status.code = COALESCE(
         enrollment.student_status_code,
@@ -1673,6 +1681,7 @@ export function studentCurrentEnrollmentViewSql(
      AND status.deleted_at IS NULL
     WHERE enrollment.person_uuid IS NOT NULL
       AND enrollment.deleted_at IS NULL
+      ${excludeDraftTerms ? "AND enrollment_term.status IS DISTINCT FROM 'DRAFT'" : ''}
   ),
   latest_term AS (
     SELECT *
@@ -1741,6 +1750,7 @@ export function studentCurrentEnrollmentViewSql(
 export const STUDENT_CURRENT_ENROLLMENT_VIEW_SQL = studentCurrentEnrollmentViewSql(
   'STUDYING',
   'UNMATCHED',
+  true,
 );
 
 export const NOTIFICATION_TABLES_SQL = `
