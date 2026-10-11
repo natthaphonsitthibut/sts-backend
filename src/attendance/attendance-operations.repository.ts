@@ -167,6 +167,81 @@ export class AttendanceOperationsRepository {
     return result.rows[0]?.id ?? null;
   }
 
+  async findTermWriteConflict(
+    termId: number | null,
+    input: SchoolTermInput,
+    executor: QueryExecutor,
+  ): Promise<string | null> {
+    const result = await executor.query<{ conflict: string }>(
+      `
+        SELECT CASE
+          WHEN EXISTS (
+            SELECT 1 FROM school_terms
+            WHERE school_id = $2 AND academic_year = $3 AND semester = $4
+              AND ($1::bigint IS NULL OR id <> $1)
+          ) THEN 'TERM_IDENTITY'
+          WHEN $5 = 'ACTIVE' AND EXISTS (
+            SELECT 1 FROM school_terms
+            WHERE school_id = $2 AND status = 'ACTIVE' AND deleted_at IS NULL
+              AND ($1::bigint IS NULL OR id <> $1)
+          ) THEN 'ACTIVE_TERM'
+          WHEN EXISTS (
+            SELECT 1 FROM student_term linked
+            JOIN student_term other
+              ON other.person_uuid = linked.person_uuid
+             AND other."SchoolID_Onec" = $2
+             AND other."AcademicYear_Onec" = $3 AND other."Semester_Onec" = $4
+             AND other.student_uuid <> linked.student_uuid
+            WHERE linked.school_term_id = $1 AND linked."SchoolID_Onec" = $2
+          ) THEN 'ENROLLMENT_IDENTITY'
+          WHEN EXISTS (
+            SELECT 1 FROM student_term linked
+            JOIN student_term other
+              ON other.student_number = linked.student_number
+             AND other."SchoolID_Onec" = $2
+             AND other."AcademicYear_Onec" = $3 AND other."Semester_Onec" = $4
+             AND other.student_uuid <> linked.student_uuid
+             AND other.deleted_at IS NULL
+            WHERE linked.school_term_id = $1 AND linked."SchoolID_Onec" = $2
+              AND linked.student_number IS NOT NULL AND linked.deleted_at IS NULL
+          ) THEN 'STUDENT_NUMBER'
+        END AS conflict
+      `,
+      [termId, input.schoolId, input.academicYear, input.semester, input.status],
+    );
+    return result.rows[0]?.conflict ?? null;
+  }
+
+  async synchronizeTermEnrollmentLabels(
+    termId: number,
+    input: SchoolTermInput,
+    executor: QueryExecutor,
+  ): Promise<{ enrollments: number; riskProfiles: number }> {
+    // The real term FK owns these rows, including retained historical enrollments.
+    // Attendance labels and current-enrollment resolution are views of this data.
+    const enrollments = await executor.query(
+      `
+        UPDATE student_term
+        SET "AcademicYear_Onec" = $3, "Semester_Onec" = $4, updated_by = $5
+        WHERE school_term_id = $1 AND "SchoolID_Onec" = $2
+          AND ("AcademicYear_Onec" IS DISTINCT FROM $3 OR "Semester_Onec" IS DISTINCT FROM $4)
+      `,
+      [termId, input.schoolId, input.academicYear, input.semester, input.actorUserId],
+    );
+    const riskProfiles = await executor.query(
+      `
+        UPDATE student_risk_profiles profile
+        SET academic_year = $3, semester = $4, updated_at = NOW()
+        FROM student_term enrollment
+        WHERE enrollment.school_term_id = $1 AND enrollment."SchoolID_Onec" = $2
+          AND profile.student_uuid = enrollment.student_uuid AND profile.school_id = $2
+          AND (profile.academic_year IS DISTINCT FROM $3 OR profile.semester IS DISTINCT FROM $4)
+      `,
+      [termId, input.schoolId, input.academicYear, input.semester],
+    );
+    return { enrollments: enrollments.rowCount ?? 0, riskProfiles: riskProfiles.rowCount ?? 0 };
+  }
+
   /**
    * Editing must follow the row, not its natural key: the dialog can change the
    * academic year or semester, and an upsert on (school, year, semester) would
@@ -229,13 +304,6 @@ export class AttendanceOperationsRepository {
           created_by, updated_by
         )
         VALUES ($1, $2, $3, $4, $5, $6, $7, $7)
-        ON CONFLICT (school_id, academic_year, semester) DO UPDATE SET
-          starts_on = EXCLUDED.starts_on,
-          ends_on = EXCLUDED.ends_on,
-          status = EXCLUDED.status,
-          updated_by = EXCLUDED.updated_by,
-          deleted_at = NULL,
-          deleted_by = NULL
       `,
       [
         input.schoolId,

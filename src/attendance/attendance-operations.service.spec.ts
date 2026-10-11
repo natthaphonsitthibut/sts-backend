@@ -3,6 +3,7 @@ import { AuditLogService } from '../audit-log/audit-log.service';
 import { AttendanceOperationsRepository } from './attendance-operations.repository';
 import { AttendanceOperationsService } from './attendance-operations.service';
 import type { QueryExecutor } from './attendance.types';
+import { RiskProfileService } from '../risk-profile/risk-profile.service';
 
 const actor = {
   id: 5,
@@ -35,6 +36,161 @@ function transactionMock() {
 }
 
 describe('AttendanceOperationsService', () => {
+  it('audits every edited field and synchronizes labels before committing', async () => {
+    const updated = {
+      ...draftTerm,
+      academic_year: 2570,
+      semester: 2,
+      starts_on: '2027-05-01',
+      ends_on: '2027-10-31',
+      status: 'ACTIVE' as const,
+    };
+    const events: string[] = [];
+    const executor = { query: jest.fn() };
+    const repository = {
+      isSchoolInScope: jest.fn().mockResolvedValue(true),
+      withTransaction: jest.fn(async (callback: (value: QueryExecutor) => Promise<unknown>) => {
+        const result = await callback(executor);
+        events.push('commit');
+        return result;
+      }),
+      findTermByIdForUpdate: jest.fn().mockResolvedValue(draftTerm),
+      findTermWriteConflict: jest.fn().mockResolvedValue(null),
+      updateTerm: jest.fn().mockResolvedValue(updated),
+      synchronizeTermEnrollmentLabels: jest.fn(() => {
+        events.push('sync');
+        return Promise.resolve({ enrollments: 3, riskProfiles: 2 });
+      }),
+      upsertTerm: jest.fn(),
+    };
+    const auditLog = {
+      recordAtomic: jest.fn(() => {
+        events.push('audit');
+        return Promise.resolve();
+      }),
+    };
+    const risk = {
+      enqueueFull: jest.fn(() => {
+        events.push('refresh');
+        return Promise.resolve();
+      }),
+    };
+    const service = new AttendanceOperationsService(
+      repository as unknown as AttendanceOperationsRepository,
+      auditLog as unknown as AuditLogService,
+      risk as unknown as RiskProfileService,
+    );
+    const input = {
+      termId: 10,
+      schoolId: draftTerm.school_id,
+      academicYear: 2570,
+      semester: 2,
+      startsOn: updated.starts_on,
+      endsOn: updated.ends_on,
+      status: updated.status,
+    };
+
+    await expect(service.upsertTerm(input, actor)).resolves.toMatchObject({ data: { id: '10' } });
+    expect(repository.upsertTerm).not.toHaveBeenCalled();
+    expect(repository.synchronizeTermEnrollmentLabels).toHaveBeenCalledWith(
+      10,
+      { ...input, actorUserId: actor.id },
+      executor,
+    );
+    expect(auditLog.recordAtomic).toHaveBeenCalledWith(
+      expect.objectContaining({
+        targetId: '10',
+        metadata: {
+          op: 'update',
+          schoolId: draftTerm.school_id,
+          before: {
+            academicYear: 2569,
+            semester: 1,
+            startsOn: draftTerm.starts_on,
+            endsOn: draftTerm.ends_on,
+            status: 'DRAFT',
+          },
+          after: {
+            academicYear: 2570,
+            semester: 2,
+            startsOn: updated.starts_on,
+            endsOn: updated.ends_on,
+            status: 'ACTIVE',
+          },
+          synchronized: { enrollments: 3, riskProfiles: 2 },
+        },
+      }),
+      executor,
+    );
+    expect(events).toEqual(['sync', 'audit', 'commit', 'refresh']);
+  });
+
+  it.each(['TERM_IDENTITY', 'ACTIVE_TERM', 'ENROLLMENT_IDENTITY', 'STUDENT_NUMBER'])(
+    'rejects %s before any edit or audit',
+    async (conflict) => {
+      const repository = {
+        isSchoolInScope: jest.fn().mockResolvedValue(true),
+        withTransaction: transactionMock(),
+        findTermByIdForUpdate: jest.fn().mockResolvedValue(draftTerm),
+        findTermWriteConflict: jest.fn().mockResolvedValue(conflict),
+        updateTerm: jest.fn(),
+        synchronizeTermEnrollmentLabels: jest.fn(),
+      };
+      const audit = auditLogMock();
+      const service = new AttendanceOperationsService(
+        repository as unknown as AttendanceOperationsRepository,
+        audit as unknown as AuditLogService,
+      );
+      await expect(
+        service.upsertTerm(
+          {
+            termId: 10,
+            schoolId: draftTerm.school_id,
+            academicYear: 2570,
+            semester: 2,
+            startsOn: draftTerm.starts_on,
+            endsOn: draftTerm.ends_on,
+            status: 'DRAFT',
+          },
+          actor,
+        ),
+      ).rejects.toBeInstanceOf(ConflictException);
+      expect(repository.updateTerm).not.toHaveBeenCalled();
+      expect(repository.synchronizeTermEnrollmentLabels).not.toHaveBeenCalled();
+      expect(audit.recordAtomic).not.toHaveBeenCalled();
+    },
+  );
+
+  it('creating an existing natural key cannot update old terms or enrollments', async () => {
+    const repository = {
+      isSchoolInScope: jest.fn().mockResolvedValue(true),
+      withTransaction: transactionMock(),
+      findTermWriteConflict: jest.fn().mockResolvedValue('TERM_IDENTITY'),
+      upsertTerm: jest.fn(),
+      updateTerm: jest.fn(),
+      synchronizeTermEnrollmentLabels: jest.fn(),
+    };
+    const service = new AttendanceOperationsService(
+      repository as unknown as AttendanceOperationsRepository,
+      auditLogMock() as unknown as AuditLogService,
+    );
+    await expect(
+      service.upsertTerm(
+        {
+          schoolId: draftTerm.school_id,
+          academicYear: 2569,
+          semester: 1,
+          startsOn: draftTerm.starts_on,
+          endsOn: draftTerm.ends_on,
+          status: 'DRAFT',
+        },
+        actor,
+      ),
+    ).rejects.toBeInstanceOf(ConflictException);
+    expect(repository.upsertTerm).not.toHaveBeenCalled();
+    expect(repository.updateTerm).not.toHaveBeenCalled();
+    expect(repository.synchronizeTermEnrollmentLabels).not.toHaveBeenCalled();
+  });
   it('denies a school outside the authenticated scope', async () => {
     const repository = { isSchoolInScope: jest.fn().mockResolvedValue(false) };
     const service = new AttendanceOperationsService(
@@ -54,6 +210,10 @@ describe('AttendanceOperationsService', () => {
     const repository = {
       isSchoolInScope: jest.fn().mockResolvedValue(true),
       withTransaction: transactionMock(),
+      findTermWriteConflict: jest.fn().mockResolvedValue(null),
+      synchronizeTermEnrollmentLabels: jest
+        .fn()
+        .mockResolvedValue({ enrollments: 3, riskProfiles: 2 }),
       upsertTerm: jest.fn().mockResolvedValue({ ...draftTerm, status: 'ACTIVE' }),
     };
     const service = new AttendanceOperationsService(
@@ -82,6 +242,10 @@ describe('AttendanceOperationsService', () => {
     const repository = {
       isSchoolInScope: jest.fn().mockResolvedValue(true),
       withTransaction: transactionMock(),
+      findTermWriteConflict: jest.fn().mockResolvedValue(null),
+      synchronizeTermEnrollmentLabels: jest
+        .fn()
+        .mockResolvedValue({ enrollments: 3, riskProfiles: 2 }),
       findTermByIdForUpdate: jest.fn().mockResolvedValue(draftTerm),
       updateTerm: jest.fn().mockResolvedValue(renamed),
       upsertTerm: jest.fn(),
@@ -114,6 +278,10 @@ describe('AttendanceOperationsService', () => {
     const repository = {
       isSchoolInScope: jest.fn().mockResolvedValue(true),
       withTransaction: transactionMock(),
+      findTermWriteConflict: jest.fn().mockResolvedValue(null),
+      synchronizeTermEnrollmentLabels: jest
+        .fn()
+        .mockResolvedValue({ enrollments: 3, riskProfiles: 2 }),
       findTermByIdForUpdate: jest.fn().mockResolvedValue({ ...draftTerm, school_id: 20020003 }),
       updateTerm: jest.fn(),
     };
@@ -143,6 +311,10 @@ describe('AttendanceOperationsService', () => {
     const repository = {
       isSchoolInScope: jest.fn().mockResolvedValue(true),
       withTransaction: transactionMock(),
+      findTermWriteConflict: jest.fn().mockResolvedValue(null),
+      synchronizeTermEnrollmentLabels: jest
+        .fn()
+        .mockResolvedValue({ enrollments: 3, riskProfiles: 2 }),
       findTermByIdForUpdate: jest.fn().mockResolvedValue(draftTerm),
       updateTerm: jest.fn().mockRejectedValue(
         Object.assign(new Error('duplicate key'), {
@@ -199,6 +371,10 @@ describe('AttendanceOperationsService', () => {
       findTermById: jest.fn().mockResolvedValue(draftTerm),
       isSchoolInScope: jest.fn().mockResolvedValue(true),
       withTransaction: transactionMock(),
+      findTermWriteConflict: jest.fn().mockResolvedValue(null),
+      synchronizeTermEnrollmentLabels: jest
+        .fn()
+        .mockResolvedValue({ enrollments: 3, riskProfiles: 2 }),
       findTermByIdForUpdate: jest.fn().mockResolvedValue(draftTerm),
       deleteTerm: jest.fn().mockResolvedValue('10'),
     };
@@ -234,6 +410,10 @@ describe('AttendanceOperationsService', () => {
       findTermById: jest.fn().mockResolvedValue(activeTerm),
       isSchoolInScope: jest.fn().mockResolvedValue(true),
       withTransaction: transactionMock(),
+      findTermWriteConflict: jest.fn().mockResolvedValue(null),
+      synchronizeTermEnrollmentLabels: jest
+        .fn()
+        .mockResolvedValue({ enrollments: 3, riskProfiles: 2 }),
       findTermByIdForUpdate: jest.fn().mockResolvedValue(activeTerm),
       deleteTerm: jest.fn(),
     };
@@ -253,6 +433,10 @@ describe('AttendanceOperationsService', () => {
       findTermById: jest.fn().mockResolvedValue(draftTerm),
       isSchoolInScope: jest.fn().mockResolvedValue(true),
       withTransaction: transactionMock(),
+      findTermWriteConflict: jest.fn().mockResolvedValue(null),
+      synchronizeTermEnrollmentLabels: jest
+        .fn()
+        .mockResolvedValue({ enrollments: 3, riskProfiles: 2 }),
       findTermByIdForUpdate: jest.fn().mockResolvedValue(draftTerm),
       deleteTerm: jest.fn().mockRejectedValue({ code: '23503' }),
     };

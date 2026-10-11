@@ -66,15 +66,61 @@ export class AttendanceOperationsService {
       const row = await this.repository.withTransaction(async (executor) => {
         const payload = { ...input, actorUserId: actor?.id ?? null };
         if (input.termId === undefined) {
-          return await this.repository.upsertTerm(payload, executor);
+          this.assertNoTermWriteConflict(
+            await this.repository.findTermWriteConflict(null, payload, executor),
+          );
+          const created = await this.repository.upsertTerm(payload, executor);
+          await this.auditLog.recordAtomic(
+            {
+              actorUserId: actor?.id ?? null,
+              actorLabel: actor?.username ?? null,
+              action: 'MASTER_DATA_EDIT',
+              targetType: 'school_terms',
+              targetId: created.id,
+              metadata: {
+                op: 'create',
+                schoolId: created.school_id,
+                after: this.termAuditValues(created),
+              },
+              ip: null,
+            },
+            executor,
+          );
+          return created;
         }
         const locked = await this.repository.findTermByIdForUpdate(input.termId, executor);
         if (!locked) throw new NotFoundException('ไม่พบภาคเรียน');
         if (locked.school_id !== input.schoolId) {
           throw new ForbiddenException('ภาคเรียนนี้ไม่ได้อยู่ในโรงเรียนที่เลือก');
         }
+        this.assertNoTermWriteConflict(
+          await this.repository.findTermWriteConflict(input.termId, payload, executor),
+        );
         const updated = await this.repository.updateTerm(input.termId, payload, executor);
         if (!updated) throw new NotFoundException('ไม่พบภาคเรียน');
+        const synchronized = await this.repository.synchronizeTermEnrollmentLabels(
+          input.termId,
+          payload,
+          executor,
+        );
+        await this.auditLog.recordAtomic(
+          {
+            actorUserId: actor?.id ?? null,
+            actorLabel: actor?.username ?? null,
+            action: 'MASTER_DATA_EDIT',
+            targetType: 'school_terms',
+            targetId: updated.id,
+            metadata: {
+              op: 'update',
+              schoolId: locked.school_id,
+              before: this.termAuditValues(locked),
+              after: this.termAuditValues(updated),
+              synchronized,
+            },
+            ip: null,
+          },
+          executor,
+        );
         return updated;
       });
       await this.enqueueRiskProfileRefresh('school-term-change');
@@ -92,6 +138,12 @@ export class AttendanceOperationsService {
       };
     } catch (error) {
       if (this.isUniqueViolation(error)) {
+        if (this.violatedConstraint(error) === 'uq_student_term_enrollment_natural') {
+          this.assertNoTermWriteConflict('ENROLLMENT_IDENTITY');
+        }
+        if (this.violatedConstraint(error) === 'uq_student_term_school_term_student_number') {
+          this.assertNoTermWriteConflict('STUDENT_NUMBER');
+        }
         // Two different unique rules can reject the same write; naming the wrong
         // one sends the user to fix a field that was never the problem.
         throw new ConflictException(
@@ -101,6 +153,37 @@ export class AttendanceOperationsService {
         );
       }
       throw error;
+    }
+  }
+
+  private termAuditValues(term: {
+    academic_year: number;
+    semester: number;
+    starts_on: string | null;
+    ends_on: string | null;
+    status: SchoolTermStatus;
+  }) {
+    return {
+      academicYear: term.academic_year,
+      semester: term.semester,
+      startsOn: term.starts_on,
+      endsOn: term.ends_on,
+      status: term.status,
+    };
+  }
+
+  private assertNoTermWriteConflict(conflict: string | null): void {
+    if (conflict === 'TERM_IDENTITY') {
+      throw new ConflictException('โรงเรียนนี้มีภาคเรียนของปีและภาคเรียนนี้อยู่แล้ว');
+    }
+    if (conflict === 'ACTIVE_TERM') {
+      throw new ConflictException('โรงเรียนนี้มีภาคเรียนที่เปิดใช้งานอยู่แล้ว');
+    }
+    if (conflict === 'ENROLLMENT_IDENTITY') {
+      throw new ConflictException('นักเรียนมีข้อมูลลงทะเบียนในปีและภาคเรียนปลายทางอยู่แล้ว');
+    }
+    if (conflict === 'STUDENT_NUMBER') {
+      throw new ConflictException('เลขประจำตัวนักเรียนซ้ำในปีและภาคเรียนปลายทาง');
     }
   }
 
