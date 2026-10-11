@@ -847,6 +847,102 @@ describe('ImportsService', () => {
     expect(preview.sampleRows[1]).toMatchObject({ status: 'ready' });
   });
 
+  it.each([
+    ['grade', { GradeLevelID_Onec: 999 }],
+    ['status', { StudentStatusID_Onec: 999 }],
+    ['room', { RoomID_Onec: 999 }],
+  ])(
+    'keeps sample, summary and repeated commit aligned after an invalid %s row',
+    async (_reason, invalid) => {
+      const { repository, service } = createService();
+      const enrollmentRows = new Map<string, Record<string, unknown>>();
+      Object.assign(repository, {
+        findExistingSchoolIds: jest.fn().mockResolvedValue([1001]),
+        findStudentNumberHolders: jest.fn().mockResolvedValue([]),
+        findExistingClassroomReferences: jest.fn().mockResolvedValue([
+          {
+            school_id: 1001,
+            academic_year: 2567,
+            semester: 1,
+            grade_level_id: 101,
+            room_number: 1,
+          },
+        ]),
+        findPersonUuidMatchesByNationalIds: jest.fn().mockResolvedValue([]),
+        withTransaction: jest.fn(async (callback: (executor: unknown) => Promise<unknown>) =>
+          callback({ query: jest.fn() }),
+        ),
+        createImportBatch: jest.fn().mockResolvedValue('batch-id'),
+        quarantineImportRow: jest.fn().mockResolvedValue(true),
+        completeImportBatch: jest.fn(),
+        bulkResolveOrCreatePersonsByNationalIds: jest.fn(
+          (ids: Array<{ identifierNormalized: string }>) => Promise.resolve(bulkPersonMatches(ids)),
+        ),
+        bulkUpsertStudentTerms: jest.fn((rows: Record<string, unknown>[]) => {
+          let inserted = 0;
+          let updated = 0;
+          for (const row of rows) {
+            const key = JSON.stringify([
+              row.person_uuid,
+              row.AcademicYear_Onec,
+              row.Semester_Onec,
+              row.SchoolID_Onec,
+            ]);
+            if (enrollmentRows.has(key)) updated++;
+            else inserted++;
+            enrollmentRows.set(key, row);
+          }
+          return Promise.resolve({ inserted, updated, skipped: 0 });
+        }),
+      });
+      const base = {
+        AcademicYear_Onec: 2567,
+        Semester_Onec: 1,
+        SchoolID_Onec: 1001,
+        GradeLevelID_Onec: 101,
+        RoomID_Onec: 1,
+        StudentStatusID_Onec: 10,
+        student_number: 'SAME_NUMBER',
+      };
+      const file = makeImportFile([
+        { ...base, PersonID_Onec: '1111111111111', ...invalid },
+        { ...base, PersonID_Onec: '2222222222222' },
+      ]);
+      const preview = await service.previewImport(file, 'student_term', '{}', GLOBAL_ACTOR);
+      expect(preview).toMatchObject({ rowsReady: 1, rowsToQuarantine: 1 });
+      expect(preview.sampleRows.map((row) => row.action)).toEqual(['quarantine', 'insert']);
+      await expect(
+        service.processImport(file, 'student_term', '{}', undefined, GLOBAL_ACTOR),
+      ).resolves.toMatchObject({ rowsInserted: 1, rowsQuarantined: 1 });
+      await expect(
+        service.processImport(file, 'student_term', '{}', undefined, GLOBAL_ACTOR),
+      ).resolves.toMatchObject({ rowsInserted: 0, rowsUpdated: 1, rowsQuarantined: 1 });
+      expect(enrollmentRows.size).toBe(1);
+    },
+  );
+
+  it('still quarantines a valid student taking the preceding valid student number', async () => {
+    const { repository, service } = createService();
+    Object.assign(repository, { findStudentNumberHolders: jest.fn().mockResolvedValue([]) });
+    const base = {
+      AcademicYear_Onec: 2567,
+      Semester_Onec: 1,
+      SchoolID_Onec: 1001,
+      student_number: 'SAME_NUMBER',
+    };
+    const preview = await service.previewImport(
+      makeImportFile([
+        { ...base, PersonID_Onec: '1111111111111' },
+        { ...base, PersonID_Onec: '2222222222222' },
+      ]),
+      'student_term',
+      '{}',
+      GLOBAL_ACTOR,
+    );
+    expect(preview).toMatchObject({ rowsReady: 1, rowsToQuarantine: 1 });
+    expect(preview.sampleRows.map((row) => row.action)).toEqual(['insert', 'quarantine']);
+  });
+
   it('reports missing schools without hiding otherwise valid preview rows', async () => {
     const { service } = createService();
     const file = makeImportFile([

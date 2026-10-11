@@ -1565,6 +1565,18 @@ export class ImportsService {
     };
   }
 
+  /** Eligibility must precede reserving a row's student number in every flow. */
+  private studentImportEligibilityIssue(
+    row: Record<string, unknown>,
+    knownStatusCodes: ReadonlySet<number>,
+    knownGradeIds: ReadonlySet<number>,
+    knownClassroomKeys?: ReadonlySet<string>,
+  ): ImportQuarantineReason | null {
+    const statusCode = normalizeScalar(row['StudentStatusID_Onec']);
+    if (statusCode && !knownStatusCodes.has(Number(statusCode))) return 'UNMAPPED_STUDENT_STATUS';
+    return this.gradeRoomIssue(row, knownGradeIds, knownClassroomKeys);
+  }
+
   private existingStudentTermKey(row: {
     person_id: string;
     academic_year: string;
@@ -1885,14 +1897,6 @@ export class ImportsService {
           }
         }
 
-        if (rowKey) {
-          seenKeys.add(rowKey);
-        }
-        if (action !== 'quarantine' && sampleNumberConflict(dbRow)) {
-          issues.push('รหัสนักเรียนซ้ำกับนักเรียนคนอื่นในภาคเรียนนี้');
-          action = 'quarantine';
-        }
-
         const gradeLevelId = normalizeScalar(dbRow['GradeLevelID_Onec']);
         if (validTarget === 'student_term' && rowKey && action === 'insert') {
           const personTermKey = JSON.stringify([
@@ -1910,17 +1914,30 @@ export class ImportsService {
         }
         const studentStatusCode = normalizeScalar(dbRow['StudentStatusID_Onec']);
         const studentStatus = statusLabels.get(Number(studentStatusCode));
-        if (studentStatusCode && !mappedStatusCodes.has(Number(studentStatusCode))) {
+        const eligibilityIssue = this.studentImportEligibilityIssue(
+          dbRow,
+          mappedStatusCodes,
+          knownGradeIds,
+          knownClassroomKeys,
+        );
+        if (eligibilityIssue === 'UNMAPPED_STUDENT_STATUS') {
           issues.push('สถานะนักเรียนยังไม่ได้จับคู่');
           action = 'quarantine';
         }
-        const gradeRoomIssue = this.gradeRoomIssue(dbRow, knownGradeIds, knownClassroomKeys);
-        if (gradeRoomIssue === 'GRADE_NOT_FOUND') {
+        if (eligibilityIssue === 'GRADE_NOT_FOUND') {
           issues.push('ชั้นเรียนไม่ถูกต้องหรือไม่พบในข้อมูลหลัก');
           action = 'quarantine';
-        } else if (gradeRoomIssue === 'ROOM_NOT_FOUND') {
+        } else if (eligibilityIssue === 'ROOM_NOT_FOUND') {
           issues.push('รหัสห้องไม่ถูกต้องหรือไม่พบในข้อมูลหลัก');
           action = 'quarantine';
+        }
+
+        if (action !== 'quarantine') {
+          if (rowKey) seenKeys.add(rowKey);
+          if (sampleNumberConflict(dbRow)) {
+            issues.push('รหัสนักเรียนซ้ำกับนักเรียนคนอื่นในภาคเรียนนี้');
+            action = 'quarantine';
+          }
         }
 
         return {
@@ -1964,16 +1981,16 @@ export class ImportsService {
         rowsToQuarantine += 1;
         continue;
       }
-      const studentStatusCode = normalizeScalar(dbRow['StudentStatusID_Onec']);
-      if (studentStatusCode && !mappedStatusCodes.has(Number(studentStatusCode))) {
+      const eligibilityIssue = this.studentImportEligibilityIssue(
+        dbRow,
+        mappedStatusCodes,
+        knownGradeIds,
+        knownClassroomKeys,
+      );
+      if (eligibilityIssue) {
         rowsToQuarantine += 1;
-        continue;
-      }
-      const gradeRoomIssue = this.gradeRoomIssue(dbRow, knownGradeIds, knownClassroomKeys);
-      if (gradeRoomIssue) {
-        rowsToQuarantine += 1;
-        if (gradeRoomIssue === 'GRADE_NOT_FOUND') gradeIssueRows += 1;
-        if (gradeRoomIssue === 'ROOM_NOT_FOUND') roomIssueRows += 1;
+        if (eligibilityIssue === 'GRADE_NOT_FOUND') gradeIssueRows += 1;
+        if (eligibilityIssue === 'ROOM_NOT_FOUND') roomIssueRows += 1;
         continue;
       }
       const schoolId = this.normalizePositiveInteger(dbRow['SchoolID_Onec']);
@@ -2246,23 +2263,22 @@ export class ImportsService {
               skipped++;
               continue;
             }
-            seenKeys.add(rowKey);
-
             const normalizedPersonId = this.normalizeNationalId(personId);
             if (conflictingPersonIds.has(normalizedPersonId)) {
               await quarantine(dbRow, sourceRowNumber, 'IDENTIFIER_CONFLICT');
               continue;
             }
-            const statusCode = normalizeScalar(dbRow['StudentStatusID_Onec']);
-            if (statusCode && !knownStudentStatusCodes.has(Number(statusCode))) {
-              await quarantine(dbRow, sourceRowNumber, 'UNMAPPED_STUDENT_STATUS');
+            const eligibilityIssue = this.studentImportEligibilityIssue(
+              dbRow,
+              knownStudentStatusCodes,
+              knownGradeIds,
+              knownClassroomKeys,
+            );
+            if (eligibilityIssue) {
+              await quarantine(dbRow, sourceRowNumber, eligibilityIssue);
               continue;
             }
-            const gradeRoomIssue = this.gradeRoomIssue(dbRow, knownGradeIds, knownClassroomKeys);
-            if (gradeRoomIssue) {
-              await quarantine(dbRow, sourceRowNumber, gradeRoomIssue);
-              continue;
-            }
+            seenKeys.add(rowKey);
             if (takesAnotherStudentNumber(dbRow)) {
               await quarantine(dbRow, sourceRowNumber, 'STUDENT_NUMBER_CONFLICT');
               continue;
