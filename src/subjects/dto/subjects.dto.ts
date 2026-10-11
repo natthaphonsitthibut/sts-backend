@@ -1,4 +1,3 @@
-import { OmitType } from '@nestjs/mapped-types';
 import { Transform } from 'class-transformer';
 import {
   ArrayMaxSize,
@@ -143,18 +142,12 @@ export class SaveGradeSchoolSubjectDto extends AddSchoolSubjectDto {
   classroomIds!: number[];
 }
 
-/** Update keeps the existing code; creation alone applies the new character rule. */
-export class UpdateGradeSchoolSubjectDto extends OmitType(SaveGradeSchoolSubjectDto, [
-  'code',
-] as const) {
-  @Transform(({ value }: { value: unknown }) =>
-    typeof value === 'string' ? value.trim().toUpperCase() : value,
-  )
-  @IsString()
-  @MinLength(1, { message: 'กรุณาระบุรหัสวิชา' })
-  @MaxLength(20, { message: 'รหัสวิชาต้องไม่เกิน 20 ตัวอักษร' })
-  code!: string;
-}
+/**
+ * Same rules as creation. A code cannot change after creation, and the table
+ * now refuses any code the rule rejects, so there is no legacy code left for
+ * an edit to carry through.
+ */
+export class UpdateGradeSchoolSubjectDto extends SaveGradeSchoolSubjectDto {}
 
 export class SaveClassroomSubjectTeachersDto {
   @Transform(({ value }: { value: unknown }) => positiveInteger(value))
