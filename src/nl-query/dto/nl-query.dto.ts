@@ -1,11 +1,14 @@
-import { Type } from 'class-transformer';
+import { Transform, Type } from 'class-transformer';
 import {
   ArrayMaxSize,
   IsArray,
   IsIn,
   IsInt,
+  IsISO8601,
   IsOptional,
   IsString,
+  IsUUID,
+  Max,
   MaxLength,
   Min,
   MinLength,
@@ -41,6 +44,13 @@ export interface QueryColumn {
   semantic_type: SemanticType;
 }
 
+/**
+ * Deterministic description of a Result turn (tables, populations, filters,
+ * grouping, top rows) built by the Python service. Opaque to the backend: store
+ * it with the envelope and replay it in `history` (ADR 0010 / #34).
+ */
+export type TurnDigest = Record<string, unknown>;
+
 export interface QueryEnvelope {
   status: 'ok' | 'error';
   request_id: string;
@@ -48,6 +58,7 @@ export interface QueryEnvelope {
   answer_type?: AnswerType;
   message: string | null;
   steps_used?: number;
+  turn_digest?: TurnDigest | null;
   sql: string | null;
   columns: QueryColumn[];
   rows: Record<string, unknown>[] | null;
@@ -150,4 +161,31 @@ export class NlQueryDto {
   @ValidateNested({ each: true })
   @Type(() => PriorTurnDto)
   history?: PriorTurnDto[];
+
+  @IsOptional()
+  @IsUUID()
+  conversationId?: string;
 }
+
+export class RenameConversationDto {
+  @Transform(({ value }: { value: unknown }) => (typeof value === 'string' ? value.trim() : value))
+  @IsString()
+  @MinLength(1)
+  @MaxLength(120)
+  title!: string;
+}
+
+export class ListConversationsQueryDto {
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @Max(50)
+  limit?: number;
+
+  @IsOptional()
+  @IsISO8601()
+  before?: string;
+}
+
+export type NlQueryResponse = QueryEnvelope & { conversation_id: string | null };

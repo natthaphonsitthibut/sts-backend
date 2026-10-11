@@ -1,7 +1,7 @@
 import 'reflect-metadata';
 import { plainToInstance } from 'class-transformer';
 import { validate } from 'class-validator';
-import { NlQueryDto } from './nl-query.dto';
+import { ListConversationsQueryDto, NlQueryDto, RenameConversationDto } from './nl-query.dto';
 
 describe('NlQueryDto', () => {
   it('accepts a Thai question and supported chart type', async () => {
@@ -107,4 +107,57 @@ describe('NlQueryDto', () => {
     const errors = await validate(dto);
     expect(errors.length).toBeGreaterThan(0);
   });
+});
+
+describe('NlQueryDto conversationId', () => {
+  it('accepts a uuid conversationId', async () => {
+    const dto = plainToInstance(NlQueryDto, {
+      question: 'ต่อ',
+      conversationId: '3f0c7a52-6a0e-4a3b-9d55-0f6f1b7a9c11',
+    });
+    await expect(validate(dto)).resolves.toEqual([]);
+  });
+
+  it('rejects a non-uuid conversationId', async () => {
+    const errors = await validate(
+      plainToInstance(NlQueryDto, { question: 'ต่อ', conversationId: 'abc' }),
+    );
+    expect(errors.length).toBeGreaterThan(0);
+  });
+});
+
+describe('RenameConversationDto', () => {
+  it('trims the title', async () => {
+    const dto = plainToInstance(RenameConversationDto, { title: '  ชื่อใหม่  ' });
+    await expect(validate(dto)).resolves.toEqual([]);
+    expect(dto.title).toBe('ชื่อใหม่');
+  });
+
+  it.each([{ title: '' }, { title: '   ' }, { title: 'ก'.repeat(121) }, {}])(
+    'rejects invalid title %#',
+    async (input) => {
+      const errors = await validate(plainToInstance(RenameConversationDto, input));
+      expect(errors.length).toBeGreaterThan(0);
+    },
+  );
+});
+
+describe('ListConversationsQueryDto', () => {
+  it('accepts no params and coerces limit from a query string', async () => {
+    await expect(validate(plainToInstance(ListConversationsQueryDto, {}))).resolves.toEqual([]);
+    const dto = plainToInstance(ListConversationsQueryDto, {
+      limit: '20',
+      before: '2026-10-02T00:00:00.000Z',
+    });
+    await expect(validate(dto)).resolves.toEqual([]);
+    expect(dto.limit).toBe(20);
+  });
+
+  it.each([{ limit: '0' }, { limit: '51' }, { before: 'yesterday' }])(
+    'rejects invalid query %#',
+    async (input) => {
+      const errors = await validate(plainToInstance(ListConversationsQueryDto, input));
+      expect(errors.length).toBeGreaterThan(0);
+    },
+  );
 });
