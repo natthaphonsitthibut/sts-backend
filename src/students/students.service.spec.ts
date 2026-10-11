@@ -12,6 +12,7 @@ import {
 } from '@nestjs/common';
 import { RiskProfileService } from '../risk-profile/risk-profile.service';
 import { AuditLogService } from '../audit-log/audit-log.service';
+import { PiiAccessLogService } from '../audit-log/pii-access-log.service';
 
 describe('StudentsService', () => {
   let service: StudentsService;
@@ -26,7 +27,6 @@ describe('StudentsService', () => {
     listStudentAttendanceCalendar: jest.Mock;
     listStudentCareConsiderations: jest.Mock;
     listStudentSubjectAttendanceByDate: jest.Mock;
-    insertPiiAccessEvent: jest.Mock;
     listActiveRevealGroups: jest.Mock;
     updateStudent: jest.Mock;
     findPersonUuidByStudentUuid: jest.Mock;
@@ -41,6 +41,7 @@ describe('StudentsService', () => {
   let geocodeCache: { resolve: jest.Mock };
   let riskProfileService: { requestStudentRecalculation: jest.Mock };
   let auditLog: { recordAtomic: jest.Mock };
+  let piiAccessLog: { record: jest.Mock };
 
   beforeEach(async () => {
     const module: TestingModule = await Test.createTestingModule({
@@ -59,7 +60,6 @@ describe('StudentsService', () => {
             listStudentAttendanceCalendar: jest.fn(),
             listStudentCareConsiderations: jest.fn().mockResolvedValue([]),
             listStudentSubjectAttendanceByDate: jest.fn(),
-            insertPiiAccessEvent: jest.fn(),
             listActiveRevealGroups: jest.fn(),
             updateStudent: jest.fn().mockResolvedValue({ updated: true }),
             findPersonUuidByStudentUuid: jest.fn(),
@@ -81,6 +81,10 @@ describe('StudentsService', () => {
           useValue: {
             recordAtomic: jest.fn().mockResolvedValue(undefined),
           },
+        },
+        {
+          provide: PiiAccessLogService,
+          useValue: { record: jest.fn().mockResolvedValue(undefined) },
         },
         {
           provide: StudentGeocodeCacheService,
@@ -118,6 +122,54 @@ describe('StudentsService', () => {
     geocodeCache = module.get(StudentGeocodeCacheService);
     riskProfileService = module.get(RiskProfileService);
     auditLog = module.get(AuditLogService);
+    piiAccessLog = module.get(PiiAccessLogService);
+  });
+
+  it('records a national-id reveal against the student and their school, once per window', async () => {
+    const studentUuid = '00000000-0000-4000-8000-000000000001';
+    const actor = { id: 5, username: 'admin', roles: ['ADMIN'], permissions: ['students'] };
+    const meta = { ip: '127.0.0.1', userAgent: 'jest', requestId: 'req-1' };
+    studentsRepository.findStudentById.mockResolvedValue({
+      id: studentUuid,
+      PersonID_Onec: '1-2345-67890-12-3',
+      SchoolID_Onec: 10010002,
+    });
+
+    studentsRepository.listActiveRevealGroups.mockResolvedValueOnce([]);
+    await expect(
+      service.revealPii(
+        studentUuid,
+        actor,
+        { global: true },
+        { field_group: 'NATIONAL_ID', reason_code: 'VERIFY_DATA' },
+        meta,
+      ),
+    ).resolves.toEqual({ field_group: 'NATIONAL_ID', values: { PersonID_Onec: '1234567890123' } });
+    expect(piiAccessLog.record).toHaveBeenCalledWith(
+      expect.objectContaining({
+        actorUserId: 5,
+        actorLabel: 'admin',
+        subjectType: 'STUDENT',
+        fieldGroup: 'NATIONAL_ID',
+        reasonCode: 'VERIFY_DATA',
+        targetType: 'student',
+        targetId: studentUuid,
+        scopeMetadata: { schoolId: 10010002 },
+      }),
+    );
+    // The log names the student by reference, never by the number that was opened.
+    expect(JSON.stringify(piiAccessLog.record.mock.calls)).not.toContain('1234567890123');
+
+    // Re-opening inside the reveal window is the same access, not a new one.
+    studentsRepository.listActiveRevealGroups.mockResolvedValueOnce(['NATIONAL_ID']);
+    await service.revealPii(
+      studentUuid,
+      actor,
+      { global: true },
+      { field_group: 'NATIONAL_ID', reason_code: 'VERIFY_DATA' },
+      meta,
+    );
+    expect(piiAccessLog.record).toHaveBeenCalledTimes(1);
   });
 
   it('should be defined', () => {

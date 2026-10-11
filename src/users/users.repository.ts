@@ -843,40 +843,6 @@ export class UsersRepository {
   }
 
   /** Resolve a student identifier from its canonical person when the user mirror is blank. */
-  async insertUserAddressAccessEvent(input: {
-    actorUserId: number;
-    actorRoles: string[];
-    subjectRef: string;
-    subjectRefKeyVersion: number;
-    reasonCode: string;
-    reasonNote: string | null;
-    requestId: string | null;
-    ip: string | null;
-    userAgent: string | null;
-  }): Promise<void> {
-    await this.query(
-      `
-        INSERT INTO pii_access_events (
-          actor_user_id, actor_roles, actor_kind, subject_student_ref,
-          subject_type, subject_ref, subject_ref_key_version, field_group,
-          reason_code, reason_note, request_id, ip, user_agent
-        )
-        VALUES ($1, $2::jsonb, 'STAFF', $3, 'USER', $3, $4, 'ADDRESS', $5, $6, $7, $8, $9)
-      `,
-      [
-        input.actorUserId,
-        JSON.stringify(input.actorRoles),
-        input.subjectRef,
-        input.subjectRefKeyVersion,
-        input.reasonCode,
-        input.reasonNote,
-        input.requestId,
-        input.ip,
-        input.userAgent,
-      ],
-    );
-  }
-
   async hasActiveUserAddressReveal(
     actorUserId: number,
     subjectRef: string,
@@ -896,41 +862,6 @@ export class UsersRepository {
       [actorUserId, subjectRef, withinSeconds],
     );
     return result.rows[0]?.found === true;
-  }
-
-  async insertUserNationalIdAccessEvent(input: {
-    actorUserId: number;
-    actorRoles: string[];
-    subjectRef: string;
-    subjectRefKeyVersion: number;
-    reasonCode: string;
-    reasonNote: string | null;
-    requestId: string | null;
-    ip: string | null;
-    userAgent: string | null;
-  }): Promise<void> {
-    await this.query(
-      `
-        INSERT INTO pii_access_events (
-          actor_user_id, actor_roles, actor_kind, subject_student_ref,
-          subject_type, subject_ref, subject_ref_key_version, field_group,
-          reason_code, reason_note, request_id, ip, user_agent
-        )
-        VALUES ($1, $2::jsonb, 'STAFF', $3, 'USER', $3, $4, $5, $6, $7, $8, $9, $10)
-      `,
-      [
-        input.actorUserId,
-        JSON.stringify(input.actorRoles),
-        input.subjectRef,
-        input.subjectRefKeyVersion,
-        PII_FIELD_GROUP_CODES.NATIONAL_ID,
-        input.reasonCode,
-        input.reasonNote,
-        input.requestId,
-        input.ip,
-        input.userAgent,
-      ],
-    );
   }
 
   async hasActiveUserNationalIdReveal(

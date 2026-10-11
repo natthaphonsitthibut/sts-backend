@@ -28,6 +28,7 @@ import {
 } from '../students/pii-fields.config';
 import type { UserAddressRevealDto } from './dto/user-address-reveal.dto';
 import { AuditLogService, type AuditAction } from '../audit-log/audit-log.service';
+import { PiiAccessLogService } from '../audit-log/pii-access-log.service';
 import { finalizePersistedDataScope, type DataScope } from '../auth/auth.types';
 import { hasPermission } from '../auth/permissions.constants';
 import {
@@ -119,6 +120,7 @@ export class UsersService {
     private readonly piiRuntimeConfig: ConfigType<typeof piiConfig>,
     @Inject(FILE_STORAGE_ADAPTER)
     private readonly storage: FileStorageAdapter,
+    private readonly piiAccessLog: PiiAccessLogService,
   ) {}
 
   /**
@@ -208,7 +210,7 @@ export class UsersService {
     meta: { ip: string | null; userAgent: string | null; requestId: string | null },
   ) {
     const currentActor = this.usersPolicyService.ensureActor(actor);
-    await this.getUserById(id, currentActor);
+    const authorizedUser = await this.getUserById(id, currentActor);
     const profile = await this.usersRepository.findOwnProfileById(id);
     if (!profile) {
       throw new NotFoundException('ไม่พบผู้ใช้งาน');
@@ -237,14 +239,20 @@ export class UsersService {
       this.piiRuntimeConfig.revealTtlSeconds,
     );
     if (!active) {
-      await this.usersRepository.insertUserAddressAccessEvent({
+      await this.piiAccessLog.record({
         actorUserId: currentActor.id,
+        actorLabel: currentActor.username ?? null,
         actorRoles: currentActor.roles ?? [],
+        subjectType: 'USER',
         subjectRef,
         subjectRefKeyVersion: this.piiRuntimeConfig.hashKeyVersion,
+        fieldGroup: 'ADDRESS',
         reasonCode,
         reasonNote,
         ...meta,
+        targetType: 'user',
+        targetId: String(id),
+        scopeMetadata: { scope: authorizedUser?.data_scope ?? null },
       });
     }
 
@@ -297,14 +305,20 @@ export class UsersService {
       this.piiRuntimeConfig.revealTtlSeconds,
     );
     if (!active) {
-      await this.usersRepository.insertUserNationalIdAccessEvent({
+      await this.piiAccessLog.record({
         actorUserId: currentActor.id,
+        actorLabel: currentActor.username ?? null,
         actorRoles: currentActor.roles ?? [],
+        subjectType: 'USER',
         subjectRef,
         subjectRefKeyVersion: this.piiRuntimeConfig.hashKeyVersion,
+        fieldGroup: 'NATIONAL_ID',
         reasonCode,
         reasonNote,
         ...meta,
+        targetType: 'user',
+        targetId: String(id),
+        scopeMetadata: { scope: authorizedUser?.data_scope ?? null },
       });
     }
     const resolvedNationalId =

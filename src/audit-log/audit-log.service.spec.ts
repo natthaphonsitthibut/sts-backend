@@ -240,10 +240,63 @@ describe('AuditLogService', () => {
 
     expect(result.data).toEqual(
       expect.arrayContaining([
-        { value: 'TASK_CREATE', label: 'สร้างภารกิจหรือลิงก์' },
-        { value: 'LINK_LOCK', label: 'ปิดลิงก์' },
+        { value: 'TASK_CREATE', label: 'สร้างภารกิจหรือลิงก์', category: 'tasks' },
+        { value: 'LINK_LOCK', label: 'ปิดลิงก์', category: 'tasks' },
       ]),
     );
+  });
+
+  it('groups action options into the categories the panel can offer', () => {
+    const service = new AuditLogService({} as never);
+    const globalActor = { ...actor, data_scope: { global: true } };
+
+    const all = service.getActionOptions(
+      { ...globalActor, permissions: ['audit-log:all'] },
+      { domain: 'all' },
+    );
+    expect(all.data).toContainEqual({
+      value: 'STUDENT_NATIONAL_ID_CORRECTION',
+      label: 'แก้ไขเลขบัตรประชาชนนักเรียน',
+      category: 'students',
+    });
+    expect(all.categories).toContainEqual({
+      value: 'teacher_access',
+      label: 'ลิงก์และสิทธิ์เข้าถึงของครู',
+    });
+
+    // A slice lists only the categories its own actions use.
+    const imports = service.getActionOptions(
+      { ...globalActor, permissions: ['import-data'] },
+      { domain: 'imports' },
+    );
+    expect(imports.categories).toEqual([
+      { value: 'data_transfer', label: 'นำเข้าและส่งออกข้อมูล' },
+    ]);
+  });
+
+  it('narrows the list by category', async () => {
+    const queries: Array<{ sql: string; params?: unknown[] }> = [];
+    const queryRunner = {
+      connect: jest.fn().mockResolvedValue(undefined),
+      release: jest.fn().mockResolvedValue(undefined),
+      query: jest.fn((sql: string, params?: unknown[]) => {
+        queries.push({ sql, params });
+        return { records: [], affected: 0 };
+      }),
+    };
+    const service = new AuditLogService({ createQueryRunner: () => queryRunner } as never);
+    const admin = { ...actor, permissions: ['audit-log:all'], data_scope: { global: true } };
+
+    await service.list(admin, { domain: 'all', category: 'accounts' });
+    const accountActions = queries[queries.length - 1].params?.[0] as string[];
+    expect(accountActions).toContain('USER_CREATE');
+    expect(accountActions).not.toContain('CASE_CLOSE');
+    expect(accountActions).not.toContain('STUDENT_UPDATE');
+
+    // An action outside the chosen category is a contradiction, not an empty page.
+    await expect(
+      service.list(admin, { domain: 'all', category: 'accounts', action: 'CASE_CLOSE' }),
+    ).rejects.toBeInstanceOf(BadRequestException);
   });
 
   it('records scoped audit metadata with a raw TypeORM query runner', async () => {

@@ -278,42 +278,6 @@ export class TeachersRepository {
     return result.rows.map((row) => row.field_group);
   }
 
-  async insertPiiAccessEvent(input: {
-    actorUserId: number | null;
-    actorRoles: string[];
-    subjectRef: string;
-    subjectRefKeyVersion: number;
-    reasonCode: string;
-    reasonNote: string | null;
-    requestId: string | null;
-    ip: string | null;
-    userAgent: string | null;
-  }): Promise<void> {
-    await queryDataSource(
-      this.dataSource,
-      `
-        INSERT INTO pii_access_events (
-          actor_user_id, actor_roles, actor_kind, subject_student_ref,
-          subject_type, subject_ref, subject_ref_key_version, field_group,
-          reason_code, reason_note, purpose_link_id, request_id, ip, user_agent
-        )
-        VALUES ($1, $2::jsonb, 'STAFF', $3, 'TEACHER', $3, $4,
-                'NATIONAL_ID', $5, $6, NULL, $7, $8, $9)
-      `,
-      [
-        input.actorUserId,
-        JSON.stringify(input.actorRoles),
-        input.subjectRef,
-        input.subjectRefKeyVersion,
-        input.reasonCode,
-        input.reasonNote,
-        input.requestId,
-        input.ip,
-        input.userAgent,
-      ],
-    );
-  }
-
   /**
    * Existing person with the same national id, so a transferring teacher is
    * re-used instead of duplicated. Only well-formed ids are ever stored, so a
