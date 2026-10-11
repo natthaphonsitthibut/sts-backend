@@ -182,7 +182,7 @@ async function main() {
       label,
       root = 'document',
     ) => `[...${root}.querySelectorAll('button')].find((button) =>
-      button.offsetParent !== null && button.innerText.trim() === ${JSON.stringify(label)})`;
+      button.offsetParent !== null && (button.innerText.trim() === ${JSON.stringify(label)} || button.getAttribute('aria-label') === ${JSON.stringify(label)}))`;
     const stepTitles = `[...document.querySelectorAll('[data-flow-step]')].map((step) =>
       step.getAttribute('data-flow-step') + ':' + step.getAttribute('data-flow-step-title'))`;
     const openCasePage = async () => {
@@ -194,7 +194,11 @@ async function main() {
           await chrome.evaluate(
             `Boolean(document.querySelector('[data-referral-step], [data-referral-form]'))`,
           ),
-        'case page did not render a referral step',
+        async () => {
+          const state = await chrome.evaluate(`(async () => ({ path: location.pathname,
+            apiStatus: await fetch(${JSON.stringify(`${BACKEND_URL}/api/cases/`)} + ${caseId}, { credentials: 'include' }).then(r => r.status).catch(() => null) }))()`);
+          return `case page did not render a referral step: ${JSON.stringify(state)}`;
+        },
       );
       await wait(1200);
     };
@@ -565,7 +569,7 @@ async function main() {
       'the referral register did not render',
     );
     await chrome.evaluate(`(() => {
-      const field = document.querySelector('input[placeholder="ค้นหาชื่อนักเรียนหรือหน่วยงาน"]');
+      const field = document.querySelector('[data-referral-register] input[placeholder="ค้นหาชื่อนักเรียน"]');
       const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
       setter.call(field, ${JSON.stringify(enrollment.student_name)});
       field.dispatchEvent(new Event('input', { bubbles: true }));

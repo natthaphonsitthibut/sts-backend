@@ -421,7 +421,9 @@ describe('TaskAccessService home visit report context', () => {
         residence_environment_codes: ['NORMAL'],
       },
     });
-    expect(taskRepository.listStudentFollowUpHistory).toHaveBeenCalledWith(88, 5);
+    expect(taskRepository.listStudentFollowUpHistory).toHaveBeenCalledWith(88, 5, {
+      publicCase: true,
+    });
   });
 
   it('does not expose report history before identity verification', async () => {

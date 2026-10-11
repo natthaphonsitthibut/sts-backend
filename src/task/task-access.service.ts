@@ -516,9 +516,9 @@ export class TaskAccessService {
             }))
           : [];
         result.follow_up_history = Number.isInteger(caseId)
-          ? (await this.taskRepository.listStudentFollowUpHistory(caseId, 5)).map(
-              mapFollowUpHistoryRow,
-            )
+          ? (
+              await this.taskRepository.listStudentFollowUpHistory(caseId, 5, { publicCase: true })
+            ).map(mapFollowUpHistoryRow)
           : [];
         if (link.task_type === 'VISIT' && Number.isInteger(caseId)) {
           const prefill = await this.taskRepository.findRepeatVisitPrefill(

@@ -41,9 +41,23 @@ export class CaseRoundLineService {
     const caseRecord = await this.taskRepository.findCaseById(caseId, undefined, currentActor);
     if (!caseRecord) throw new NotFoundException('Case not found');
 
-    const link = await this.taskRepository.findRoundLinkForLine(caseId, taskId);
-    if (!link) throw new GoneException('ลิงก์มอบหมายนี้ปิดแล้ว');
+    let link = await this.taskRepository.findRoundLinkForLine(caseId, taskId);
+    if (!link || new Date(link.expires_at).getTime() <= Date.now())
+      throw new GoneException('ลิงก์มอบหมายนี้ปิดแล้ว');
     const actorId = resolveAuditActorId(currentActor);
+    if (
+      link.line_delivery_request_id === deliveryRequestId &&
+      link.line_delivery_teacher_id === link.assigned_teacher_id &&
+      (link.line_delivery_status === 'SENT' || link.line_delivery_status === 'FAILED')
+    ) {
+      return {
+        success: true,
+        data: {
+          status: link.line_delivery_status,
+          failure_code: link.line_delivery_failure_code,
+        },
+      };
+    }
 
     let notReady: RoundLineNotReadyCode | null = null;
     if (!link.assigned_teacher_id) notReady = 'ASSIGNEE_UNAVAILABLE';
@@ -57,6 +71,7 @@ export class CaseRoundLineService {
         link.assigned_teacher_id,
         code,
         actorId,
+        deliveryRequestId,
       );
       return { success: true, data: { status: 'NOT_READY', failure_code: code } };
     }
@@ -67,8 +82,46 @@ export class CaseRoundLineService {
       deliveryRequestId,
       actorId,
     );
-    // Someone else's send (or this one, retried) is already in flight.
-    if (!claimed) return { success: true, data: { status: 'SENDING', failure_code: null } };
+    if (claimed.kind === 'completed')
+      return {
+        success: true,
+        data: { status: claimed.status, failure_code: claimed.failure_code },
+      };
+    if (claimed.kind === 'in_flight')
+      return {
+        success: true,
+        data: { status: 'SENDING', failure_code: null },
+      };
+    if (claimed.kind === 'unavailable') throw new GoneException('ลิงก์มอบหมายนี้ปิดแล้ว');
+
+    // Read the current link after claiming: expiry/revocation/reassignment
+    // between the first read and the atomic update must never reach LINE.
+    const currentLink = await this.taskRepository.findRoundLinkForLine(caseId, taskId);
+    if (
+      !currentLink ||
+      currentLink.id !== link.id ||
+      currentLink.assigned_teacher_id !== link.assigned_teacher_id ||
+      currentLink.line_delivery_request_id !== deliveryRequestId ||
+      currentLink.line_delivery_status !== 'SENDING' ||
+      new Date(currentLink.expires_at).getTime() <= Date.now() ||
+      !currentLink.magic_link
+    ) {
+      await this.taskRepository.releaseRoundLineClaim(
+        link.id,
+        deliveryRequestId,
+        'ASSIGNEE_UNAVAILABLE',
+        actorId,
+      );
+      throw new GoneException('ลิงก์มอบหมายนี้ไม่พร้อมส่งแล้ว');
+    }
+    if (!currentLink.line_provider_user_id || currentLink.line_friend_state !== 'FRIEND') {
+      const code = currentLink.line_provider_user_id
+        ? 'ACCOUNT_NOT_REACHABLE'
+        : 'ACCOUNT_NOT_VERIFIED';
+      await this.taskRepository.releaseRoundLineClaim(link.id, deliveryRequestId, code, actorId);
+      return { success: true, data: { status: 'NOT_READY', failure_code: code } };
+    }
+    link = currentLink;
 
     const deadline = new Date(link.expires_at).toLocaleString('th-TH', {
       timeZone: BANGKOK_TIME_ZONE,

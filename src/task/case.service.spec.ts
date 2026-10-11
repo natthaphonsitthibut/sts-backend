@@ -195,6 +195,12 @@ describe('CaseService', () => {
     );
   });
 
+  it('passes authenticated scope to the complete student follow-up history', async () => {
+    const actor = buildActor(['dashboard']);
+    await service.getCase(10, actor);
+    expect(taskRepository.listStudentFollowUpHistory).toHaveBeenCalledWith(10, 5, { actor });
+  });
+
   it('opens one scoped case from the authoritative student record', async () => {
     const studentId = '11111111-1111-4111-8111-111111111111';
     const actor = buildActor(['dashboard', 'case:assign', 'case:review']);

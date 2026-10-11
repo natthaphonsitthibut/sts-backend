@@ -288,7 +288,17 @@ export interface RoundLineLinkRow {
   line_provider_user_id: string | null;
   line_friend_state: string | null;
   magic_link: string | null;
+  line_delivery_request_id: string | null;
+  line_delivery_teacher_id: string | null;
+  line_delivery_status: string;
+  line_delivery_failure_code: string | null;
 }
+
+export type RoundLineClaimResult =
+  | { kind: 'claimed' }
+  | { kind: 'in_flight' }
+  | { kind: 'completed'; status: 'SENT' | 'FAILED'; failure_code: string | null }
+  | { kind: 'unavailable' };
 
 /**
  * Where a referral stands in ส่งต่อ → รอผล → พิจารณา → ผล, the way the
@@ -1384,9 +1394,24 @@ export class TaskRepository {
    * case this link belongs to: a new case opened after an old one closed would
    * otherwise start with an empty history and hide that someone already went.
    */
-  async listStudentFollowUpHistory(caseId: number, limit = 5): Promise<QueryResultRow[]> {
+  async listStudentFollowUpHistory(
+    caseId: number,
+    limit: number,
+    access: { actor: CaseScopeContext } | { publicCase: true },
+  ): Promise<QueryResultRow[]> {
     const normalizedLimit = Number.isFinite(limit) ? Math.trunc(limit) : 5;
     const boundedLimit = Math.max(1, Math.min(normalizedLimit, 5));
+    // Staff history follows the authenticated scope. Public links are confined
+    // to the school of the case already authorized by their token.
+    const scope =
+      'actor' in access
+        ? this.buildCaseScopeQuery(access.actor, 3, 'history_case')
+        : {
+            sql: `(history_case.id = $1 OR history_case.school_id = (
+            SELECT school_id FROM cases WHERE id = $1 AND deleted_at IS NULL
+          ))`,
+            params: [],
+          };
     const result = await this.query<QueryResultRow>(
       `
       SELECT
@@ -1401,6 +1426,7 @@ export class TaskRepository {
         problem_category.guidance_th AS follow_up_problem_category_guidance,
         exception.label_th AS exception_label
       FROM tasks task
+      JOIN cases history_case ON history_case.id = task.case_id AND history_case.deleted_at IS NULL
       JOIN task_links link
         ON link.task_id = task.id
         AND link.deleted_at IS NULL
@@ -1424,12 +1450,13 @@ export class TaskRepository {
           UNION
           SELECT $1::int
         )
+        ${scope.sql ? `AND (${scope.sql})` : ''}
         AND task.task_type = 'VISIT'
         AND task.deleted_at IS NULL
       ORDER BY submission.submitted_at DESC, submission.id DESC
       LIMIT $2
       `,
-      [caseId, boundedLimit],
+      [caseId, boundedLimit, ...scope.params],
     );
     return result.rows;
   }
@@ -3800,6 +3827,10 @@ export class TaskRepository {
         tl.task_id,
         tl.status,
         tl.expires_at,
+        tl.line_delivery_request_id,
+        tl.line_delivery_teacher_id::text AS line_delivery_teacher_id,
+        tl.line_delivery_status,
+        tl.line_delivery_failure_code,
         tl.token_encrypted,
         tl.assigned_teacher_id::text AS assigned_teacher_id,
         t.task_type,
@@ -3819,6 +3850,9 @@ export class TaskRepository {
         AND tl.task_id = $2::uuid
         AND tl.deleted_at IS NULL
         AND tl.status IN ('ACTIVE', 'SCHEDULED')
+        AND tl.expires_at > clock_timestamp()
+        AND COALESCE(tl.admin_locked, 0) <> 1
+        AND c.deleted_at IS NULL
       ORDER BY tl.created_at DESC, tl.id DESC
       LIMIT 1
     `,
@@ -3838,6 +3872,7 @@ export class TaskRepository {
     teacherId: string | null,
     failureCode: RoundLineNotReadyCode,
     actorId: number | null,
+    deliveryRequestId: string,
   ): Promise<void> {
     await this.query(
       `UPDATE task_links
@@ -3847,8 +3882,13 @@ export class TaskRepository {
            line_delivery_request_id = NULL,
            line_delivered_at = NULL,
            updated_by = $4
-       WHERE id = $1::uuid AND status IN ('ACTIVE', 'SCHEDULED')`,
-      [linkId, teacherId, failureCode, actorId],
+       WHERE id = $1::uuid AND status IN ('ACTIVE', 'SCHEDULED')
+         AND assigned_teacher_id IS NOT DISTINCT FROM $2::bigint
+         AND deleted_at IS NULL AND COALESCE(admin_locked, 0) <> 1
+         AND expires_at > clock_timestamp()
+         AND line_delivery_status <> 'SENDING'
+         AND line_delivery_request_id IS DISTINCT FROM $5::uuid`,
+      [linkId, teacherId, failureCode, actorId, deliveryRequestId],
     );
   }
 
@@ -3862,7 +3902,7 @@ export class TaskRepository {
     teacherId: string,
     deliveryRequestId: string,
     actorId: number | null,
-  ): Promise<boolean> {
+  ): Promise<RoundLineClaimResult> {
     const result = await this.query<{ id: string }>(
       `UPDATE task_links
        SET line_delivery_teacher_id = $2::bigint,
@@ -3875,6 +3915,10 @@ export class TaskRepository {
            updated_by = $4
        WHERE id = $1::uuid
          AND status IN ('ACTIVE', 'SCHEDULED')
+         AND deleted_at IS NULL AND COALESCE(admin_locked, 0) <> 1
+         AND expires_at > clock_timestamp()
+         AND EXISTS (SELECT 1 FROM tasks t JOIN cases c ON c.id = t.case_id
+           WHERE t.id = task_links.task_id AND t.deleted_at IS NULL AND c.deleted_at IS NULL)
          AND assigned_teacher_id = $2::bigint
          AND (
            line_delivery_status <> 'SENDING'
@@ -3884,7 +3928,57 @@ export class TaskRepository {
        RETURNING id`,
       [linkId, teacherId, deliveryRequestId, actorId],
     );
-    return result.rows.length > 0;
+    if (result.rows.length > 0) return { kind: 'claimed' };
+    // A rejected claim may be a completed transport retry, a concurrent send,
+    // or a revoked/reassigned link. Never report all three as SENDING.
+    const current = await this.query<{
+      line_delivery_request_id: string | null;
+      line_delivery_teacher_id: string | null;
+      line_delivery_status: string;
+      line_delivery_failure_code: string | null;
+    }>(
+      `SELECT line_delivery_request_id, line_delivery_teacher_id::text AS line_delivery_teacher_id,
+         line_delivery_status, line_delivery_failure_code
+       FROM task_links
+       WHERE id = $1::uuid AND assigned_teacher_id = $2::bigint
+         AND status IN ('ACTIVE', 'SCHEDULED')
+         AND deleted_at IS NULL AND COALESCE(admin_locked, 0) <> 1
+         AND expires_at > clock_timestamp()
+         AND EXISTS (SELECT 1 FROM tasks t JOIN cases c ON c.id = t.case_id
+           WHERE t.id = task_links.task_id AND t.deleted_at IS NULL AND c.deleted_at IS NULL)`,
+      [linkId, teacherId],
+    );
+    const row = current.rows[0];
+    if (!row) return { kind: 'unavailable' };
+    if (
+      row.line_delivery_request_id === deliveryRequestId &&
+      row.line_delivery_teacher_id === teacherId &&
+      (row.line_delivery_status === 'SENT' || row.line_delivery_status === 'FAILED')
+    ) {
+      return {
+        kind: 'completed',
+        status: row.line_delivery_status,
+        failure_code: row.line_delivery_failure_code,
+      };
+    }
+    return row.line_delivery_status === 'SENDING' ? { kind: 'in_flight' } : { kind: 'unavailable' };
+  }
+
+  /** Release only our own unsent claim when the post-claim snapshot is no longer usable. */
+  async releaseRoundLineClaim(
+    linkId: string,
+    deliveryRequestId: string,
+    failureCode: RoundLineNotReadyCode,
+    actorId: number | null,
+  ): Promise<void> {
+    await this.query(
+      `UPDATE task_links SET line_delivery_status = 'NOT_READY',
+         line_delivery_failure_code = $3, line_delivery_request_id = NULL,
+         line_delivered_at = NULL, updated_by = $4
+       WHERE id = $1::uuid AND line_delivery_request_id = $2::uuid
+         AND line_delivery_status = 'SENDING'`,
+      [linkId, deliveryRequestId, failureCode, actorId],
+    );
   }
 
   async finishRoundLine(
@@ -4070,11 +4164,24 @@ export class TaskRepository {
         COUNT(*)::int AS referral_count,
         COUNT(*) FILTER (
           WHERE referral.status_code IN ('REFERRED', 'ACCEPTED')
-            AND referral.referred_at < now() - INTERVAL '14 days'
+            AND latest_report_link.status_code IN ('ACTIVE', 'EXPIRED', 'LOCKED')
+            AND latest_report_link.cancelled_at IS NULL
+            AND latest_report_link.expires_at <= now()
+            AND NOT EXISTS (
+              SELECT 1 FROM case_referral_results recorded
+              WHERE recorded.case_referral_id = referral.id
+            )
         )::int AS overdue_count
       FROM case_referrals referral
       JOIN cases c ON c.id = referral.case_id AND c.deleted_at IS NULL
       JOIN referral_agencies agency ON agency.id = referral.referral_agency_id
+      LEFT JOIN LATERAL (
+        SELECT link.status_code, link.expires_at, link.cancelled_at
+        FROM case_referral_links link
+        WHERE link.case_referral_id = referral.id
+        ORDER BY link.created_at DESC, link.id DESC
+        LIMIT 1
+      ) latest_report_link ON true
       WHERE 1=1${scopeSql}
       GROUP BY referral.status_code, stage_code, agency.agency_name
       ORDER BY referral.status_code, stage_code, agency.agency_name

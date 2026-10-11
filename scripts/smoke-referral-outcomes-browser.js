@@ -265,7 +265,7 @@ async function main() {
       assert(!registerText.includes(retired), `register still shows ${retired}`);
     }
     await chrome.evaluate(`(() => {
-      const field = document.querySelector('input[placeholder="ค้นหาชื่อนักเรียนหรือหน่วยงาน"]');
+      const field = document.querySelector('[data-referral-register] input[placeholder="ค้นหาชื่อนักเรียน"]');
       const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
       setter.call(field, ${JSON.stringify(enrollment.student_name)});
       field.dispatchEvent(new Event('input', { bubbles: true }));

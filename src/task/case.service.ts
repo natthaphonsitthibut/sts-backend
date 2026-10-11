@@ -476,7 +476,7 @@ export class CaseService {
       this.taskRepository.listCaseReviews(caseId),
       this.taskRepository.listCaseRiskSignals(caseId),
       this.taskRepository.listCaseReferrals(caseId),
-      this.taskRepository.listStudentFollowUpHistory(caseId, 5),
+      this.taskRepository.listStudentFollowUpHistory(caseId, 5, { actor: currentActor }),
     ]);
     const mapped = await this.withApproximateHomeLocation(
       this.mapCaseDetail(detail, this.taskPolicyService.hasPermission(currentActor, 'students')),
