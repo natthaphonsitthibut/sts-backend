@@ -12,6 +12,7 @@ import type {
   ActorContext,
   FollowUpAreaFilters,
   ReferralDrilldownFilters,
+  RiskDashboardFilterOptionsFilters,
   RiskDashboardFilters,
   RiskDashboardThresholds,
   RiskDashboardTier,
@@ -29,6 +30,17 @@ export class TaskStatsService {
     private readonly taskRepository: TaskRepository,
     private readonly taskPolicyService: TaskPolicyService,
   ) {}
+
+  async getRiskDashboardFilterOptions(
+    actor?: ActorContext,
+    filters: RiskDashboardFilterOptionsFilters = {},
+  ) {
+    const currentActor = this.taskPolicyService.ensureActor(actor);
+    return {
+      success: true,
+      data: await this.taskRepository.getRiskDashboardFilterOptions(currentActor, filters),
+    };
+  }
 
   async getCases(actor?: ActorContext, filters: CaseListFilters = {}) {
     const currentActor = this.taskPolicyService.ensureActor(actor);
@@ -193,6 +205,8 @@ export class TaskStatsService {
           studentName: row.student_name,
           schoolId: row.school_id == null ? null : Number(row.school_id),
           schoolName: row.school_name ?? null,
+          academicYear: row.academic_year == null ? null : Number(row.academic_year),
+          semester: row.semester == null ? null : Number(row.semester),
           studentId,
           studentPhotoUrl:
             studentId && row.photo_storage_key
@@ -283,6 +297,8 @@ export class TaskStatsService {
             : null,
           schoolId: row.school_id,
           schoolName: row.school_name,
+          academicYear: row.academic_year == null ? null : Number(row.academic_year),
+          semester: row.semester == null ? null : Number(row.semester),
           grade: row.grade,
           room: row.room,
           consecutiveAbsentDays: Number(row.consecutive_absent_days ?? 0),

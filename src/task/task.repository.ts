@@ -19,6 +19,8 @@ import type {
   ReferralDrilldownFilters,
   RiskDashboardCaseStatusSummary,
   RiskDashboardConcernLevelSummary,
+  RiskDashboardFilterOptions,
+  RiskDashboardFilterOptionsFilters,
   RiskDashboardFilters,
   RiskDashboardResult,
   RiskDashboardRow,
@@ -2686,12 +2688,110 @@ export class TaskRepository {
     return Number.parseInt(String(result.rows[0]?.count || '0'), 10);
   }
 
+  async getRiskDashboardFilterOptions(
+    actor: ActorContext,
+    filters: RiskDashboardFilterOptionsFilters = {},
+  ): Promise<RiskDashboardFilterOptions> {
+    if (actor.data_scope?.own_only === true || isUnconfiguredDataScope(actor.data_scope)) {
+      return { grades: [], rooms: [], terms: [] };
+    }
+
+    const scope = buildDataScopeQuery(actor.data_scope ?? {}, {
+      school_id: 's."SchoolID_Onec"',
+      grade: 's."GradeLevelID_Onec"',
+      room: 's."RoomID_Onec"::text',
+      province: 'sc.province',
+      district: 'sc.district',
+      sub_district: 'sc.sub_district',
+    });
+    const params: unknown[] = [...scope.params];
+    const conditions = scope.sql ? [`(${scope.sql})`] : [];
+    for (const [column, value] of [
+      ['sc.province', filters.province],
+      ['sc.district', filters.district],
+      ['sc.sub_district', filters.subDistrict],
+      ['s."SchoolID_Onec"', filters.schoolId],
+    ] as const) {
+      if (value !== undefined && value !== '') {
+        params.push(value);
+        conditions.push(`${column} = $${params.length}`);
+      }
+    }
+    const termConditions: string[] = [];
+    for (const [column, value] of [
+      ['academic_year', filters.academicYear],
+      ['semester', filters.semester],
+    ] as const) {
+      if (value !== undefined) {
+        params.push(value);
+        termConditions.push(`${column} = $${params.length}`);
+      }
+    }
+    let roomGradeCondition = '';
+    if (filters.grade) {
+      params.push(filters.grade);
+      roomGradeCondition = `AND grade_label = $${params.length}`;
+    }
+    // Choices cover retained enrollment history as well as the current term.
+    // Authorization and requested geography apply before options aggregation.
+    const result = await this.query<QueryResultRow & RiskDashboardFilterOptions>(
+      `WITH scoped_enrollments AS (
+        SELECT
+          gl.id AS grade_id,
+          gl.label AS grade_label,
+          s."RoomID_Onec"::text AS room,
+          s."AcademicYear_Onec" AS academic_year,
+          s."Semester_Onec" AS semester
+        FROM student_term s
+        LEFT JOIN schools sc ON s."SchoolID_Onec" = sc.id
+        LEFT JOIN grade_levels gl ON s."GradeLevelID_Onec" = gl.id
+        WHERE s.deleted_at IS NULL${conditions.length ? ` AND ${conditions.join(' AND ')}` : ''}
+      ), selected_term_enrollments AS (
+        SELECT * FROM scoped_enrollments
+        ${termConditions.length ? `WHERE ${termConditions.join(' AND ')}` : ''}
+      )
+      SELECT
+        COALESCE((
+          SELECT jsonb_agg(jsonb_build_object('value', grade_label, 'label', grade_label)
+                           ORDER BY grade_id, grade_label)
+          FROM (
+            SELECT grade_label, MIN(grade_id) AS grade_id
+            FROM selected_term_enrollments
+            WHERE grade_label IS NOT NULL AND TRIM(grade_label) <> ''
+            GROUP BY grade_label
+          ) grades
+        ), '[]'::jsonb) AS grades,
+        COALESCE((
+          SELECT jsonb_agg(room ORDER BY LENGTH(room), room)
+          FROM (
+            SELECT DISTINCT room FROM selected_term_enrollments
+            WHERE room IS NOT NULL AND TRIM(room) <> '' ${roomGradeCondition}
+          ) rooms
+        ), '[]'::jsonb) AS rooms,
+        COALESCE((
+          SELECT jsonb_agg(jsonb_build_object('academicYear', academic_year, 'semester', semester)
+                           ORDER BY academic_year DESC, semester DESC)
+          FROM (
+            SELECT DISTINCT academic_year, semester FROM scoped_enrollments
+            WHERE academic_year > 0 AND semester > 0
+          ) terms
+        ), '[]'::jsonb) AS terms`,
+      params,
+    );
+    const options = result.rows[0];
+    return {
+      grades: options?.grades ?? [],
+      rooms: options?.rooms ?? [],
+      terms: options?.terms ?? [],
+    };
+  }
+
   async listRiskDashboardStudents(
     actor: ActorContext,
     filters: RiskDashboardFilters,
     thresholds: RiskDashboardThresholds,
   ): Promise<RiskDashboardResult> {
-    if (actor.data_scope?.own_only === true) {
+    if (actor.data_scope?.own_only === true || isUnconfiguredDataScope(actor.data_scope)) {
       return {
         rows: [],
         totalCount: 0,
@@ -2763,8 +2863,9 @@ export class TaskRepository {
       );
     }
 
+    conditions.push('s.deleted_at IS NULL');
     // A risk row exists only once a case was opened. A watchlist row exists
-    // only after a teacher left a comment for the student's current classroom.
+    // only after a teacher left a comment for that enrollment's classroom.
     // Keep that product distinction in SQL before pagination and counting.
     const studentGroupConditions =
       filters.studentGroup === 'RISK'
@@ -2784,6 +2885,8 @@ export class TaskRepository {
           person.updated_at AS photo_updated_at,
           COALESCE(gl.label, 'ไม่ทราบ') AS grade,
           s."RoomID_Onec"::text AS room,
+          s."AcademicYear_Onec" AS academic_year,
+          s."Semester_Onec" AS semester,
           sc.name AS school_name,
           COALESCE(profile.consecutive_absent_days, 0)::int AS consecutive_absent_days,
           COALESCE(profile.absent_days_since_case_reset, 0)::int AS absent_days_since_case_reset,
@@ -2824,10 +2927,6 @@ export class TaskRepository {
           ) AS teacher_comment,
           (profile.student_uuid IS NULL) AS missing_profile
         FROM student_term s
-        JOIN student_current_enrollment_resolution current_enrollment
-          ON current_enrollment.person_uuid = s.person_uuid
-         AND current_enrollment.selected_student_uuid = s.student_uuid
-         AND current_enrollment.resolution_state = 'ACTIVE'
         LEFT JOIN student_person person ON person.person_uuid = s.person_uuid
         LEFT JOIN grade_levels gl ON s."GradeLevelID_Onec" = gl.id
         LEFT JOIN schools sc ON s."SchoolID_Onec" = sc.id
@@ -3032,6 +3131,8 @@ export class TaskRepository {
           school_name,
           grade,
           room,
+          academic_year,
+          semester,
           consecutive_absent_days,
           absent_days_since_case_reset,
           term_absent_days,
@@ -4076,17 +4177,24 @@ export class TaskRepository {
       params.push(filters.schoolId);
       conditions.push(`c.school_id = $${params.length}`);
     }
-    if (filters.grade) {
-      params.push(filters.grade);
-      conditions.push(
-        `EXISTS (SELECT 1 FROM student_term class_student JOIN grade_levels class_grade ON class_grade.id = class_student."GradeLevelID_Onec" WHERE class_student.student_uuid = c.student_uuid AND class_grade.label = $${params.length})`,
-      );
+    const enrollmentConditions = ['class_student.student_uuid = c.student_uuid'];
+    for (const [column, value] of [
+      ['class_grade.label', filters.grade],
+      ['class_student."RoomID_Onec"::text', filters.room],
+      ['class_student."AcademicYear_Onec"', filters.academicYear],
+      ['class_student."Semester_Onec"', filters.semester],
+    ] as const) {
+      if (value !== undefined && value !== '') {
+        params.push(value);
+        enrollmentConditions.push(`${column} = $${params.length}`);
+      }
     }
-    if (filters.room) {
-      params.push(filters.room);
-      conditions.push(
-        `EXISTS (SELECT 1 FROM student_term class_student WHERE class_student.student_uuid = c.student_uuid AND class_student."RoomID_Onec"::text = $${params.length})`,
-      );
+    if (enrollmentConditions.length > 1) {
+      conditions.push(`EXISTS (
+        SELECT 1 FROM student_term class_student
+        LEFT JOIN grade_levels class_grade ON class_grade.id = class_student."GradeLevelID_Onec"
+        WHERE ${enrollmentConditions.join(' AND ')}
+      )`);
     }
     return conditions.map((condition) => ` AND ${condition}`).join('');
   }
@@ -4255,6 +4363,7 @@ export class TaskRepository {
           c.student_name, c.school_id,
           school.name AS school_name, grade.label AS grade,
           student."RoomID_Onec"::text AS room,
+          student."AcademicYear_Onec" AS academic_year, student."Semester_Onec" AS semester,
           person.photo_storage_key, person.updated_at AS photo_updated_at,
           referral.status_code, referral.referred_at,
           ${REFERRAL_STAGE_SQL} AS stage_code,

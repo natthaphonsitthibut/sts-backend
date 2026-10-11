@@ -10,6 +10,7 @@ import {
   FollowUpSummaryQueryDto,
   GetCasesQueryDto,
   GetReferralDrilldownQueryDto,
+  GetRiskDashboardFilterOptionsQueryDto,
   GetRiskDashboardQueryDto,
 } from './dto/task.dto';
 import { TaskService } from './task.service';
@@ -58,6 +59,8 @@ export class StatsController {
     @CurrentUser() actor?: AuthenticatedRequestUser,
   ) {
     return await this.taskService.getFollowUpSummary(actor, {
+      academicYear: query.academicYear,
+      semester: query.semester,
       province: query.province?.trim() || undefined,
       district: query.district?.trim() || undefined,
       subDistrict: query.subDistrict?.trim() || undefined,
@@ -77,6 +80,8 @@ export class StatsController {
     return await this.taskService.getReferralDrilldown(
       actor,
       {
+        academicYear: query.academicYear,
+        semester: query.semester,
         province: query.province?.trim() || undefined,
         district: query.district?.trim() || undefined,
         subDistrict: query.subDistrict?.trim() || undefined,
@@ -90,6 +95,24 @@ export class StatsController {
       query.page,
       query.limit,
     );
+  }
+
+  @Get('dashboard/risk-watchlist/filter-options')
+  @UseGuards(AuthGuard, PermissionsGuard)
+  @RequirePermission('dashboard')
+  async getRiskDashboardFilterOptions(
+    @Query() query: GetRiskDashboardFilterOptionsQueryDto,
+    @CurrentUser() actor?: AuthenticatedRequestUser,
+  ) {
+    return await this.taskService.getRiskDashboardFilterOptions(actor, {
+      province: query.province?.trim() || undefined,
+      district: query.district?.trim() || undefined,
+      subDistrict: query.subDistrict?.trim() || undefined,
+      schoolId: query.schoolId,
+      grade: query.grade?.trim() || undefined,
+      academicYear: query.academicYear,
+      semester: query.semester,
+    });
   }
 
   @Get('dashboard/risk-watchlist')

@@ -51,6 +51,8 @@ export interface FollowUpAreaFilters {
   district?: string;
   subDistrict?: string;
   schoolId?: number;
+  academicYear?: number;
+  semester?: number;
   /** ชั้น label and ห้อง number of the student's enrollment, as the risk tabs filter. */
   grade?: string;
   room?: string;
@@ -99,6 +101,18 @@ export interface RiskDashboardThresholds {
   highAbsentDays: number;
 }
 
+/** Enrollment-backed filter choices, narrowed within the authenticated scope. */
+export type RiskDashboardFilterOptionsFilters = Pick<
+  RiskDashboardFilters,
+  'province' | 'district' | 'subDistrict' | 'schoolId' | 'grade' | 'academicYear' | 'semester'
+>;
+
+export interface RiskDashboardFilterOptions {
+  grades: Array<{ value: string; label: string }>;
+  rooms: string[];
+  terms: Array<{ academicYear: number; semester: number }>;
+}
+
 export interface RiskDashboardSummary {
   HIGH: number;
   WATCH: number;
@@ -122,6 +136,8 @@ export interface RiskDashboardCaseStatusSummary {
 }
 
 export interface RiskDashboardRow extends QueryResultRow {
+  academic_year?: number | null;
+  semester?: number | null;
   student_uuid: string;
   student_name: string;
   photo_storage_key: string | null;

@@ -401,7 +401,9 @@ describe('TaskRepository', () => {
     expect(queries[0].params).toEqual([[101], 101, '%เด็ก%', 'HIGH']);
     expect(queries[1].params).toEqual([[101], 101, '%เด็ก%', 'HIGH']);
     expect(queries[2].params).toEqual([[101], 101, '%เด็ก%', 'HIGH', 10, 10]);
-    expect(queries[0].sql).toContain('student_current_enrollment_resolution');
+    expect(queries[0].sql).not.toContain('student_current_enrollment_resolution');
+    expect(queries[0].sql).toContain('s.deleted_at IS NULL');
+    expect(queries[0].sql).toContain('s."AcademicYear_Onec" AS academic_year');
     expect(queries[0].sql).toContain('LEFT JOIN student_risk_profiles profile');
     expect(queries[0].sql).toContain('profile.term_absent_days');
     expect(queries[0].sql).toContain('profile.absence_reset_after_date');
@@ -448,7 +450,7 @@ describe('TaskRepository', () => {
         username: 'dashboard-admin',
         roles: ['ADMIN'],
         permissions: ['dashboard', 'students'],
-        data_scope: {},
+        data_scope: { global: true },
       },
       { studentGroup: 'WATCHLIST', page: 1, limit: 20, sortBy: 'problemCategory' },
       { highAbsentDays: 3 },
@@ -498,6 +500,7 @@ describe('TaskRepository', () => {
         username: 'national-admin',
         roles: ['ADMIN'],
         permissions: ['dashboard'],
+        data_scope: { global: true },
       },
       {},
       { highAbsentDays: 3 },
@@ -512,6 +515,7 @@ describe('TaskRepository', () => {
         username: 'national-admin',
         roles: ['ADMIN'],
         permissions: ['dashboard'],
+        data_scope: { global: true },
       },
       { searchTerm: 'เด็ก_100%' },
       { highAbsentDays: 3 },
@@ -521,45 +525,48 @@ describe('TaskRepository', () => {
     expect(queries[0].sql).not.toContain('s."PersonID_Onec" ILIKE');
   });
 
-  it('fails closed for own-only actors on the risk dashboard', async () => {
-    const queryRunner = {
-      connect: jest.fn().mockResolvedValue(undefined),
-      release: jest.fn().mockResolvedValue(undefined),
-      query: jest.fn(),
-    };
-    const dataSource = { createQueryRunner: jest.fn(() => queryRunner) };
-    const repository = new TaskRepository(
-      dataSource as never,
-      undefined as never,
-      undefined as never,
-    );
+  it.each([undefined, {}, { own_only: true }, { school_ids: [] }])(
+    'fails closed for missing or denied dashboard scope %j',
+    async (scope) => {
+      const queryRunner = {
+        connect: jest.fn().mockResolvedValue(undefined),
+        release: jest.fn().mockResolvedValue(undefined),
+        query: jest.fn(),
+      };
+      const dataSource = { createQueryRunner: jest.fn(() => queryRunner) };
+      const repository = new TaskRepository(
+        dataSource as never,
+        undefined as never,
+        undefined as never,
+      );
 
-    await expect(
-      repository.listRiskDashboardStudents(
-        {
-          id: 7,
-          username: 'student-like',
-          roles: ['STUDENT'],
-          permissions: ['dashboard'],
-          data_scope: { own_only: true },
+      await expect(
+        repository.listRiskDashboardStudents(
+          {
+            id: 7,
+            username: 'student-like',
+            roles: ['STUDENT'],
+            permissions: ['dashboard'],
+            data_scope: scope,
+          },
+          {},
+          { highAbsentDays: 3 },
+        ),
+      ).resolves.toEqual({
+        rows: [],
+        totalCount: 0,
+        summary: { HIGH: 0, WATCH: 0, NORMAL: 0 },
+        caseStatusSummary: {
+          OPEN: 0,
+          IN_PROGRESS: 0,
+          PENDING_REVIEW: 0,
+          STUDENT_NOT_FOUND: 0,
         },
-        {},
-        { highAbsentDays: 3 },
-      ),
-    ).resolves.toEqual({
-      rows: [],
-      totalCount: 0,
-      summary: { HIGH: 0, WATCH: 0, NORMAL: 0 },
-      caseStatusSummary: {
-        OPEN: 0,
-        IN_PROGRESS: 0,
-        PENDING_REVIEW: 0,
-        STUDENT_NOT_FOUND: 0,
-      },
-      concernLevelSummary: { NOTE: 0, WATCH: 0, CONCERN: 0 },
-    });
-    expect(queryRunner.query).not.toHaveBeenCalled();
-  });
+        concernLevelSummary: { NOTE: 0, WATCH: 0, CONCERN: 0 },
+      });
+      expect(queryRunner.query).not.toHaveBeenCalled();
+    },
+  );
 
   it('transitions a case from an active tracking status only', async () => {
     const queries: Array<{ sql: string; params?: unknown[] }> = [];

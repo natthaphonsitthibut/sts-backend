@@ -33,6 +33,18 @@ export type CaseResolutionOutcome =
 /** The global school/area filter, applied on top of the actor's own scope. */
 export class FollowUpSummaryQueryDto {
   @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  academicYear?: number;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  semester?: number;
+
+  @IsOptional()
   @IsString()
   @MaxLength(50)
   grade?: string;
@@ -73,6 +85,18 @@ export const REFERRAL_STAGE_CODES = [
 export type ReferralStageCode = (typeof REFERRAL_STAGE_CODES)[number];
 
 export class GetReferralDrilldownQueryDto extends PaginatedSearchQueryDto {
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  academicYear?: number;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  semester?: number;
+
   @IsOptional()
   @IsString()
   @MaxLength(50)
@@ -703,6 +727,46 @@ export class GetRiskDashboardQueryDto extends PaginationQueryDto {
   @IsOptional()
   @IsIn(RISK_DASHBOARD_SORT_DIRECTIONS)
   sortDirection?: (typeof RISK_DASHBOARD_SORT_DIRECTIONS)[number];
+}
+
+export class GetRiskDashboardFilterOptionsQueryDto {
+  @IsOptional()
+  @IsString()
+  @MaxLength(150)
+  province?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(150)
+  district?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(150)
+  subDistrict?: string;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  schoolId?: number;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(50)
+  grade?: string;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  academicYear?: number;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  semester?: number;
 }
 
 export class AdminLockLinkDto {

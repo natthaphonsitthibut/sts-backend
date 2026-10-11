@@ -1,8 +1,47 @@
+import { ForbiddenException } from '@nestjs/common';
 import { TaskPolicyService } from './task-policy.service';
 import { TaskRepository } from './task.repository';
 import { TaskStatsService } from './task-stats.service';
 
 describe('TaskStatsService', () => {
+  it('rejects anonymous report filter requests before reading enrollment options', async () => {
+    const getOptions = jest.fn();
+    const repository = {
+      getRiskDashboardFilterOptions: getOptions,
+    } as unknown as TaskRepository;
+    const service = new TaskStatsService(repository, new TaskPolicyService(repository));
+    await expect(service.getRiskDashboardFilterOptions()).rejects.toBeInstanceOf(
+      ForbiddenException,
+    );
+    expect(getOptions).not.toHaveBeenCalled();
+  });
+
+  it('returns the enrollment-backed option envelope within the authenticated actor scope', async () => {
+    const actor = {
+      id: 7,
+      username: 'province-reader',
+      roles: ['EXECUTIVE'],
+      permissions: ['dashboard'],
+      data_scope: { provinces: ['ขอนแก่น'] },
+    };
+    const filters = { academicYear: 2569, semester: 1, grade: 'ม.1' };
+    const options = {
+      grades: [{ value: 'ม.1', label: 'ม.1' }],
+      rooms: ['1', '2'],
+      terms: [{ academicYear: 2569, semester: 1 }],
+    };
+    const getOptions = jest.fn().mockResolvedValue(options);
+    const repository = {
+      getRiskDashboardFilterOptions: getOptions,
+    } as unknown as TaskRepository;
+    const service = new TaskStatsService(repository, new TaskPolicyService(repository));
+    await expect(service.getRiskDashboardFilterOptions(actor, filters)).resolves.toEqual({
+      success: true,
+      data: options,
+    });
+    expect(getOptions).toHaveBeenCalledWith(actor, filters);
+  });
+
   it('returns follow-up outcomes and referral backlog for an EXECUTIVE', async () => {
     const actor = {
       id: 70,
