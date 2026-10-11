@@ -20,6 +20,7 @@ export interface CompleteNlQueryLogInput {
   rowCount: number;
   retryCount: number;
   elapsedMs: number;
+  conversationId: string | null;
 }
 
 @Injectable()
@@ -53,6 +54,7 @@ export class NlQueryLogService {
       rowCount: input.rowCount,
       retryCount: input.retryCount,
       elapsedMs: input.elapsedMs,
+      conversationId: input.conversationId,
       completedAt: new Date(),
     });
   }
