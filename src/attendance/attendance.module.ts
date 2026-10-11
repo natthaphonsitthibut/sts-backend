@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { AutomationModule } from '../automation/automation.module';
 import { TokenEncryptionModule } from '../common/crypto/token-encryption.module';
 import { AttendanceService } from './attendance.service';
 import { AttendanceController } from './attendance.controller';
@@ -16,7 +17,13 @@ import { ExceptionAttendanceService } from './exception-attendance.service';
 import { AttendanceImportService } from './attendance-import.service';
 
 @Module({
-  imports: [AuthModule, RiskProfileModule, TokenEncryptionModule, FileStorageModule],
+  imports: [
+    AuthModule,
+    RiskProfileModule,
+    TokenEncryptionModule,
+    FileStorageModule,
+    AutomationModule,
+  ],
   controllers: [AttendanceController, PublicLocationsController],
   providers: [
     AttendanceRepository,

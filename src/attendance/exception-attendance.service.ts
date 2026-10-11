@@ -8,6 +8,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import type { AuthenticatedRequestUser } from '../auth';
+import { AutomationService } from '../automation/automation.service';
 import { AuditLogService } from '../audit-log/audit-log.service';
 import { resolveAuditActorId } from '../common/audit/audit-actor.util';
 import { getBangkokDateString, getBangkokDayBounds } from '../common/utils/date.util';
@@ -43,6 +44,7 @@ export class ExceptionAttendanceService {
     private readonly audit: AuditLogService,
     private readonly riskProfiles: RiskProfileService,
     @Inject(FILE_STORAGE_ADAPTER) private readonly storage: FileStorageAdapter,
+    private readonly automation: AutomationService,
   ) {}
 
   private assertActorMatches(
@@ -512,17 +514,22 @@ export class ExceptionAttendanceService {
       };
     });
 
-    if (outcome.changed) {
-      try {
-        await this.riskProfiles.requestStudentRecalculation(
-          outcome.roster,
-          'exception-attendance-submit',
-        );
-      } catch {
-        this.logger.warn(
-          `Risk recalculation failed after attendance session ${outcome.session.id} for ${outcome.roster.length} student(s)`,
-        );
-      }
+    // Attendance is committed before the monitor reads effective daily records.
+    // Also retry on an identical submit: a previous post-commit monitor failure
+    // must be recoverable without rewriting the saved attendance.
+    await this.automation.checkConsecutiveAbsences(outcome.roster);
+
+    try {
+      await this.riskProfiles.requestStudentRecalculation(
+        outcome.roster,
+        'exception-attendance-submit',
+        true,
+      );
+    } catch (error) {
+      this.logger.error(
+        `Risk recalculation failed after attendance session ${outcome.session.id}; retry the saved submission`,
+      );
+      throw error;
     }
     return {
       success: true,

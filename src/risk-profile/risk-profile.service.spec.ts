@@ -156,6 +156,13 @@ describe('RiskProfileService', () => {
     });
   }
 
+  it('recalculates a whole classroom immediately when the caller requires fresh attendance risk', async () => {
+    const students = Array.from({ length: 30 }, (_, index) => `student-${index}`);
+    await service.requestStudentRecalculation(students, 'exception-attendance-submit', true);
+    expect(repository.recalculateStudents).toHaveBeenCalledWith(students, expect.any(Object));
+    expect(queue.add).not.toHaveBeenCalled();
+  });
+
   it('coalesces repeated events for the same cohort into one drain job', async () => {
     for (let index = 0; index < 100; index += 1) {
       await service.enqueueStudents(['student-1', 'student-2'], 'attendance-save');

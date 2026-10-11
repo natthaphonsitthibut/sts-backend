@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { DataSource } from 'typeorm';
 import { queryDataSource } from '../database/sql-query';
+import { CASE_COMMENT_COMPLETION_BASELINE_SQL } from '../task/case-comment-baseline.sql';
 import type { RiskDashboardThresholds } from '../task/task.types';
 
 interface CountRow extends Record<string, unknown> {
@@ -268,7 +269,11 @@ export class RiskProfileRepository {
             COUNT(*)::int AS teacher_signal_count,
             MAX(signal.created_at) AS latest_signal_at
           FROM selected_students s
+          LEFT JOIN LATERAL (
+            ${CASE_COMMENT_COMPLETION_BASELINE_SQL}
+          ) comment_baseline ON TRUE
           JOIN teacher_signal_events signal ON signal.person_uuid = s.person_uuid
+            AND signal.created_at > COALESCE(comment_baseline.completed_at, '-infinity'::timestamptz)
           GROUP BY s.student_uuid
         ),
         case_summary AS (
@@ -290,7 +295,10 @@ export class RiskProfileRepository {
             LIMIT 1
           ) latest_task ON true
           WHERE c.deleted_at IS NULL
-            AND c.status IN ('OPEN', 'IN_PROGRESS', 'PENDING_REVIEW', 'STUDENT_NOT_FOUND')
+            AND c.status IN (
+              'OPEN', 'IN_PROGRESS', 'PENDING_REVIEW', 'STUDENT_NOT_FOUND', 'AWAITING_REFERRAL',
+              'AWAITING_REFERRAL_OUTCOME'
+            )
           GROUP BY c.student_uuid
         ),
         metrics AS (

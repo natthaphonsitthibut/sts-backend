@@ -1,4 +1,5 @@
 import { BadRequestException, ConflictException, ForbiddenException } from '@nestjs/common';
+import { AutomationService } from '../automation/automation.service';
 import { AuditLogService } from '../audit-log/audit-log.service';
 import type { FileStorageAdapter } from '../files/storage/file-storage.types';
 import { RiskProfileService } from '../risk-profile/risk-profile.service';
@@ -67,6 +68,7 @@ describe('ExceptionAttendanceService', () => {
   let attendanceOperations: jest.Mocked<Pick<AttendanceOperationsService, 'assertClassroomAccess'>>;
   let audit: jest.Mocked<Pick<AuditLogService, 'recordAtomic'>>;
   let riskProfiles: jest.Mocked<Pick<RiskProfileService, 'requestStudentRecalculation'>>;
+  let automation: jest.Mocked<Pick<AutomationService, 'checkConsecutiveAbsences'>>;
   let storage: jest.Mocked<Pick<FileStorageAdapter, 'resolve'>>;
   let service: ExceptionAttendanceService;
 
@@ -117,12 +119,14 @@ describe('ExceptionAttendanceService', () => {
       assertClassroomAccess: jest.fn().mockResolvedValue({ schoolId: 1001 }),
     };
     storage = { resolve: jest.fn() };
+    automation = { checkConsecutiveAbsences: jest.fn().mockResolvedValue([]) };
     service = new ExceptionAttendanceService(
       repository,
       attendanceOperations as AttendanceOperationsService,
       audit as AuditLogService,
       riskProfiles as RiskProfileService,
       storage as FileStorageAdapter,
+      automation as AutomationService,
     );
   });
 
@@ -287,11 +291,60 @@ describe('ExceptionAttendanceService', () => {
     expect(riskProfiles.requestStudentRecalculation.mock.calls).toContainEqual([
       ['student-1', 'student-2'],
       'exception-attendance-submit',
+      true,
     ]);
+    expect(automation.checkConsecutiveAbsences).toHaveBeenCalledWith(['student-1', 'student-2']);
     expect(result.data).toMatchObject({ status: 'SUBMITTED', exceptionCount: 1 });
     expect(repository.replaceExceptions.mock.calls[0]?.[1][0]).not.toHaveProperty(
       'absenceReasonCode',
     );
+  });
+
+  it('waits for committed attendance before checking absences and returns only after alerts', async () => {
+    repository.listSessionRoster.mockReset().mockResolvedValue(['student-1', 'student-2']);
+    const order: string[] = [];
+    repository.withTransaction.mockImplementation(async (operation) => {
+      const result = await operation({} as never);
+      order.push('committed');
+      return result;
+    });
+    automation.checkConsecutiveAbsences.mockImplementation(() => {
+      expect(order).toEqual(['committed']);
+      order.push('alerted');
+      return Promise.resolve([]);
+    });
+    await service.submit(actor, openSession.id, { exceptions: [] });
+    expect(order).toEqual(['committed', 'alerted']);
+  });
+
+  it('surfaces a monitor failure so the saved submission can be retried', async () => {
+    repository.listSessionRoster.mockReset().mockResolvedValue(['student-1', 'student-2']);
+    automation.checkConsecutiveAbsences.mockRejectedValue(new Error('monitor unavailable'));
+    await expect(service.submit(actor, openSession.id, { exceptions: [] })).rejects.toThrow(
+      'monitor unavailable',
+    );
+    expect(repository.finalizeSession.mock.calls).toHaveLength(1);
+  });
+
+  it('surfaces a risk refresh failure instead of returning a stale success', async () => {
+    repository.listSessionRoster.mockReset().mockResolvedValue(['student-1', 'student-2']);
+    riskProfiles.requestStudentRecalculation.mockRejectedValue(
+      new Error('risk refresh unavailable'),
+    );
+    await expect(service.submit(actor, openSession.id, { exceptions: [] })).rejects.toThrow(
+      'risk refresh unavailable',
+    );
+    expect(repository.finalizeSession.mock.calls).toHaveLength(1);
+  });
+
+  it('does not trigger absence checks when attendance fails validation', async () => {
+    repository.listSessionRoster.mockReset().mockResolvedValue(['student-1', 'student-2']);
+    await expect(
+      service.submit(actor, openSession.id, {
+        exceptions: [{ studentId: 'outside-roster', status: 'P_ABSENT' }],
+      }),
+    ).rejects.toBeInstanceOf(BadRequestException);
+    expect(automation.checkConsecutiveAbsences).not.toHaveBeenCalled();
   });
 
   it('returns an identical duplicate submit without writing or auditing again', async () => {
@@ -311,10 +364,15 @@ describe('ExceptionAttendanceService', () => {
       exceptions: [{ studentId: 'student-1', status: 'P_ABSENT' }],
     });
 
+    expect(automation.checkConsecutiveAbsences).toHaveBeenCalledWith(['student-1', 'student-2']);
     expect(result.data.idempotent).toBe(true);
     expect(repository.replaceExceptions.mock.calls).toHaveLength(0);
     expect(audit.recordAtomic.mock.calls).toHaveLength(0);
-    expect(riskProfiles.requestStudentRecalculation.mock.calls).toHaveLength(0);
+    expect(riskProfiles.requestStudentRecalculation).toHaveBeenCalledWith(
+      ['student-1', 'student-2'],
+      'exception-attendance-submit',
+      true,
+    );
   });
 
   it('replaces a submitted result when a reason and current lock are provided', async () => {

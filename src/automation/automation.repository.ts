@@ -2,7 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { DataSource } from 'typeorm';
 import { queryDataSource, withDataSourceTransaction } from '../database/sql-query';
 import type {
-  ActiveAbsenceCaseRow,
+  ActiveCaseRow,
   CumulativeAbsentStudentRow,
   CreateAutomatedCaseInput,
   CreatedCaseRow,
@@ -40,6 +40,32 @@ export class AutomationRepository {
     return await withDataSourceTransaction(this.dataSource, async (executor) => {
       return await callback(executor);
     });
+  }
+
+  async lockStudentAbsenceChecks(
+    studentUuids: readonly string[],
+    executor: QueryExecutor,
+  ): Promise<void> {
+    if (studentUuids.length === 0) return;
+    // Stable order prevents deadlocks when simultaneous lessons share students.
+    // Transaction locks serialize case lookup + creation across app instances.
+    await executor.query(
+      `SELECT pg_advisory_xact_lock(hashtextextended('absence-monitor:' || student_uuid::text, 0))
+       FROM (
+         SELECT DISTINCT student_uuid
+         FROM unnest($1::uuid[]) AS requested(student_uuid)
+         ORDER BY student_uuid
+       ) ordered_students`,
+      [[...studentUuids]],
+    );
+    // Manual open holds this same enrollment row before looking for a case.
+    // Sharing its lock prevents manual/automatic creation from racing.
+    await executor.query(
+      `SELECT student_uuid FROM student_term
+       WHERE student_uuid = ANY($1::uuid[])
+       ORDER BY student_uuid FOR UPDATE`,
+      [[...studentUuids]],
+    );
   }
 
   async getSystemSettingValue(key: string, executor?: QueryExecutor): Promise<string | null> {
@@ -208,6 +234,8 @@ export class AutomationRepository {
         FROM cases
         WHERE status = 'OPEN'
           AND deleted_at IS NULL
+          AND created_by IS NULL
+          AND created_by_teacher_id IS NULL
           AND reason_flagged LIKE ANY($1::text[])
           AND ($2::uuid[] IS NULL OR student_uuid = ANY($2::uuid[]))
       `,
@@ -223,40 +251,39 @@ export class AutomationRepository {
     // tombstoned, not hard-deleted, so the create/cancel trail survives for
     // audit. deleted_by stays null — this is a system action, not a user.
     const result = await queryExecutor.query(
-      `UPDATE cases SET deleted_at = now() WHERE id = $1 AND status = $2 AND deleted_at IS NULL`,
-      [id, 'OPEN'],
+      `UPDATE cases SET deleted_at = now()
+       WHERE id = $1 AND status = $2 AND deleted_at IS NULL
+         AND created_by IS NULL AND created_by_teacher_id IS NULL
+         AND reason_flagged LIKE ANY($3::text[])`,
+      [id, 'OPEN', [...ABSENCE_CASE_REASON_PREFIXES]],
     );
-    return result.rowCount > 0;
+    if (result.rowCount === 0) return false;
+    // Remove obsolete alerts atomically with the false-positive case.
+    await queryExecutor.query('DELETE FROM notifications WHERE case_id = $1', [id]);
+    return true;
   }
 
-  async findActiveAbsenceCaseByStudent(
+  async findActiveCaseByStudent(
     studentUuid: string,
     studentName: string,
     schoolId: number | null,
     executor?: QueryExecutor,
-  ): Promise<ActiveAbsenceCaseRow | null> {
+  ): Promise<ActiveCaseRow | null> {
     const queryExecutor = this.getExecutor(executor);
-    // Match by stable student_uuid; fall back to name only for legacy rows
-    // created before student_uuid was populated (student_uuid IS NULL).
-    const result = await queryExecutor.query<ActiveAbsenceCaseRow>(
+    // Any active case covers this student, including a manually opened one.
+    // Legacy name matches must have a known school and no stable UUID.
+    const result = await queryExecutor.query<ActiveCaseRow>(
       `
         SELECT id, risk_tier FROM cases
         WHERE status = ANY($1::text[])
           AND deleted_at IS NULL
-          AND reason_flagged LIKE ANY($5::text[])
           AND ($4::int IS NULL OR school_id = $4)
           AND (
             (student_uuid IS NOT NULL AND student_uuid = $2)
-            OR (student_uuid IS NULL AND student_name = $3)
+            OR ($4::int IS NOT NULL AND student_uuid IS NULL AND student_name = $3)
           )
       `,
-      [
-        [...ACTIVE_CASE_STATUSES],
-        studentUuid,
-        studentName,
-        schoolId,
-        [...ABSENCE_CASE_REASON_PREFIXES],
-      ],
+      [[...ACTIVE_CASE_STATUSES], studentUuid, studentName, schoolId],
     );
 
     return result.rows[0] ?? null;

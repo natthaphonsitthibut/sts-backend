@@ -9,11 +9,13 @@ const ACTOR = {
   data_scope: { school_ids: [1] },
 };
 
+const REQUEST_ID = '33333333-3333-4333-8333-333333333333';
+
 const LINK = {
   id: '11111111-1111-4111-8111-111111111111',
   task_id: '22222222-2222-4222-8222-222222222222',
   status: 'ACTIVE',
-  expires_at: '2026-09-29T06:38:00.000Z',
+  expires_at: '2099-09-29T06:38:00.000Z',
   assigned_teacher_id: '41',
   task_type: 'VISIT',
   student_name: 'ด.ญ. ทดสอบ ส่งไลน์',
@@ -21,6 +23,10 @@ const LINK = {
   line_provider_user_id: 'U0123',
   line_friend_state: 'FRIEND',
   magic_link: 'https://sts.example/task/abc',
+  line_delivery_request_id: REQUEST_ID,
+  line_delivery_teacher_id: '41',
+  line_delivery_status: 'SENDING',
+  line_delivery_failure_code: null as string | null,
 };
 
 function setup(overrides: { link?: Partial<typeof LINK> | null; enabled?: boolean } = {}) {
@@ -30,8 +36,9 @@ function setup(overrides: { link?: Partial<typeof LINK> | null; enabled?: boolea
       .fn()
       .mockResolvedValue(overrides.link === null ? null : { ...LINK, ...overrides.link }),
     recordRoundLineNotReady: jest.fn().mockResolvedValue(undefined),
-    claimRoundLine: jest.fn().mockResolvedValue(true),
+    claimRoundLine: jest.fn().mockResolvedValue({ kind: 'claimed' }),
     finishRoundLine: jest.fn().mockResolvedValue(undefined),
+    releaseRoundLineClaim: jest.fn().mockResolvedValue(undefined),
   };
   const messaging = {
     isEnabled: jest.fn().mockReturnValue(overrides.enabled ?? true),
@@ -47,8 +54,6 @@ function setup(overrides: { link?: Partial<typeof LINK> | null; enabled?: boolea
   );
   return { service, repository, messaging, auditLog };
 }
-
-const REQUEST_ID = '33333333-3333-4333-8333-333333333333';
 
 describe('CaseRoundLineService', () => {
   it("sends the round's own link to the assigned teacher once", async () => {
@@ -71,7 +76,7 @@ describe('CaseRoundLineService', () => {
 
   it('never sends while the same request is already claimed', async () => {
     const { service, repository, messaging } = setup();
-    repository.claimRoundLine.mockResolvedValue(false);
+    repository.claimRoundLine.mockResolvedValue({ kind: 'in_flight' });
 
     await expect(service.send(5, LINK.task_id, REQUEST_ID, ACTOR as never)).resolves.toMatchObject({
       data: { status: 'SENDING' },
@@ -137,4 +142,81 @@ describe('CaseRoundLineService', () => {
     );
     expect(messaging.sendMessages).toHaveBeenCalled();
   });
+  it.each(['SENT', 'FAILED'])(
+    'replays a completed %s request without another provider call',
+    async (status) => {
+      const { service, repository, messaging } = setup({
+        link: {
+          line_delivery_status: status,
+          line_delivery_failure_code: status === 'FAILED' ? 'PROVIDER_UNAVAILABLE' : null,
+        },
+      });
+      const result = await service.send(5, LINK.task_id, REQUEST_ID, ACTOR);
+      expect(result.data).toEqual({
+        status,
+        failure_code: status === 'FAILED' ? 'PROVIDER_UNAVAILABLE' : null,
+      });
+      expect(repository.claimRoundLine).not.toHaveBeenCalled();
+      expect(messaging.sendMessages).not.toHaveBeenCalled();
+    },
+  );
+
+  it('replays a request that finished while the claim was waiting', async () => {
+    const { service, repository, messaging } = setup();
+    repository.claimRoundLine.mockResolvedValue({
+      kind: 'completed',
+      status: 'SENT',
+      failure_code: null,
+    });
+    await expect(service.send(5, LINK.task_id, REQUEST_ID, ACTOR as never)).resolves.toMatchObject({
+      data: { status: 'SENT' },
+    });
+    expect(messaging.sendMessages).not.toHaveBeenCalled();
+  });
+
+  it('rejects an expired ACTIVE link before contacting LINE', async () => {
+    const { service, repository, messaging } = setup({
+      link: { expires_at: '2000-01-01T00:00:00Z' },
+    });
+    await expect(service.send(5, LINK.task_id, REQUEST_ID, ACTOR as never)).rejects.toBeInstanceOf(
+      GoneException,
+    );
+    expect(repository.claimRoundLine).not.toHaveBeenCalled();
+    expect(messaging.sendMessages).not.toHaveBeenCalled();
+  });
+
+  it('allows a SCHEDULED round to be shared before opening', async () => {
+    const { service, messaging } = setup({ link: { status: 'SCHEDULED' } });
+    await expect(service.send(5, LINK.task_id, REQUEST_ID, ACTOR as never)).resolves.toMatchObject({
+      data: { status: 'SENT' },
+    });
+    expect(messaging.sendMessages).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not send when a link becomes unavailable at claim', async () => {
+    const { service, repository, messaging } = setup();
+    repository.claimRoundLine.mockResolvedValue({ kind: 'unavailable' });
+    await expect(service.send(5, LINK.task_id, REQUEST_ID, ACTOR as never)).rejects.toBeInstanceOf(
+      GoneException,
+    );
+    expect(messaging.sendMessages).not.toHaveBeenCalled();
+  });
+
+  it.each([null, { ...LINK, assigned_teacher_id: '42' }, { ...LINK, expires_at: '2000-01-01' }])(
+    'does not send when the claimed snapshot is revoked, reassigned or expired',
+    async (current) => {
+      const { service, repository, messaging } = setup();
+      repository.findRoundLinkForLine.mockResolvedValueOnce(LINK).mockResolvedValueOnce(current);
+      await expect(
+        service.send(5, LINK.task_id, REQUEST_ID, ACTOR as never),
+      ).rejects.toBeInstanceOf(GoneException);
+      expect(messaging.sendMessages).not.toHaveBeenCalled();
+      expect(repository.releaseRoundLineClaim).toHaveBeenCalledWith(
+        LINK.id,
+        REQUEST_ID,
+        'ASSIGNEE_UNAVAILABLE',
+        7,
+      );
+    },
+  );
 });

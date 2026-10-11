@@ -1,9 +1,12 @@
 import {
   BadRequestException,
+  ConflictException,
   ForbiddenException,
+  GoneException,
   Injectable,
   Logger,
   NotFoundException,
+  UnauthorizedException,
 } from '@nestjs/common';
 import { clean } from '../common/utils/helpers';
 import type { AuthenticatedRequestUser } from '../auth';
@@ -278,9 +281,39 @@ export class CaseService {
       agency_kind_code: this.normalizeText(row.agency_kind_code),
       agency_kind_label: this.normalizeText(row.agency_kind_label_th),
       status_code: this.normalizeText(row.status_code),
+      status_label: this.normalizeText(row.status_label_th) || null,
+      status_badge_variant: this.normalizeText(row.status_badge_variant) || null,
       referred_at: row.referred_at ?? null,
       referred_by: this.normalizeText(row.referred_by) || null,
       referral_note: this.normalizeText(row.referral_note) || null,
+      result:
+        row.result_recorded_at == null
+          ? null
+          : {
+              note: this.normalizeText(row.result_note),
+              recorded_at: row.result_recorded_at,
+              recorded_by: this.normalizeText(row.result_recorded_by) || null,
+              action_date: row.result_action_date ?? null,
+              // Who filed it: the agency through its link (named and verified
+              // by the identity provider), or the school on its behalf.
+              reported_by_agency: row.result_reported_by_agency === true,
+              reporter_name: this.normalizeText(row.result_reporter_name) || null,
+              reporter_identity_provider:
+                this.normalizeText(row.result_reporter_identity_provider) || null,
+            },
+      link:
+        row.link_id == null
+          ? null
+          : {
+              status_code: this.normalizeText(row.link_status_code),
+              starts_at: row.link_starts_at,
+              expires_at: row.link_expires_at,
+              url: typeof row.link_url === 'string' ? row.link_url : null,
+              // Why the round closed without an answer, like a withdrawn task link.
+              cancelled_at: row.link_cancelled_at ?? null,
+              cancelled_by: this.normalizeText(row.link_cancelled_by) || null,
+              cancel_reason: this.normalizeText(row.link_cancel_reason) || null,
+            },
     };
   }
 
@@ -443,7 +476,7 @@ export class CaseService {
       this.taskRepository.listCaseReviews(caseId),
       this.taskRepository.listCaseRiskSignals(caseId),
       this.taskRepository.listCaseReferrals(caseId),
-      this.taskRepository.listStudentFollowUpHistory(caseId, 5),
+      this.taskRepository.listStudentFollowUpHistory(caseId, 5, { actor: currentActor }),
     ]);
     const mapped = await this.withApproximateHomeLocation(
       this.mapCaseDetail(detail, this.taskPolicyService.hasPermission(currentActor, 'students')),
@@ -572,12 +605,11 @@ export class CaseService {
     if (reviewAction.requiresResolutionOutcome && !resolutionOutcome) {
       throw new BadRequestException('resolution_outcome is required for CLOSE');
     }
-    const referralAgencyId = this.normalizeNumber(body.referral_agency_id);
-    if (reviewAction.code === 'REFER_AGENCY' && referralAgencyId === null) {
-      throw new BadRequestException('กรุณาเลือกหน่วยงานส่งต่อ');
-    }
-    if (reviewAction.code !== 'REFER_AGENCY' && referralAgencyId !== null) {
-      throw new BadRequestException('หน่วยงานส่งต่อใช้ได้เฉพาะการส่งต่อหน่วยงาน');
+    // ส่งต่อหน่วยงาน only decides to refer, like ติดตามต่อ only decides to visit
+    // again: the agency is picked when the referral is sent from the case page.
+    const referralAgencyId = null;
+    if (this.normalizeNumber(body.referral_agency_id) !== null) {
+      throw new BadRequestException('เลือกหน่วยงานในขั้นส่งต่อหน่วยงานของหน้าเคส');
     }
     const proposedAssistanceMeasureDetail =
       clean(this.normalizeText(body.assistance_measure_detail)) || null;
@@ -601,6 +633,9 @@ export class CaseService {
     }
     const nextStatus = reviewAction.targetStatus;
     const reviewId = crypto.randomUUID();
+    // A closed case has one outcome; referral results belong to their own flow.
+    const completionOutcomeCode =
+      reviewAction.code === 'CLOSE' ? 'CLOSED' : reviewAction.completionOutcomeCode;
 
     try {
       const caseRecord = await this.taskRepository.findCaseById(caseId, undefined, currentActor);
@@ -623,17 +658,27 @@ export class CaseService {
         throw new BadRequestException('พิจารณาได้เฉพาะเคสที่มีรายงานติดตามรอพิจารณา');
       }
       await this.taskRepository.withTransaction(async (executor) => {
-        const referralAgency =
-          referralAgencyId === null
-            ? null
-            : await this.taskRepository.findActiveReferralAgency(referralAgencyId, executor);
-        if (referralAgencyId !== null && !referralAgency) {
-          throw new BadRequestException('หน่วยงานส่งต่อไม่ถูกต้องหรือถูกปิดใช้งาน');
+        if (
+          nextStatus === 'RESOLVED' &&
+          !(await this.taskRepository.lockCaseWithSuccessfulLatestOutcome(
+            caseId,
+            executor,
+            currentActor,
+          ))
+        ) {
+          this.logger.warn({
+            event: 'case_close_rejected',
+            caseId,
+            reason: 'LATEST_OUTCOME_NOT_SUCCEEDED',
+          });
+          throw new BadRequestException(
+            'ปิดเคสได้เมื่อผลการติดตาม ช่วยเหลือ หรือส่งต่อล่าสุดสำเร็จแล้วเท่านั้น',
+          );
         }
         const transitioned = await this.taskRepository.transitionPendingReviewCase(
           caseId,
           nextStatus,
-          reviewAction.completionOutcomeCode,
+          completionOutcomeCode,
           executor,
           currentActor,
           reviewAction.targetWorkflowPhaseCode,
@@ -664,18 +709,6 @@ export class CaseService {
           proposedAssistanceMeasures.map((measure) => measure.code),
           executor,
         );
-        if (referralAgencyId !== null) {
-          await this.taskRepository.insertCaseReferral(
-            {
-              reviewId,
-              caseId,
-              agencyId: referralAgencyId,
-              referredByUserId: resolveAuditActorId(actor),
-              note: reviewNote,
-            },
-            executor,
-          );
-        }
       });
 
       const reviewRecord = await this.taskRepository.findCaseReviewById(reviewId);
@@ -694,7 +727,7 @@ export class CaseService {
         targetId: String(caseId),
         metadata: {
           reviewAction: reviewAction.code,
-          completionOutcome: reviewAction.completionOutcomeCode,
+          completionOutcome: completionOutcomeCode,
           targetWorkflowPhase: reviewAction.targetWorkflowPhaseCode,
           resolutionOutcome: reviewAction.requiresResolutionOutcome ? resolutionOutcome : null,
           referralAgencyId,
@@ -709,7 +742,7 @@ export class CaseService {
           studentName: this.normalizeText(caseRecord.student_name) || null,
           schoolId: this.normalizeNumber(caseRecord.school_id),
           nextStatus,
-          completionOutcomeCode: reviewAction.completionOutcomeCode,
+          completionOutcomeCode,
           actorUserId: resolveAuditActorId(actor),
         });
       } catch (error) {
@@ -735,7 +768,7 @@ export class CaseService {
         success: true,
         case_id: caseId,
         case_status: nextStatus,
-        completion_outcome_code: reviewAction.completionOutcomeCode,
+        completion_outcome_code: completionOutcomeCode,
         review: reviewRecord || null,
       };
     } catch (err) {
@@ -743,6 +776,149 @@ export class CaseService {
       this.logger.error(`reviewCase error: ${message}`);
       throw err;
     }
+  }
+
+  /**
+   * บันทึกผลการส่งต่อ: what the agency reported, told to the school by phone,
+   * letter or LINE. Either answer hands the case back to รอพิจารณา, the same
+   * way a follow-up report does, and the reviewer picks the next step — ปิดเคส,
+   * another visit, or another referral — with the usual actions (owner,
+   * 2026-10-08). One result per referral; a second attempt is a conflict.
+   */
+  /**
+   * Files a referral's result and hands the case back to รอพิจารณา, whoever
+   * sends it: the school recording what the agency said, or the agency itself
+   * through its referral link (`scopeActor: null`, `agencyReport` set). One
+   * result per referral, only on the newest referral of a case still waiting
+   * on it — anything else is a conflict. Returns the referral as the case page
+   * reads it.
+   */
+  async applyReferralResult(input: {
+    caseId: number;
+    referralId: string;
+    resultCode: 'SUCCEEDED' | 'NOT_SUCCEEDED';
+    note: string;
+    scopeActor: CaseScopeContext | null;
+    recordedByUserId: number | null;
+    agencyReport?: {
+      linkId: string;
+      accessCodeRevision?: number;
+      actionDate: string;
+      identityProviderCode: string;
+      providerSubject: string;
+      reporterName: string;
+    };
+    audit: { actorUserId: number | null; actorLabel: string | null };
+  }) {
+    const { caseId, referralId } = input;
+    const nextStatus = 'PENDING_REVIEW';
+    const referralStatusCode = input.resultCode === 'SUCCEEDED' ? 'COMPLETED' : 'NOT_SUCCEEDED';
+
+    const locked = await this.taskRepository.withTransaction(async (executor) => {
+      const referral = await this.taskRepository.lockCaseReferralForResult(
+        caseId,
+        referralId,
+        input.scopeActor,
+        executor,
+      );
+      if (!referral) {
+        throw new NotFoundException('ไม่พบการส่งต่อนี้');
+      }
+      if (referral.has_result === true) {
+        throw new ConflictException('บันทึกผลการส่งต่อนี้ไปแล้ว');
+      }
+      if (
+        referral.is_latest !== true ||
+        this.normalizeText(referral.case_status) !== 'AWAITING_REFERRAL_OUTCOME'
+      ) {
+        throw new ConflictException('เคสนี้ไม่ได้รอผลการส่งต่อนี้แล้ว');
+      }
+      if (input.agencyReport) {
+        const link = await this.taskRepository.lockReferralLinkForReport(
+          input.agencyReport.linkId,
+          referralId,
+          executor,
+        );
+        if (!link) throw new NotFoundException('ไม่พบลิงก์รายงานผลการส่งต่อ');
+        if (
+          Number(link.access_code_revision ?? 0) !==
+          Number(input.agencyReport.accessCodeRevision ?? 0)
+        ) {
+          throw new UnauthorizedException('รหัสเปลี่ยนแล้ว กรุณายืนยันตัวตนด้วยรหัสใหม่');
+        }
+        if (link.status_code === 'LOCKED' || !link.has_started) {
+          throw new ForbiddenException('ลิงก์ถูกล็อกหรือยังไม่เปิดใช้งาน');
+        }
+        if (
+          link.status_code === 'REVOKED' ||
+          link.status_code === 'EXPIRED' ||
+          !link.has_not_expired
+        ) {
+          throw new GoneException('ลิงก์ถูกยกเลิกหรือหมดอายุแล้ว');
+        }
+        if (link.status_code !== 'ACTIVE') {
+          throw new ConflictException('ลิงก์นี้ส่งรายงานเรียบร้อยแล้ว');
+        }
+      }
+      const transitioned = await this.taskRepository.recordCaseReferralResult(
+        {
+          caseId,
+          referralId,
+          referralStatusCode,
+          nextCaseStatus: nextStatus,
+          note: input.note,
+          recordedByUserId: input.recordedByUserId,
+          agencyReport: input.agencyReport,
+        },
+        executor,
+      );
+      if (!transitioned) {
+        throw new ConflictException('เคสนี้ไม่ได้รอผลการส่งต่อนี้แล้ว');
+      }
+      return referral;
+    });
+
+    await this.auditLog.record({
+      actorUserId: input.audit.actorUserId,
+      actorLabel: input.audit.actorLabel,
+      action: 'CASE_REFERRAL_RESULT',
+      targetType: 'case',
+      targetId: String(caseId),
+      metadata: {
+        referralId,
+        resultCode: input.resultCode,
+        nextStatus,
+        reportedThroughLink: input.agencyReport?.linkId ?? null,
+      },
+      ip: null,
+    });
+
+    try {
+      await this.notificationsService.notifyCaseStatusChanged({
+        caseId,
+        studentName: this.normalizeText(locked.student_name) || null,
+        schoolId: this.normalizeNumber(locked.school_id),
+        nextStatus,
+        completionOutcomeCode: null,
+        actorUserId: input.audit.actorUserId,
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.logger.error(`Failed to notify referral result after commit: ${message}`);
+    }
+    const studentUuid = this.normalizeText(locked.student_uuid) || null;
+    if (studentUuid) {
+      await this.riskProfileService
+        ?.requestStudentRecalculation([studentUuid], 'case-review')
+        .catch((error) => {
+          const message = error instanceof Error ? error.message : String(error);
+          this.logger.error(`Failed to enqueue referral result risk recalculation: ${message}`);
+        });
+    }
+
+    const referrals = await this.taskRepository.listCaseReferrals(caseId);
+    const recorded = referrals.find((row) => this.normalizeText(row.id) === referralId);
+    return recorded ? this.mapCaseReferral(recorded) : null;
   }
 
   async getTasksByCase(caseId: number, actor?: AuthenticatedRequestUser) {

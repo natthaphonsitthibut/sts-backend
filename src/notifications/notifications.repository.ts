@@ -103,6 +103,7 @@ const CURRENT_RECIPIENT_ACCESS_JOINS_SQL = `
 
 const CURRENT_RECIPIENT_ACCESS_WHERE_SQL = `
   u.status = 'ACTIVE'
+  AND (n.case_id IS NULL OR (notification_case.id IS NOT NULL AND notification_case.deleted_at IS NULL))
   AND CASE
     WHEN jsonb_typeof(u.permissions) = 'array'
       THEN u.permissions ? nt.required_permission
@@ -176,6 +177,7 @@ export class NotificationsRepository {
           ON notification_student.student_uuid = $11::uuid
         WHERE nt.code = $1
           AND nt.is_enabled IS TRUE
+          AND ($10::int IS NULL OR (notification_case.id IS NOT NULL AND notification_case.deleted_at IS NULL))
           AND u.status = 'ACTIVE'
           AND u.data_origin_code <> 'AUTOMATED_TEST'
           AND ($6::int IS NULL OR u.id <> $6::int)

@@ -63,6 +63,15 @@ export class FollowUpSummaryQueryDto {
   schoolId?: number;
 }
 
+/** Where a referral stands in the register; see `REFERRAL_STAGE_SQL`. */
+export const REFERRAL_STAGE_CODES = [
+  'AWAITING_REFERRAL_OUTCOME',
+  'PENDING_REVIEW',
+  'COMPLETED',
+  'NOT_SUCCEEDED',
+] as const;
+export type ReferralStageCode = (typeof REFERRAL_STAGE_CODES)[number];
+
 export class GetReferralDrilldownQueryDto extends PaginatedSearchQueryDto {
   @IsOptional()
   @IsString()
@@ -98,6 +107,10 @@ export class GetReferralDrilldownQueryDto extends PaginatedSearchQueryDto {
   @IsString()
   @MaxLength(50)
   statusCode?: string;
+
+  @IsOptional()
+  @IsIn(REFERRAL_STAGE_CODES)
+  stageCode?: ReferralStageCode;
 }
 
 export class TaskGoogleCallbackDto extends ExternalOAuthCallbackDto {
@@ -495,6 +508,59 @@ export class CancelCaseAssignmentDto {
   cancel_reason!: string;
 }
 
+export const REFERRAL_RESULT_CODES = ['SUCCEEDED', 'NOT_SUCCEEDED'] as const;
+export type ReferralResultCode = (typeof REFERRAL_RESULT_CODES)[number];
+
+/**
+ * ส่งต่อ from the case page, the referral's มอบหมาย: which agency, why, and
+ * when its report link opens and closes.
+ */
+export class SendReferralDto {
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  referral_agency_id!: number;
+
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(2000)
+  referral_note!: string;
+
+  @IsDateString()
+  starts_at!: string;
+
+  @IsDateString()
+  expires_at!: string;
+}
+
+/** ยกเลิกการส่งต่อ, with its reason, like ยกเลิกการมอบหมาย. */
+export class CancelReferralDto {
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(500)
+  cancel_reason!: string;
+}
+
+export class ReferralLinkAccessCodeDto {
+  @Matches(/^\d{6}$/, { message: 'กรุณากรอกรหัส 6 หลัก' })
+  access_code!: string;
+}
+
+/** The agency's report through its referral link (D3: result, date, summary). */
+export class SubmitReferralReportDto {
+  @IsIn(REFERRAL_RESULT_CODES)
+  result_code!: ReferralResultCode;
+
+  @IsDateString({ strict: true }, { message: 'วันที่ดำเนินการไม่ถูกต้อง' })
+  @Matches(/^\d{4}-\d{2}-\d{2}$/, { message: 'วันที่ดำเนินการไม่ถูกต้อง' })
+  action_date!: string;
+
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(2000)
+  result_note!: string;
+}
+
 export class SendRoundLineDto {
   /** Stable across transport retries, so a repeated press never sends twice. */
   @IsUUID('4')
@@ -564,6 +630,8 @@ export const RISK_DASHBOARD_CASE_STATUSES = [
   'IN_PROGRESS',
   'PENDING_REVIEW',
   'STUDENT_NOT_FOUND',
+  'AWAITING_REFERRAL',
+  'AWAITING_REFERRAL_OUTCOME',
   'RESOLVED',
 ] as const;
 export const RISK_DASHBOARD_STUDENT_GROUPS = ['RISK', 'WATCHLIST'] as const;

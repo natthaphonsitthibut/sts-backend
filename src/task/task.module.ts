@@ -25,6 +25,8 @@ import { CaseTrackingOptionsService } from './case-tracking-options.service';
 import { GoogleLoginModule } from '../google-login/google-login.module';
 import { MessagingModule } from '../common/messaging/messaging.module';
 import { CaseRoundLineService } from './case-round-line.service';
+import { ReferralLinkController } from './referral-link.controller';
+import { ReferralLinkService } from './referral-link.service';
 
 import { StudentGeocodeModule } from '../student-geocode/student-geocode.module';
 @Module({
@@ -46,6 +48,7 @@ import { StudentGeocodeModule } from '../student-geocode/student-geocode.module'
     SubmissionController,
     CaseController,
     CaseTrackingOptionsController,
+    ReferralLinkController,
   ],
   providers: [
     AraIdChallengeStore,
@@ -60,6 +63,7 @@ import { StudentGeocodeModule } from '../student-geocode/student-geocode.module'
     CaseService,
     CaseRoundLineService,
     CaseTrackingOptionsService,
+    ReferralLinkService,
   ],
   exports: [TaskService, CaseService, TaskPolicyService, TaskAccessService, TaskRepository],
 })

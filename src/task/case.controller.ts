@@ -2,6 +2,7 @@ import {
   Body,
   Controller,
   Get,
+  Header,
   HttpCode,
   HttpException,
   HttpStatus,
@@ -20,9 +21,12 @@ import {
 } from '../auth';
 import { CaseRoundLineService } from './case-round-line.service';
 import { CaseService } from './case.service';
+import { ReferralLinkService } from './referral-link.service';
 import {
   CancelCaseAssignmentDto,
+  CancelReferralDto,
   OpenCaseDto,
+  SendReferralDto,
   ReviewCaseDto,
   SendRoundLineDto,
 } from './dto/task.dto';
@@ -34,6 +38,7 @@ export class CaseController {
   constructor(
     private readonly caseService: CaseService,
     private readonly caseRoundLine: CaseRoundLineService,
+    private readonly referralLinkService: ReferralLinkService,
   ) {}
 
   @UseGuards(AuthGuard, PermissionsGuard)
@@ -105,6 +110,61 @@ export class CaseController {
       const status = message === 'Case not found' ? HttpStatus.NOT_FOUND : HttpStatus.BAD_REQUEST;
       throw new HttpException(message, status);
     }
+  }
+
+  /**
+   * ส่งต่อ, the referral's มอบหมาย: agency, reason and the link's window. The
+   * agency's access code is also available to an authorized reviewer.
+   */
+  @UseGuards(AuthGuard, PermissionsGuard)
+  @RequirePermission('case:review')
+  @Post(':caseId/referrals')
+  @Header('Cache-Control', 'private, no-store')
+  async sendReferral(
+    @Param('caseId', ParseIntPipe) caseId: number,
+    @Body() body: SendReferralDto,
+    @CurrentUser() actor?: AuthenticatedRequestUser,
+  ) {
+    return await this.referralLinkService.sendReferral(caseId, body, actor);
+  }
+
+  @UseGuards(AuthGuard, PermissionsGuard)
+  @RequirePermission('case:review')
+  @Get(':caseId/referrals/:referralId/access-code')
+  @Header('Cache-Control', 'private, no-store')
+  async getReferralAccessCode(
+    @Param('caseId', ParseIntPipe) caseId: number,
+    @Param('referralId', new ParseUUIDPipe()) referralId: string,
+    @CurrentUser() actor?: AuthenticatedRequestUser,
+  ) {
+    return await this.referralLinkService.getAccessCode(caseId, referralId, actor);
+  }
+
+  @UseGuards(AuthGuard, PermissionsGuard)
+  @RequirePermission('case:review')
+  @Post(':caseId/referrals/:referralId/access-code/refresh')
+  @HttpCode(HttpStatus.OK)
+  @Header('Cache-Control', 'private, no-store')
+  async refreshReferralAccessCode(
+    @Param('caseId', ParseIntPipe) caseId: number,
+    @Param('referralId', new ParseUUIDPipe()) referralId: string,
+    @CurrentUser() actor?: AuthenticatedRequestUser,
+  ) {
+    return await this.referralLinkService.refreshAccessCode(caseId, referralId, actor);
+  }
+
+  /** ยกเลิกการส่งต่อ, like ยกเลิกการมอบหมาย: back to รอส่งต่อ with a reason. */
+  @UseGuards(AuthGuard, PermissionsGuard)
+  @RequirePermission('case:review')
+  @Post(':caseId/referrals/:referralId/cancel')
+  @HttpCode(HttpStatus.OK)
+  async cancelReferral(
+    @Param('caseId', ParseIntPipe) caseId: number,
+    @Param('referralId', new ParseUUIDPipe()) referralId: string,
+    @Body() body: CancelReferralDto,
+    @CurrentUser() actor?: AuthenticatedRequestUser,
+  ) {
+    return await this.referralLinkService.cancelReferral(caseId, referralId, body, actor);
   }
 
   @Get(':caseId/tasks')

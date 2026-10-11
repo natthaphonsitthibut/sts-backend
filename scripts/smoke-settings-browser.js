@@ -21,7 +21,7 @@ const CHROME_PATH =
   process.env.CHROME_PATH || '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
 const DEBUG_PORT = Number(process.env.SMOKE_CHROME_DEBUG_PORT || 9235);
 const USERNAME = 'settings_browser_smoke';
-const SETTING_KEYS = ['CASE_RISK_HIGH_ABSENCE_DAYS', 'ALERT_TRIGGER_TYPE', 'ALERT_SCHEDULE_TIME'];
+const SETTING_KEYS = ['CASE_RISK_HIGH_ABSENCE_DAYS', 'RISK_RECALC_SCHEDULE_TIME'];
 
 function assert(condition, message) {
   if (!condition) throw new Error(message);
@@ -264,8 +264,7 @@ async function waitForSettingsPage(client) {
         String(await evaluate(client, 'document.body.innerText')).includes(
           'CASE_RISK_HIGH_ABSENCE_DAYS',
         ) &&
-        String(await evaluate(client, 'document.body.innerText')).includes('ALERT_TRIGGER_TYPE') &&
-        String(await evaluate(client, 'document.body.innerText')).includes('ALERT_SCHEDULE_TIME'),
+        String(await evaluate(client, 'document.body.innerText')).includes('RISK_RECALC_SCHEDULE_TIME'),
       'Settings page did not render catalog rows',
     );
   } catch (error) {
@@ -477,10 +476,8 @@ async function main() {
     originalSettings = await getSettings(dataSource);
     nextValues.CASE_RISK_HIGH_ABSENCE_DAYS =
       originalSettings.CASE_RISK_HIGH_ABSENCE_DAYS === '4' ? '3' : '4';
-    nextValues.ALERT_TRIGGER_TYPE =
-      originalSettings.ALERT_TRIGGER_TYPE === 'IMMEDIATE' ? 'SCHEDULED' : 'IMMEDIATE';
-    nextValues.ALERT_SCHEDULE_TIME =
-      originalSettings.ALERT_SCHEDULE_TIME === '07:30' ? '08:45' : '07:30';
+    nextValues.RISK_RECALC_SCHEDULE_TIME =
+      originalSettings.RISK_RECALC_SCHEDULE_TIME === '07:30' ? '08:45' : '07:30';
 
     userId = await upsertFixture(dataSource, await passwordService.hash(password));
     const session = await login(password);
@@ -521,29 +518,17 @@ async function main() {
     );
     await assertUiValue(client, 'CASE_RISK_HIGH_ABSENCE_DAYS', nextValues.CASE_RISK_HIGH_ABSENCE_DAYS);
 
-    await setEnumSetting(client, 'ALERT_TRIGGER_TYPE', nextValues.ALERT_TRIGGER_TYPE);
-    await saveSetting(client, 'ALERT_TRIGGER_TYPE');
-    await waitForDbValue(dataSource, 'ALERT_TRIGGER_TYPE', nextValues.ALERT_TRIGGER_TYPE);
+    await setTimeSetting(client, 'RISK_RECALC_SCHEDULE_TIME', nextValues.RISK_RECALC_SCHEDULE_TIME);
+    await saveSetting(client, 'RISK_RECALC_SCHEDULE_TIME');
+    await waitForDbValue(dataSource, 'RISK_RECALC_SCHEDULE_TIME', nextValues.RISK_RECALC_SCHEDULE_TIME);
     await waitForAudit(
       dataSource,
       userId,
-      'ALERT_TRIGGER_TYPE',
-      originalSettings.ALERT_TRIGGER_TYPE,
-      nextValues.ALERT_TRIGGER_TYPE,
+      'RISK_RECALC_SCHEDULE_TIME',
+      originalSettings.RISK_RECALC_SCHEDULE_TIME,
+      nextValues.RISK_RECALC_SCHEDULE_TIME,
     );
-    await assertUiValue(client, 'ALERT_TRIGGER_TYPE', nextValues.ALERT_TRIGGER_TYPE);
-
-    await setTimeSetting(client, 'ALERT_SCHEDULE_TIME', nextValues.ALERT_SCHEDULE_TIME);
-    await saveSetting(client, 'ALERT_SCHEDULE_TIME');
-    await waitForDbValue(dataSource, 'ALERT_SCHEDULE_TIME', nextValues.ALERT_SCHEDULE_TIME);
-    await waitForAudit(
-      dataSource,
-      userId,
-      'ALERT_SCHEDULE_TIME',
-      originalSettings.ALERT_SCHEDULE_TIME,
-      nextValues.ALERT_SCHEDULE_TIME,
-    );
-    await assertUiValue(client, 'ALERT_SCHEDULE_TIME', nextValues.ALERT_SCHEDULE_TIME);
+    await assertUiValue(client, 'RISK_RECALC_SCHEDULE_TIME', nextValues.RISK_RECALC_SCHEDULE_TIME);
 
     await capture(client, '/tmp/sts-settings-desktop.png');
     await client.call('Emulation.setDeviceMetricsOverride', {
@@ -568,9 +553,9 @@ async function main() {
       try {
         const cardText = await evaluate(
           chrome.client,
-          `(() => { try { return findSettingCard('ALERT_TRIGGER_TYPE').innerText; } catch (e) { return 'card lookup failed: ' + e.message; } })()`,
+          `(() => { try { return findSettingCard('RISK_RECALC_SCHEDULE_TIME').innerText; } catch (e) { return 'card lookup failed: ' + e.message; } })()`,
         );
-        console.error('ALERT_TRIGGER_TYPE card state:', JSON.stringify(cardText).slice(0, 600));
+        console.error('RISK_RECALC_SCHEDULE_TIME card state:', JSON.stringify(cardText).slice(0, 600));
         await capture(chrome.client, '/tmp/sts-settings-failure.png');
         console.error('failure screenshot: /tmp/sts-settings-failure.png');
       } catch {

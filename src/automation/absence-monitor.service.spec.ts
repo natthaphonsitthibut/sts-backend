@@ -32,11 +32,12 @@ describe('AbsenceMonitorService', () => {
       AutomationRepository,
       | 'getSystemSettingValue'
       | 'withTransaction'
+      | 'lockStudentAbsenceChecks'
       | 'listCumulativeAbsentStudents'
       | 'listEvaluableStudentUuids'
       | 'listOpenAbsenceCases'
       | 'deleteOpenCaseById'
-      | 'findActiveAbsenceCaseByStudent'
+      | 'findActiveCaseByStudent'
       | 'createAutomatedCase'
     >
   >;
@@ -55,11 +56,12 @@ describe('AbsenceMonitorService', () => {
       withTransaction: jest.fn(async (callback) => {
         await callback(undefined);
       }),
+      lockStudentAbsenceChecks: jest.fn().mockResolvedValue(undefined),
       listCumulativeAbsentStudents: jest.fn().mockResolvedValue([]),
       listEvaluableStudentUuids: jest.fn().mockResolvedValue([]),
       listOpenAbsenceCases: jest.fn().mockResolvedValue([]),
       deleteOpenCaseById: jest.fn().mockResolvedValue(true),
-      findActiveAbsenceCaseByStudent: jest.fn().mockResolvedValue(null),
+      findActiveCaseByStudent: jest.fn().mockResolvedValue(null),
       createAutomatedCase: jest.fn().mockResolvedValue(77),
     };
     auditLog = {
@@ -78,6 +80,46 @@ describe('AbsenceMonitorService', () => {
       notificationsService as unknown as NotificationsService,
       riskProfileService as unknown as RiskProfileService,
     );
+  });
+
+  it('skips an empty roster without sweeping the whole database', async () => {
+    expect(await service.checkConsecutiveAbsences([])).toEqual([]);
+    expect(automationRepository.withTransaction).not.toHaveBeenCalled();
+  });
+
+  it('checks only the committed roster and locks it before finding candidates', async () => {
+    const roster = ['student-uuid-1'];
+    await service.checkConsecutiveAbsences(roster);
+    expect(automationRepository.lockStudentAbsenceChecks).toHaveBeenCalledWith(roster, undefined);
+    expect(automationRepository.listCumulativeAbsentStudents).toHaveBeenCalledWith(
+      3,
+      expect.any(String),
+      undefined,
+      roster,
+    );
+    expect(automationRepository.listOpenAbsenceCases).toHaveBeenCalledWith(undefined, roster);
+    expect(automationRepository.lockStudentAbsenceChecks.mock.invocationCallOrder[0]).toBeLessThan(
+      automationRepository.listCumulativeAbsentStudents.mock.invocationCallOrder[0],
+    );
+  });
+
+  it('does not duplicate a case or alert on repeated checks', async () => {
+    automationRepository.listCumulativeAbsentStudents.mockResolvedValue([buildAbsentStudent()]);
+    automationRepository.findActiveCaseByStudent
+      .mockResolvedValueOnce(null)
+      .mockResolvedValue({ id: 77, status: 'OPEN', risk_tier: 'HIGH' });
+    await service.checkConsecutiveAbsences(['student-uuid-1']);
+    await service.checkConsecutiveAbsences(['student-uuid-1']);
+    expect(automationRepository.createAutomatedCase).toHaveBeenCalledTimes(1);
+    expect(notificationsService.notifyCaseStatusChanged).toHaveBeenCalledTimes(1);
+  });
+
+  it('propagates transaction failure without sending a success notification', async () => {
+    automationRepository.withTransaction.mockRejectedValue(new Error('database unavailable'));
+    await expect(service.checkConsecutiveAbsences(['student-uuid-1'])).rejects.toThrow(
+      'database unavailable',
+    );
+    expect(notificationsService.notifyCaseStatusChanged).not.toHaveBeenCalled();
   });
 
   it('audits soft-cancelled open absence cases after attendance correction', async () => {
@@ -109,12 +151,13 @@ describe('AbsenceMonitorService', () => {
     expect(riskProfileService.requestStudentRecalculation).toHaveBeenCalledWith(
       ['student-uuid-1'],
       'case-auto-monitor',
+      true,
     );
   });
 
   it('does not create a duplicate when an active absence case already exists', async () => {
     automationRepository.listCumulativeAbsentStudents.mockResolvedValue([buildAbsentStudent()]);
-    automationRepository.findActiveAbsenceCaseByStudent.mockResolvedValue({
+    automationRepository.findActiveCaseByStudent.mockResolvedValue({
       id: 20,
       risk_tier: 'LOW',
     });
@@ -122,7 +165,7 @@ describe('AbsenceMonitorService', () => {
     const result = await service.checkConsecutiveAbsences();
 
     expect(result).toEqual([]);
-    expect(automationRepository.findActiveAbsenceCaseByStudent).toHaveBeenCalledWith(
+    expect(automationRepository.findActiveCaseByStudent).toHaveBeenCalledWith(
       'student-uuid-1',
       'สมชาย ใจดี',
       10010002,
@@ -131,6 +174,30 @@ describe('AbsenceMonitorService', () => {
     expect(automationRepository.createAutomatedCase).not.toHaveBeenCalled();
     expect(notificationsService.notifyCaseStatusChanged).not.toHaveBeenCalled();
   });
+
+  it.each([
+    'OPEN',
+    'IN_PROGRESS',
+    'PENDING_REVIEW',
+    'STUDENT_NOT_FOUND',
+    'AWAITING_REFERRAL',
+    'AWAITING_REFERRAL_OUTCOME',
+  ])(
+    'does not replace a manually opened %s case when absence reaches the threshold',
+    async (status) => {
+      automationRepository.listCumulativeAbsentStudents.mockResolvedValue([buildAbsentStudent()]);
+      automationRepository.findActiveCaseByStudent.mockResolvedValue({
+        id: 31,
+        risk_tier: null,
+        status,
+        reason_flagged: 'ผู้ปกครองขอให้ติดตามเรื่องการเดินทาง',
+      });
+      expect(await service.checkConsecutiveAbsences(['student-uuid-1'])).toEqual([]);
+      expect(automationRepository.createAutomatedCase).not.toHaveBeenCalled();
+      expect(automationRepository.deleteOpenCaseById).not.toHaveBeenCalled();
+      expect(notificationsService.notifyCaseStatusChanged).not.toHaveBeenCalled();
+    },
+  );
 
   it('notifies eligible staff after creating an absence case', async () => {
     automationRepository.getSystemSettingValue.mockImplementation((key) => {
@@ -166,6 +233,7 @@ describe('AbsenceMonitorService', () => {
     expect(riskProfileService.requestStudentRecalculation).toHaveBeenCalledWith(
       ['student-uuid-1'],
       'case-auto-monitor',
+      true,
     );
   });
 

@@ -20,7 +20,8 @@ export type AraIdChallengeScope =
   | 'teacher-line'
   | 'task-link'
   | 'admin-login'
-  | 'classroom-check-in';
+  | 'classroom-check-in'
+  | 'referral-link';
 
 type ChallengeStatus = 'PENDING' | 'CLAIMED' | 'APPROVED';
 

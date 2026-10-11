@@ -33,6 +33,24 @@ describe('MagicSessionStoreService', () => {
     await expect(service.isVerified('link-1', token)).resolves.toBe(true);
   });
 
+  it('keeps signed reporter claims bound to one referral link and rejects tampering', async () => {
+    const service = new MagicSessionStoreService(
+      { getClient: jest.fn().mockReturnValue(undefined) } as unknown as RedisClientService,
+      authConfig,
+    );
+    const claims = { provider: 'ARAID', subject: 'fixture-subject', name: 'ผู้รายงานทดสอบ' };
+    const token = await service.issue('referral-link:one', claims);
+    await expect(service.readVerifiedClaims('referral-link:one', token)).resolves.toEqual(claims);
+    await expect(service.readVerifiedClaims('referral-link:two', token)).resolves.toBeNull();
+    const [payload, signature] = token.split('.');
+    const altered = JSON.parse(Buffer.from(payload, 'base64').toString()) as {
+      claims: { name: string };
+    };
+    altered.claims.name = 'another reporter';
+    const tampered = `${Buffer.from(JSON.stringify(altered)).toString('base64')}.${signature}`;
+    await expect(service.readVerifiedClaims('referral-link:one', tampered)).resolves.toBeNull();
+  });
+
   it('rejects expired fallback signed sessions', async () => {
     const service = new MagicSessionStoreService(
       { getClient: jest.fn().mockReturnValue(undefined) } as unknown as RedisClientService,
@@ -61,7 +79,10 @@ describe('MagicSessionStoreService', () => {
       authConfig,
     );
 
-    const token = await service.issue('link-1');
+    const claims = { provider: 'ARAID', subject: 'fixture-subject', name: 'ผู้รายงานทดสอบ' };
+    const token = await service.issue('link-1', claims);
+    await expect(service.readVerifiedClaims('link-1', token)).resolves.toEqual(claims);
+    await expect(service.readVerifiedClaims('link-2', token)).resolves.toBeNull();
 
     expect(token).toMatch(/^ms_/);
     expect(redis.set).toHaveBeenCalledWith(

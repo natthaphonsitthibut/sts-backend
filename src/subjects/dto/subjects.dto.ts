@@ -32,7 +32,7 @@ export class CreateSubjectDto {
   @IsString()
   @MinLength(1, { message: 'กรุณาระบุรหัสวิชา' })
   @MaxLength(20, { message: 'รหัสวิชาต้องไม่เกิน 20 ตัวอักษร' })
-  @Matches(/^[ก-ฮA-Za-z0-9]+$/, {
+  @Matches(/^(?:[\u0E01-\u0E2EA-Za-z0-9]|[\u0E30-\u0E3A]|[\u0E40-\u0E45]|[\u0E47-\u0E4E])+$/u, {
     message: 'รหัสวิชาใช้ได้เฉพาะตัวอักษรไทย อังกฤษ และตัวเลข',
   })
   code!: string;

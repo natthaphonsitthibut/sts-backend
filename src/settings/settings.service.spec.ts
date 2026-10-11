@@ -92,9 +92,6 @@ describe('SettingsService catalog validation', () => {
     ['CASE_RISK_HIGH_ABSENCE_DAYS', 'abc'],
     ['CASE_RISK_HIGH_ABSENCE_DAYS', '0'],
     ['CASE_RISK_HIGH_ABSENCE_DAYS', '9999'],
-    ['ALERT_SCHEDULE_TIME', '99:99'],
-    ['ALERT_SCHEDULE_TIME', '18.00'],
-    ['ALERT_TRIGGER_TYPE', 'SOMETIMES'],
   ])('rejects invalid value for %s = "%s"', async (key, value) => {
     await expect(service.updateSetting(actor, key, value)).rejects.toBeInstanceOf(
       BadRequestException,
@@ -140,12 +137,15 @@ describe('SettingsService catalog validation', () => {
     expect(riskProfileService.enqueueFull).not.toHaveBeenCalled();
   });
 
-  it('refreshes the dynamic cron when an alert setting changes', async () => {
-    await service.updateSetting(actor, 'ALERT_SCHEDULE_TIME', '07:30');
-
-    expect(automationService.refreshDynamicCron).toHaveBeenCalledTimes(1);
-    expect(riskProfileService.refreshDailyRecalcCron).not.toHaveBeenCalled();
-  });
+  it.each(['ALERT_TRIGGER_TYPE', 'ALERT_SCHEDULE_TIME'])(
+    'rejects retired alert setting %s',
+    async (key) => {
+      await expect(service.updateSetting(actor, key, 'IMMEDIATE')).rejects.toBeInstanceOf(
+        NotFoundException,
+      );
+      expect(settingsRepository.upsertSetting).not.toHaveBeenCalled();
+    },
+  );
 
   it('re-registers the daily risk recalculation when its schedule changes', async () => {
     await service.updateSetting(actor, 'RISK_RECALC_SCHEDULE_TIME', '06:30');
@@ -162,11 +162,11 @@ describe('SettingsService catalog validation', () => {
   });
 
   it('ignores the client-supplied description and uses the catalog description', async () => {
-    await service.updateSetting(actor, 'ALERT_TRIGGER_TYPE', 'IMMEDIATE');
+    await service.updateSetting(actor, 'CASE_RISK_HIGH_ABSENCE_DAYS', '5');
 
     const upsertCalls = settingsRepository.upsertSetting.mock.calls as unknown[][];
     const description = upsertCalls[0][2] as string;
-    expect(description).toContain('ตัวตรวจขาดเรียนอัตโนมัติ');
+    expect(description).toContain('เปิดเคสอัตโนมัติ');
   });
 
   it('enriches settings with catalog metadata and marks unknown rows read-only', async () => {
@@ -198,7 +198,6 @@ describe('SettingsService catalog validation', () => {
 
     expect(rows.map((row) => row.setting_key)).toEqual([
       'CASE_RISK_HIGH_ABSENCE_DAYS',
-      'ALERT_SCHEDULE_TIME',
       'RISK_RECALC_SCHEDULE_TIME',
       'LEGACY_KEY',
     ]);

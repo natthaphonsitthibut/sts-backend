@@ -467,6 +467,29 @@ const ACTION_DEFINITIONS: Record<string, AuditActionDefinition> = {
     label: 'ส่งต่อหน่วยงาน',
     detailKeys: [{ key: 'completionOutcome', label: 'ผลการดำเนินการ' }],
   },
+  CASE_REFERRAL_RESULT: {
+    domain: 'cases',
+    label: 'บันทึกผลการส่งต่อ',
+    detailKeys: [{ key: 'resultCode', label: 'ผลการส่งต่อ' }],
+  },
+  CASE_REFERRAL_LINK_CODE_REFRESH: {
+    domain: 'cases',
+    label: 'เปลี่ยนรหัสสำหรับหน่วยงาน',
+    detailKeys: [{ key: 'accessCodeRevision', label: 'รุ่นรหัส' }],
+  },
+  CASE_REFERRAL_LINK_ISSUE: {
+    domain: 'cases',
+    label: 'ออกลิงก์ให้หน่วยงาน',
+    detailKeys: [{ key: 'expiresAt', label: 'ใช้ได้ถึง' }],
+  },
+  CASE_REFERRAL_LINK_REVOKE: { domain: 'cases', label: 'ยกเลิกลิงก์ของหน่วยงาน', detailKeys: [] },
+  CASE_REFERRAL_LINK_CODE_FAIL: {
+    domain: 'cases',
+    label: 'กรอกรหัสลิงก์หน่วยงานผิด',
+    detailKeys: [{ key: 'attempts', label: 'จำนวนครั้ง' }],
+  },
+  CASE_REFERRAL_LINK_LOCK: { domain: 'cases', label: 'ลิงก์หน่วยงานถูกล็อก', detailKeys: [] },
+  CASE_REFERRAL_LINK_VERIFY: { domain: 'cases', label: 'หน่วยงานยืนยันตัวตน', detailKeys: [] },
   CASE_ASSIST: {
     domain: 'cases',
     label: 'ให้ความช่วยเหลือ',
@@ -868,9 +891,11 @@ export class AuditLogService {
     // The whole log opens for whoever holds บันทึกการใช้งานทั้งหมด — a council or
     // a school ผู้ดูแลระบบ alike (owner, 2026-09-28) — and still only shows events
     // inside the actor's own scope (`appendScopeConditions`).
-    const allowed = DOMAIN_PERMISSIONS[domain].some((permission) =>
-      hasPermission(actor.roles, actor.permissions, permission),
-    );
+    const allowed =
+      hasPermission(actor.roles, actor.permissions, 'audit-log:all') ||
+      DOMAIN_PERMISSIONS[domain].some((permission) =>
+        hasPermission(actor.roles, actor.permissions, permission),
+      );
     if (!allowed || actor.data_scope?.own_only === true) {
       throw new ForbiddenException('ไม่มีสิทธิ์ดูประวัติส่วนนี้');
     }

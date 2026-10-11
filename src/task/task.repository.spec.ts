@@ -158,7 +158,14 @@ describe('TaskRepository', () => {
     expect(count).toBe(2);
     expect(queries).toHaveLength(1);
     expect(queries[0].params).toEqual([
-      ['OPEN', 'IN_PROGRESS', 'PENDING_REVIEW', 'STUDENT_NOT_FOUND'],
+      [
+        'OPEN',
+        'IN_PROGRESS',
+        'PENDING_REVIEW',
+        'STUDENT_NOT_FOUND',
+        'AWAITING_REFERRAL',
+        'AWAITING_REFERRAL_OUTCOME',
+      ],
       [101],
       [6],
       7,
@@ -251,7 +258,7 @@ describe('TaskRepository', () => {
 
     await repository.findTaskLinkByTokenHash('token-hash');
     await repository.listTasksByCase(41);
-    await repository.listStudentFollowUpHistory(41);
+    await repository.listStudentFollowUpHistory(41, 5, { publicCase: true });
 
     const activeLinkQuery = queries[0].sql;
     expect(activeLinkQuery).toContain('current_assignee_teacher.first_name');
@@ -458,7 +465,7 @@ describe('TaskRepository', () => {
     // add up to the rows on screen.
     expect(queries[1].sql).not.toContain('concern_level_code =');
     expect(queries[0].sql).toContain(
-      'ORDER BY concern_level.sort_order DESC, comment.created_at DESC, comment.id DESC',
+      'concern_level.sort_order DESC, comment.created_at DESC, comment.id DESC',
     );
     expect(queries[2].sql).toContain(
       'ORDER BY problem_category_label DESC NULLS LAST, student_name ASC',
@@ -719,4 +726,79 @@ describe('TaskRepository', () => {
     expect(queries[0].sql).not.toContain('student_name');
     expect(queries[1].sql).not.toContain('student_name');
   });
+  it('applies staff school, grade, room and own scope to every history case', async () => {
+    const queryRunner = {
+      connect: jest.fn(),
+      release: jest.fn(),
+      query: jest.fn().mockResolvedValue({ records: [], affected: 0 }),
+    };
+    const repository = new TaskRepository(
+      { createQueryRunner: () => queryRunner } as never,
+      undefined as never,
+      undefined as never,
+    );
+    await repository.listStudentFollowUpHistory(41, 5, {
+      actor: {
+        id: 7,
+        data_scope: { school_ids: [101], grade_levels: [3], room_ids: [2], own_only: true },
+      },
+    });
+    const [sql, params] = queryRunner.query.mock.calls[0] as [string, unknown[]];
+    expect(sql).toContain('history_case.school_id = ANY($3::int[])');
+    expect(sql).toContain('history_case.created_by = $6');
+    expect(params).toEqual([41, 5, [101], [3], [2], 7]);
+  });
+
+  it('confines public history to the token case school and fails closed for unconfigured staff scope', async () => {
+    const queryRunner = {
+      connect: jest.fn(),
+      release: jest.fn(),
+      query: jest.fn().mockResolvedValue({ records: [], affected: 0 }),
+    };
+    const repository = new TaskRepository(
+      { createQueryRunner: () => queryRunner } as never,
+      undefined as never,
+      undefined as never,
+    );
+    await repository.listStudentFollowUpHistory(41, 5, { publicCase: true });
+    const publicCall = queryRunner.query.mock.calls[0] as [string];
+    expect(publicCall[0]).toContain('history_case.school_id = (');
+    await repository.listStudentFollowUpHistory(41, 5, { actor: { id: 7 } });
+    const staffCall = queryRunner.query.mock.calls[1] as [string];
+    expect(staffCall[0]).toContain('AND (1=0)');
+  });
+
+  it.each(['SENT', 'FAILED'])(
+    'returns completed %s instead of SENDING after a rejected LINE claim',
+    async (status) => {
+      const queryRunner = {
+        connect: jest.fn(),
+        release: jest.fn(),
+        query: jest
+          .fn()
+          .mockResolvedValueOnce({ records: [], affected: 0 })
+          .mockResolvedValueOnce({
+            records: [
+              {
+                line_delivery_request_id: 'request-id',
+                line_delivery_teacher_id: '41',
+                line_delivery_status: status,
+                line_delivery_failure_code: status === 'FAILED' ? 'PROVIDER_UNAVAILABLE' : null,
+              },
+            ],
+            affected: 1,
+          }),
+      };
+      const repository = new TaskRepository(
+        { createQueryRunner: () => queryRunner } as never,
+        undefined as never,
+        undefined as never,
+      );
+      await expect(repository.claimRoundLine('link-id', '41', 'request-id', 7)).resolves.toEqual({
+        kind: 'completed',
+        status,
+        failure_code: status === 'FAILED' ? 'PROVIDER_UNAVAILABLE' : null,
+      });
+    },
+  );
 });

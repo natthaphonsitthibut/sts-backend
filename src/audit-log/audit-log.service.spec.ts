@@ -1,4 +1,4 @@
-import { BadRequestException, ForbiddenException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, NotFoundException } from '@nestjs/common';
 import type { AuthenticatedRequestUser } from '../auth';
 import { AuditLogService } from './audit-log.service';
 
@@ -88,6 +88,53 @@ describe('AuditLogService', () => {
       ),
     ).rejects.toBeInstanceOf(ForbiddenException);
   });
+
+  it.each(['TASK_CREATE', 'TASK_CANCEL', 'CLASSROOM_ATTENDANCE_LINK_BULK_CREATE', 'USER_UPDATE'])(
+    'allows audit-log:all to open %s details while preserving school scope',
+    async (action) => {
+      const scopedActor: AuthenticatedRequestUser = {
+        id: 2,
+        username: 'school.admin',
+        roles: ['S10010004_BASE_ADMIN'],
+        permissions: ['audit-log:all'],
+        data_scope: { school_ids: [10010004] },
+      };
+      const row = {
+        id: '8270',
+        action,
+        actor_label: 'School admin',
+        target_type: 'task',
+        target_id: '9',
+        metadata: { schoolId: 10010004, scope: { school_ids: [10010004] } },
+        school_name: 'โรงเรียนตัวอย่าง',
+        created_at: new Date(),
+        total_count: 1,
+      };
+      const queries: Array<{ sql: string; params?: unknown[] }> = [];
+      const runner = {
+        connect: jest.fn(),
+        release: jest.fn(),
+        query: jest.fn((sql: string, params?: unknown[]) => {
+          queries.push({ sql, params });
+          return { records: [row], affected: 1 };
+        }),
+      };
+      const service = new AuditLogService({ createQueryRunner: () => runner } as never);
+      expect((await service.getById(scopedActor, '8270')).data.id).toBe('8270');
+      expect(queries[1].sql).toContain("-> 'school_ids'");
+      expect(queries[1].params).toContainEqual(['10010004']);
+      runner.query
+        .mockImplementationOnce(() => ({ records: [row], affected: 1 }))
+        .mockImplementationOnce(() => ({ records: [], affected: 0 }));
+      await expect(service.getById(scopedActor, '8270')).rejects.toBeInstanceOf(NotFoundException);
+      await expect(
+        service.getById({ ...scopedActor, data_scope: { own_only: true } }, '8270'),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+      await expect(
+        service.getById({ ...scopedActor, permissions: ['audit-log'] }, '8270'),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+    },
+  );
 
   it('filters user history by province scope', async () => {
     const queries: Array<{ sql: string; params?: unknown[] }> = [];

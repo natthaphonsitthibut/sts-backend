@@ -129,6 +129,8 @@ export class TaskStatsService {
       };
     };
     const byStatus: Record<string, number> = {};
+    // The register's cards: where each referral stands in the flow.
+    const byStage: Record<string, number> = {};
     const byAgency = new Map<string, number>();
     let referralTotal = 0;
     let overdue = 0;
@@ -138,6 +140,8 @@ export class TaskStatsService {
       const count = Number(row.referral_count ?? 0);
       byStatus[status] = (byStatus[status] ?? 0) + count;
       byAgency.set(agencyName, (byAgency.get(agencyName) ?? 0) + count);
+      const stage = String(row.stage_code);
+      byStage[stage] = (byStage[stage] ?? 0) + count;
       referralTotal += count;
       overdue += Number(row.overdue_count ?? 0);
     });
@@ -156,6 +160,7 @@ export class TaskStatsService {
           total: referralTotal,
           overdue,
           byStatus,
+          byStage,
           byAgency: [...byAgency.entries()].map(([agencyName, count]) => ({ agencyName, count })),
         },
         repeatedUnsuccessfulCaseCount,
@@ -196,9 +201,17 @@ export class TaskStatsService {
           grade: row.grade ?? null,
           room: row.room ?? null,
           statusCode: row.status_code,
+          stageCode: row.stage_code,
+          awaitingResult: row.stage_code === 'AWAITING_REFERRAL_OUTCOME',
           referredAt: row.referred_at,
           agencyName: row.agency_name,
           agencyKindLabel: row.agency_kind_label,
+          // The agency's newest link: shareable while it opens, and its state so
+          // the row can warn when it ran out or locked.
+          linkUrl: typeof row.link_url === 'string' ? row.link_url : null,
+          linkStatusCode: typeof row.link_status_code === 'string' ? row.link_status_code : null,
+          linkExpiresAt: row.link_expires_at ?? null,
+          accessCodeAvailable: row.access_code_available === true,
         };
       }),
       meta: buildPaginationMeta(page, limit, totalCount),
@@ -297,6 +310,7 @@ export class TaskStatsService {
           concernLevelCode: row.concern_level_code ?? null,
           concernLevelLabel: row.concern_level_label ?? null,
           commentCount: Number(row.comment_count ?? 0),
+          pendingCommentCount: Number(row.pending_comment_count ?? 0),
           // Teacher comments are part of รายงานสถานะนักเรียน for every `dashboard`
           // holder, within scope (owner, 2026-09-29).
           teacherComment: row.teacher_comment ?? null,
