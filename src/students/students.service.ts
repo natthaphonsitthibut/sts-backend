@@ -22,6 +22,7 @@ import { buildSubjectStudentRef } from '../common/utils/pii-ref.util';
 import { encodeMediaVersion } from '../common/utils/media-version.util';
 import { resolveAuditActorId } from '../common/audit/audit-actor.util';
 import { AuditLogService } from '../audit-log/audit-log.service';
+import { PiiAccessLogService } from '../audit-log/pii-access-log.service';
 import { piiConfig } from '../config/pii.config';
 import { StudentGeocodeCacheService } from '../student-geocode/student-geocode-cache.service';
 import { processImageUpload } from '../common/file-upload/visit-photo.util';
@@ -198,6 +199,7 @@ export class StudentsService {
     private readonly storage: FileStorageAdapter,
     private readonly riskProfileService: RiskProfileService,
     private readonly auditLog: AuditLogService,
+    private readonly piiAccessLog: PiiAccessLogService,
   ) {}
 
   private async recalculateStudentRisk(studentUuid: string, reason: string): Promise<void> {
@@ -597,12 +599,11 @@ export class StudentsService {
       }
 
       if (!withinWindow) {
-        await this.studentsRepository.insertPiiAccessEvent({
+        await this.piiAccessLog.record({
           actorUserId: resolveAuditActorId(actor),
+          actorLabel: meta.linkActor ? 'ครู (ลิงก์ห้องเรียน)' : (actor?.username ?? null),
           actorTeacherMembershipId: meta.linkActor?.teacherMembershipId ?? null,
           actorRoles: meta.linkActor ? ['CLASSROOM_LINK_TEACHER'] : (actor?.roles ?? []),
-          actorKind: 'STAFF',
-          subjectStudentRef: subjectRef,
           subjectType: 'STUDENT',
           subjectRef,
           subjectRefKeyVersion: this.piiRuntimeConfig.hashKeyVersion,
@@ -613,6 +614,9 @@ export class StudentsService {
           requestId: meta.requestId,
           ip: meta.ip,
           userAgent: meta.userAgent,
+          targetType: 'student',
+          targetId: id,
+          scopeMetadata: { schoolId: student.SchoolID_Onec ?? null },
         });
       }
 

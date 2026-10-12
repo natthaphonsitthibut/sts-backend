@@ -11,6 +11,7 @@ import type {
   ActorContext,
   FollowUpAreaFilters,
   ReferralDrilldownFilters,
+  RiskDashboardFilterOptionsFilters,
   RiskDashboardFilters,
 } from './task.types';
 
@@ -148,5 +149,12 @@ export class TaskService {
 
   async getRiskDashboard(actor?: ActorContext, filters: RiskDashboardFilters = {}) {
     return await this.taskStatsService.getRiskDashboard(actor, filters);
+  }
+
+  async getRiskDashboardFilterOptions(
+    actor?: ActorContext,
+    filters: RiskDashboardFilterOptionsFilters = {},
+  ) {
+    return await this.taskStatsService.getRiskDashboardFilterOptions(actor, filters);
   }
 }

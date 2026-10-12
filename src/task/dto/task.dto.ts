@@ -33,6 +33,18 @@ export type CaseResolutionOutcome =
 /** The global school/area filter, applied on top of the actor's own scope. */
 export class FollowUpSummaryQueryDto {
   @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  academicYear?: number;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  semester?: number;
+
+  @IsOptional()
   @IsString()
   @MaxLength(50)
   grade?: string;
@@ -65,14 +77,27 @@ export class FollowUpSummaryQueryDto {
 
 /** Where a referral stands in the register; see `REFERRAL_STAGE_SQL`. */
 export const REFERRAL_STAGE_CODES = [
+  'AWAITING_REFERRAL',
   'AWAITING_REFERRAL_OUTCOME',
+  'REFERRAL_NOT_SUCCEEDED',
   'PENDING_REVIEW',
-  'COMPLETED',
-  'NOT_SUCCEEDED',
+  'RESOLVED',
 ] as const;
 export type ReferralStageCode = (typeof REFERRAL_STAGE_CODES)[number];
 
 export class GetReferralDrilldownQueryDto extends PaginatedSearchQueryDto {
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  academicYear?: number;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  semester?: number;
+
   @IsOptional()
   @IsString()
   @MaxLength(50)
@@ -354,9 +379,10 @@ export class SaveTaskSubmissionDto {
   parental_status_code?: string | null;
 
   @IsOptional()
-  @IsString()
-  @MaxLength(40)
-  guardian_type_code?: string | null;
+  @IsArray()
+  @IsString({ each: true })
+  @MaxLength(40, { each: true })
+  guardian_type_codes?: string[] | null;
 
   @IsOptional()
   @IsString()
@@ -399,6 +425,11 @@ export class SaveTaskSubmissionDto {
   @IsString()
   @MaxLength(24)
   contact_channel_code?: string | null;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(200)
+  contact_channel_detail?: string | null;
 
   @IsOptional()
   cause_detail?: string | null;
@@ -632,6 +663,7 @@ export const RISK_DASHBOARD_CASE_STATUSES = [
   'STUDENT_NOT_FOUND',
   'AWAITING_REFERRAL',
   'AWAITING_REFERRAL_OUTCOME',
+  'REFERRAL_NOT_SUCCEEDED',
   'RESOLVED',
 ] as const;
 export const RISK_DASHBOARD_STUDENT_GROUPS = ['RISK', 'WATCHLIST'] as const;
@@ -703,6 +735,46 @@ export class GetRiskDashboardQueryDto extends PaginationQueryDto {
   @IsOptional()
   @IsIn(RISK_DASHBOARD_SORT_DIRECTIONS)
   sortDirection?: (typeof RISK_DASHBOARD_SORT_DIRECTIONS)[number];
+}
+
+export class GetRiskDashboardFilterOptionsQueryDto {
+  @IsOptional()
+  @IsString()
+  @MaxLength(150)
+  province?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(150)
+  district?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(150)
+  subDistrict?: string;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  schoolId?: number;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(50)
+  grade?: string;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  academicYear?: number;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  semester?: number;
 }
 
 export class AdminLockLinkDto {

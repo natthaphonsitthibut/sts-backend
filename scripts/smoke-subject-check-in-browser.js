@@ -1957,6 +1957,10 @@ async function main() {
       async () => (await visibleRowIds(client)).length === rosterCount,
       'Leaving the link tab did not return to the register',
     );
+    // The usage route unmounts the workspace. Returning opens it at today
+    // unless ?date= was supplied; reselect the fixture date before asserting
+    // its session, rather than looking for today's swipe under another date.
+    await setDatePicker(client, 'เลือกวันที่เช็กชื่อ', scope.check_in_date);
     await clickButton(client, 'การ์ด');
     await waitFor(
       async () => await evaluate(client, 'Boolean(document.querySelector("[data-active-card=true]"))'),

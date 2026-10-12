@@ -297,7 +297,7 @@ export class RiskProfileRepository {
           WHERE c.deleted_at IS NULL
             AND c.status IN (
               'OPEN', 'IN_PROGRESS', 'PENDING_REVIEW', 'STUDENT_NOT_FOUND', 'AWAITING_REFERRAL',
-              'AWAITING_REFERRAL_OUTCOME'
+              'AWAITING_REFERRAL_OUTCOME', 'REFERRAL_NOT_SUCCEEDED'
             )
           GROUP BY c.student_uuid
         ),

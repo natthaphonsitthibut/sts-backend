@@ -35,6 +35,8 @@ async function screenshot(client, name) {
 }
 const EXECUTIVE_USERNAME = 'conversational_reports_executive_smoke';
 const REASON = 'Automated conversational reports browser smoke';
+const CONTACT_DETAIL_CODE = process.env.SMOKE_CONTACT_DETAIL_CODE || 'OTHER';
+assert(/^[A-Z][A-Z0-9_]{0,23}$/.test(CONTACT_DETAIL_CODE), 'invalid detail channel fixture code');
 
 function setSessionCookie(sessionCookieService, userId) {
   let cookie = null;
@@ -203,6 +205,8 @@ async function main() {
   let actorId = null;
   let executiveId = null;
   let chrome = null;
+  let createdContactChannel = false;
+  let runError = null;
   let observedStudentUuid = null;
   let observedDisadvantageCode = null;
   let observedDisadvantageWasPresent = true;
@@ -223,7 +227,7 @@ async function main() {
          SELECT 1 FROM cases current_case
          WHERE current_case.student_uuid = enrollment.student_uuid
            AND current_case.deleted_at IS NULL
-           AND current_case.status IN ('OPEN','IN_PROGRESS','PENDING_REVIEW','STUDENT_NOT_FOUND')
+           AND current_case.status IN ('OPEN','IN_PROGRESS','PENDING_REVIEW','STUDENT_NOT_FOUND','AWAITING_REFERRAL','AWAITING_REFERRAL_OUTCOME','REFERRAL_NOT_SUCCEEDED')
        )
        ORDER BY enrollment.student_uuid LIMIT 1`,
     );
@@ -242,7 +246,7 @@ async function main() {
            SELECT 1 FROM cases current_case
            WHERE current_case.student_uuid = enrollment.student_uuid
              AND current_case.deleted_at IS NULL
-             AND current_case.status IN ('OPEN','IN_PROGRESS','PENDING_REVIEW','STUDENT_NOT_FOUND')
+             AND current_case.status IN ('OPEN','IN_PROGRESS','PENDING_REVIEW','STUDENT_NOT_FOUND','AWAITING_REFERRAL','AWAITING_REFERRAL_OUTCOME','REFERRAL_NOT_SUCCEEDED')
          )
        ORDER BY enrollment."SchoolID_Onec", enrollment.student_uuid LIMIT 1`,
       [enrollment.school_id],
@@ -262,7 +266,7 @@ async function main() {
            SELECT 1 FROM cases current_case
            WHERE current_case.student_uuid = enrollment.student_uuid
              AND current_case.deleted_at IS NULL
-             AND current_case.status IN ('OPEN','IN_PROGRESS','PENDING_REVIEW','STUDENT_NOT_FOUND')
+             AND current_case.status IN ('OPEN','IN_PROGRESS','PENDING_REVIEW','STUDENT_NOT_FOUND','AWAITING_REFERRAL','AWAITING_REFERRAL_OUTCOME','REFERRAL_NOT_SUCCEEDED')
          )
        ORDER BY enrollment."SchoolID_Onec", enrollment.student_uuid LIMIT 1`,
       [[Number(enrollment.school_id), Number(secondScopedEnrollment.school_id)]],
@@ -299,7 +303,7 @@ async function main() {
       [observedStudentUuid, observedDisadvantageCode],
     );
     observedDisadvantageWasPresent = existingDisadvantage.present === true;
-    const permissions = ['home', 'dashboard', 'students'];
+    const permissions = ['home', 'dashboard', 'students', 'case:assign', 'case:review'];
     const [actor] = await dataSource.query(
       `INSERT INTO users (username, password, "FirstName", "LastName", status, permissions,
          role, data_scope, must_change_password, data_origin_code)
@@ -312,6 +316,22 @@ async function main() {
     );
     actorId = Number(actor.id);
     await cleanupActorFixtures(dataSource, actorId);
+    if (CONTACT_DETAIL_CODE !== 'OTHER') {
+      await dataSource.transaction(async manager => {
+        const [stale] = await manager.query(
+          'SELECT created_by,label_th,requires_detail FROM contact_channel_options WHERE code=$1 FOR UPDATE',
+          [CONTACT_DETAIL_CODE]);
+        if (stale) {
+          assert(Number(stale.created_by) === actorId && stale.requires_detail === true &&
+            stale.label_th === 'ช่องทางทดสอบมีรายละเอียด', 'Refusing to remove a contact channel not owned by this fixture');
+          await manager.query('DELETE FROM contact_channel_options WHERE code=$1', [CONTACT_DETAIL_CODE]);
+        }
+        await manager.query(`INSERT INTO contact_channel_options
+          (code,label_th,sort_order,requires_detail,is_active,created_by)
+          VALUES ($1,'ช่องทางทดสอบมีรายละเอียด',45,TRUE,TRUE,$2)`, [CONTACT_DETAIL_CODE,actorId]);
+      });
+      createdContactChannel = true;
+    }
     const [executive] = await dataSource.query(
       `INSERT INTO users (username, password, "FirstName", "LastName", status, permissions,
          role, data_scope, must_change_password, data_origin_code)
@@ -373,14 +393,13 @@ async function main() {
     const [previousSubmission] = await dataSource.query(
       `INSERT INTO task_submissions (
          task_link_id, visited_at, task_execution_outcome_code, home_visit_exception_code,
-         parental_status_code, guardian_type_code, contact_person_name, contact_channel_code,
+         parental_status_code, contact_person_name, contact_channel_code, contact_channel_detail,
          residence_environment_detail, cause_detail
        ) VALUES ($1, now() - interval '1 day', 'NOT_SUCCEEDED', 'STUDENT_NOT_FOUND',
          (SELECT code FROM parental_status_options WHERE is_active=TRUE AND deleted_at IS NULL ORDER BY sort_order LIMIT 1),
-         (SELECT code FROM guardian_type_options WHERE is_active=TRUE AND deleted_at IS NULL ORDER BY sort_order LIMIT 1),
-         'ผู้ติดต่อจากรอบก่อน', 'PHONE', 'บริบทจากรอบก่อน', 'ข้อความเหตุการณ์เก่าห้าม prefill')
+         'ผู้ติดต่อจากรอบก่อน', $2, 'อีเมล', 'บริบทจากรอบก่อน', 'ข้อความเหตุการณ์เก่าห้าม prefill')
        RETURNING id`,
-      [previous.link_id],
+      [previous.link_id, CONTACT_DETAIL_CODE],
     );
     const [environment] = await dataSource.query(
       `SELECT code FROM residence_environment_options
@@ -393,6 +412,25 @@ async function main() {
         [previousSubmission.id, environment.code],
       );
     }
+    // The previous round named the mother alone; the new round must start from
+    // that answer and let the visitor tick more guardians beside it.
+    await dataSource.query(
+      `INSERT INTO task_submission_guardian_types
+       (task_submission_id, guardian_type_code) VALUES ($1,'MOTHER')`,
+      [previousSubmission.id],
+    );
+    const guardianLabels = Object.fromEntries(
+      (
+        await dataSource.query(
+          `SELECT code, label_th FROM guardian_type_options
+           WHERE code IN ('FATHER','MOTHER','OTHER','NO_GUARDIAN')`,
+        )
+      ).map((row) => [row.code, row.label_th]),
+    );
+    assert(
+      Object.keys(guardianLabels).length === 4,
+      'guardian options are missing; run the guardian-set migration on the smoke database',
+    );
     await dataSource.query(`UPDATE tasks SET status='COMPLETED' WHERE id=$1`, [previous.task_id]);
     await dataSource.query(`UPDATE task_links SET status='COMPLETED' WHERE id=$1`, [
       previous.link_id,
@@ -445,21 +483,56 @@ async function main() {
     );
     assert(
       await client.evaluate(
-        `document.querySelector('input[name="visit-outcome"]:checked')?.parentElement?.innerText.includes('พบนักเรียน')
-         && !document.querySelector('input[name="visit-outcome"]:checked')?.parentElement?.innerText.includes('ไม่พบนักเรียน')`,
+        // By value, not label text: innerText is empty while the page is mid-layout.
+        `document.querySelector('input[name="visit-outcome"]:checked')?.value === 'FOUND'`,
       ),
-      'previous unsuccessful outcome leaked into the new round',
+      `previous unsuccessful outcome leaked into the new round: ${await client.evaluate(
+        `JSON.stringify([...document.querySelectorAll('input[name="visit-outcome"]')].map((input) => [input.value, input.checked, input.parentElement?.innerText]))`,
+      )}`,
     );
+    // The form no longer asks who was met (owner, 2026-10-11); only the
+    // channel carries over from the previous round.
     assert(
-      (await client.evaluate(`document.querySelector('#contact-person-selection')?.value`)) ===
-        'บุคคลอื่น',
-      'repeat contact did not map to the explicit other-person choice',
+      await client.evaluate(
+        `!document.querySelector('#contact-person-selection') && !document.querySelector('#contact-person-name')
+         && !document.querySelector('form')?.innerText.includes('ผู้ที่พบ')`,
+      ),
+      'VISIT form still asks who was met',
     );
-    assert(
-      (await client.evaluate(`document.querySelector('#contact-person-name')?.value`)) ===
-        'ผู้ติดต่อจากรอบก่อน',
-      'repeat contact prefill was not hydrated',
+    await waitFor(
+      async () =>
+        (await client.evaluate(
+          `document.getElementById('contact-channel')?.parentElement?.querySelector('select')?.value`,
+        )) === CONTACT_DETAIL_CODE,
+      'repeat contact channel prefill was not hydrated',
     );
+    await waitFor(
+      async () =>
+        (await client.evaluate(`document.querySelector('#contact-channel-detail')?.value`)) ===
+        'อีเมล',
+      'OTHER contact channel detail prefill was not hydrated',
+    );
+    const chooseContact = async (code) => {
+      await client.evaluate(`(() => {
+        const field = document.getElementById('contact-channel')?.parentElement?.querySelector('select');
+        if (!field) throw new Error('contact selector missing');
+        Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype,'value').set.call(field, ${JSON.stringify(code)});
+        field.dispatchEvent(new Event('change',{bubbles:true}));
+      })()`);
+    };
+    await chooseContact('PHONE');
+    await waitFor(
+      async () =>
+        !(await client.evaluate(`Boolean(document.querySelector('#contact-channel-detail'))`)),
+      'switching away from OTHER did not hide the detail',
+    );
+    await chooseContact(CONTACT_DETAIL_CODE);
+    await waitFor(
+      async () =>
+        (await client.evaluate(`document.querySelector('#contact-channel-detail')?.value`)) === '',
+      'switching back to OTHER restored stale detail',
+    );
+
     assert(
       !(await client.evaluate(
         // The history card may show it; the form fields must not.
@@ -467,19 +540,120 @@ async function main() {
       )),
       'old event summary leaked into prefill UI',
     );
-    await setInput(client, '#contact-person-name', 'แก้ไขแล้วในรอบใหม่');
+    // Bring the field to mid-screen first: clickText measures an option right
+    // after scrolling to it, and a panel still following that scroll is missed.
+    await client.evaluate(
+      `document.querySelector('#absence-reason-category')?.scrollIntoView({ block: 'center' })`,
+    );
     await client.evaluate(`document.querySelector('#absence-reason-category')?.click()`);
     await client.clickText(absenceReason.category_label);
     await client.evaluate(`document.querySelector('#absence-reason')?.click()`);
     await client.clickText(absenceReason.label_th);
     await client.evaluate(`document.querySelector('#observed-disadvantage-types')?.click()`);
-    await client.clickText(disadvantage.label_th);
-    await client.evaluate(`document.body.click()`);
+    // At phone width the choices open as a bottom sheet: wait for it to finish
+    // sliding in before aiming a real click at a row, then close it with เสร็จ.
+    const careSheet = `document.querySelector('[role="dialog"][aria-label="ข้อสังเกตด้านความด้อยโอกาส"]')`;
+    await waitFor(
+      async () =>
+        await client.evaluate(`(() => {
+          const sheet = ${careSheet};
+          return Boolean(sheet) && sheet.getAnimations().length === 0
+            && Math.abs(sheet.getBoundingClientRect().bottom - innerHeight) < 1;
+        })()`),
+      'care observation sheet did not open at the bottom of the phone screen',
+    );
+    assert(
+      await client.evaluate(`${careSheet}.innerText.includes('เลือกได้หลายรายการ')`),
+      'care observation sheet does not say several can be picked',
+    );
+    await client.clickText(disadvantage.label_th, careSheet);
+    await waitFor(
+      async () => await client.evaluate(`${careSheet}.innerText.includes('เลือกแล้ว 1 รายการ')`),
+      'care observation sheet did not count the pick',
+    );
+    await client.clickText('เสร็จ', careSheet);
+    await waitFor(
+      async () => !(await client.evaluate(`Boolean(${careSheet})`)),
+      'care observation sheet did not close on เสร็จ',
+    );
+    // ผู้ปกครอง/ผู้ดูแล is ticked like the other sets (owner, 2026-10-12).
+    const guardianSheet = `document.querySelector('[role="dialog"][aria-label="ผู้ปกครอง/ผู้ดูแล"]')`;
+    const guardianField = `document.querySelector('#guardian-types')?.parentElement?.innerText`;
+    const tickedGuardians = async () =>
+      await client.evaluate(
+        `[...${guardianSheet}.querySelectorAll('[role="option"][aria-selected="true"]')]
+          .map((option) => option.innerText.trim()).join('|')`,
+      );
+    await waitFor(
+      async () => (await client.evaluate(guardianField))?.includes(guardianLabels.MOTHER),
+      "the previous round's guardian was not prefilled",
+    );
+    await client.evaluate(`document.querySelector('#guardian-types')?.click()`);
+    await waitFor(
+      async () =>
+        await client.evaluate(`(() => {
+          const sheet = ${guardianSheet};
+          return Boolean(sheet) && sheet.getAnimations().length === 0
+            && Math.abs(sheet.getBoundingClientRect().bottom - innerHeight) < 1;
+        })()`),
+      'guardian sheet did not open at the bottom of the phone screen',
+    );
+    assert(
+      await client.evaluate(
+        `![...${guardianSheet}.querySelectorAll('[role="option"]')]
+          .some((option) => option.innerText.includes('บิดาและมารดา'))`,
+      ),
+      'the combined บิดาและมารดา option is still offered',
+    );
+    await client.clickText(guardianLabels.NO_GUARDIAN, guardianSheet);
+    await waitFor(
+      async () => (await tickedGuardians()) === guardianLabels.NO_GUARDIAN,
+      async () => `ไม่มีผู้ปกครอง did not clear the other guardians: ${await tickedGuardians()}`,
+    );
+    await client.clickText(guardianLabels.FATHER, guardianSheet);
+    await waitFor(
+      async () => (await tickedGuardians()) === guardianLabels.FATHER,
+      async () => `ticking a guardian did not clear ไม่มีผู้ปกครอง: ${await tickedGuardians()}`,
+    );
+    await client.clickText(guardianLabels.MOTHER, guardianSheet);
+    await client.clickText(guardianLabels.OTHER, guardianSheet);
+    await waitFor(
+      async () =>
+        (await tickedGuardians()) ===
+        [guardianLabels.FATHER, guardianLabels.MOTHER, guardianLabels.OTHER].join('|'),
+      async () => `three guardians were not ticked together: ${await tickedGuardians()}`,
+    );
+    await client.clickText('เสร็จ', guardianSheet);
+    await waitFor(
+      async () => !(await client.evaluate(`Boolean(${guardianSheet})`)),
+      'guardian sheet did not close on เสร็จ',
+    );
+    await waitFor(
+      async () =>
+        await client.evaluate(
+          `Boolean(document.querySelector('input[name="guardianTypeDetail"]'))`,
+        ),
+      'ticking อื่น ๆ did not ask for the guardian to be named',
+    );
+    await setInput(client, 'input[name="guardianTypeDetail"]', 'ป้าข้างบ้าน');
     const beforeVisit = await dataSource.query(
       `SELECT COUNT(*)::int AS count FROM task_submissions WHERE task_link_id=$1`,
       [visit.link_id],
     );
     assert(Number(beforeVisit[0].count) === 0, 'VISIT wrote before final submit');
+    await client.clickText('บันทึกข้อมูล');
+    await waitFor(
+      async () =>
+        await client.evaluate(`document.body.innerText.includes('กรุณาระบุช่องทางติดต่ออื่น')`),
+      'blank OTHER detail was not rejected in the real form',
+    );
+    const [stillEmpty] = await dataSource.query(
+      'SELECT count(*)::int AS count FROM task_submissions WHERE task_link_id=$1',
+      [visit.link_id],
+    );
+    assert(stillEmpty.count === 0, 'blank OTHER detail wrote a submission');
+    await setInput(client, '#contact-channel-detail', 'อีเมล');
+
     await client.clickText('บันทึกข้อมูล');
     await waitFor(async () => {
       const [row] = await dataSource.query(
@@ -489,7 +663,7 @@ async function main() {
       return Number(row.count) === 1;
     }, 'VISIT final submit did not write exactly once');
     const [visitSubmission] = await dataSource.query(
-      `SELECT task_execution_outcome_code, contact_person_name,
+      `SELECT task_execution_outcome_code, contact_person_name, contact_channel_code, contact_channel_detail,
               absence_reason_category_code, absence_reason_code,
               cause_detail, photo_paths
        FROM task_submissions WHERE task_link_id=$1`,
@@ -499,7 +673,15 @@ async function main() {
       visitSubmission.task_execution_outcome_code === 'SUCCEEDED',
       'VISIT derived outcome is wrong',
     );
-    assert(visitSubmission.contact_person_name === 'แก้ไขแล้วในรอบใหม่', 'VISIT snapshot is wrong');
+    assert(
+      visitSubmission.contact_person_name === null,
+      'VISIT stored a contact person although the form no longer asks for one',
+    );
+    assert(
+      visitSubmission.contact_channel_code === CONTACT_DETAIL_CODE &&
+        visitSubmission.contact_channel_detail === 'อีเมล',
+      'VISIT other contact channel detail did not persist',
+    );
     assert(
       visitSubmission.absence_reason_category_code === absenceReason.category_code,
       'VISIT absence category was not persisted independently',
@@ -513,6 +695,25 @@ async function main() {
       'old event detail was copied into new submission',
     );
     assert(visitSubmission.photo_paths === null, 'old photos were copied into new submission');
+    const [guardianAnswer] = await dataSource.query(
+      `SELECT submission.guardian_type_detail,
+              (SELECT string_agg(link.guardian_type_code, ',' ORDER BY link.guardian_type_code)
+               FROM task_submission_guardian_types link
+               WHERE link.task_submission_id = submission.id) AS codes
+       FROM task_submissions submission WHERE submission.task_link_id=$1`,
+      [visit.link_id],
+    );
+    assert(
+      guardianAnswer.codes === 'FATHER,MOTHER,OTHER',
+      `VISIT did not store every ticked guardian: ${guardianAnswer.codes}`,
+    );
+    assert(
+      guardianAnswer.guardian_type_detail === 'ป้าข้างบ้าน',
+      'VISIT did not store the named guardian',
+    );
+    console.log(
+      `ok detail channel ${CONTACT_DETAIL_CODE}: prefill, switch clears, required validation, and submission detail persisted`,
+    );
     const [careObservation] = await dataSource.query(
       `SELECT EXISTS(
          SELECT 1 FROM home_visit_disadvantage_observations observation
@@ -599,6 +800,11 @@ async function main() {
       })()`,
     );
     assert(
+      await client.evaluate(`document.body.innerText.includes('ช่องทางติดต่ออื่น') &&
+      [...document.querySelectorAll('input[disabled]')].some(field => field.value === 'อีเมล')`),
+      'case page did not show the other contact channel detail',
+    );
+    assert(
       noteAlignment !== 'missing' && Math.abs(Number(noteAlignment)) <= 2,
       `environment note does not end level with the answer beside it: ${noteAlignment}`,
     );
@@ -621,6 +827,8 @@ async function main() {
       absenceReason.category_label,
       absenceReason.label_th,
       disadvantage.label_th,
+      [guardianLabels.FATHER, guardianLabels.MOTHER, guardianLabels.OTHER].join(', '),
+      'ป้าข้างบ้าน',
     ]) {
       assert(
         await client.evaluate(
@@ -642,7 +850,8 @@ async function main() {
     );
     await setInput(client, '#case-note', 'เสนอทุนจากผลการติดตาม');
     await client.evaluate(`document.querySelector('#proposed-assistance-measures')?.click()`);
-    await client.clickText(assistanceMeasure.label_th, `document.querySelector('[role="dialog"]')`);
+    // The option panel is portalled to <body>, outside the dialog subtree.
+    await client.clickText(assistanceMeasure.label_th);
     await client.evaluate(
       `document.querySelector('#case-note')?.dispatchEvent(
         new MouseEvent('mousedown', { bubbles: true }))`,
@@ -720,12 +929,17 @@ async function main() {
       `assistance detail and upload box differ in height: ${JSON.stringify(heights)}`,
     );
     await screenshot(client, 'assist-form');
-    await client.evaluate(
-      `document.querySelector('input[name="assistance-outcome"][value="NOT_SUCCEEDED"]')?.click()`,
-    );
+    // A click that lands before the form is interactive is lost, so repeat it
+    // until the detail field it reveals is there.
     await waitFor(
       async () =>
-        await client.evaluate(`Boolean(document.querySelector('#execution-outcome-detail'))`),
+        await client.evaluate(
+          `(() => {
+            if (document.querySelector('#execution-outcome-detail')) return true;
+            document.querySelector('input[name="assistance-outcome"][value="NOT_SUCCEEDED"]')?.click();
+            return false;
+          })()`,
+        ),
       'ASSIST failure detail missing',
     );
     await setInput(client, '#execution-outcome-detail', 'ผู้ปกครองยังไม่พร้อม');
@@ -756,23 +970,8 @@ async function main() {
       'repeat ASSIST action was not offered after the assistance round',
     );
 
-    // Seed one referral for aggregate and drill-down browser proof.
-    const reviewId = randomUUID();
-    await dataSource.query(
-      `INSERT INTO case_reviews (id, case_id, review_action, review_note, reviewed_by, source_actor_user_id)
-       VALUES ($1,$2,'REFER_AGENCY','smoke referral','Browser',$3)`,
-      [reviewId, caseId, actorId],
-    );
-    const [agency] = await dataSource.query(
-      `SELECT id FROM referral_agencies WHERE is_active=TRUE ORDER BY id LIMIT 1`,
-    );
-    assert(agency, 'no active referral agency for aggregate smoke');
-    await dataSource.query(
-      `INSERT INTO case_referrals (case_review_id, case_id, referral_agency_id, referred_by_user_id)
-       VALUES ($1,$2,$3,$4)`,
-      [reviewId, caseId, agency.id, actorId],
-    );
-    // The risk tab lists students of every school in scope when the header
+    // Checked before the referral below: a referred student leaves กลุ่มเสี่ยง
+    // for งานส่งต่อ. The risk tab lists students of every school in scope when the header
     // filter names none (the report's school filter moved to the header).
     await client.call('Page.navigate', { url: `${FRONTEND_URL}/student-risk-report/risk` });
     await waitFor(
@@ -799,6 +998,22 @@ async function main() {
       'all-schools risk report rendered a student outside the actor scope',
     );
 
+    // Seed one referral for aggregate and drill-down browser proof.
+    const reviewId = randomUUID();
+    await dataSource.query(
+      `INSERT INTO case_reviews (id, case_id, review_action, review_note, reviewed_by, source_actor_user_id)
+       VALUES ($1,$2,'REFER_AGENCY','smoke referral','Browser',$3)`,
+      [reviewId, caseId, actorId],
+    );
+    const [agency] = await dataSource.query(
+      `SELECT id FROM referral_agencies WHERE is_active=TRUE ORDER BY id LIMIT 1`,
+    );
+    assert(agency, 'no active referral agency for aggregate smoke');
+    await dataSource.query(
+      `INSERT INTO case_referrals (case_review_id, case_id, referral_agency_id, referred_by_user_id)
+       VALUES ($1,$2,$3,$4)`,
+      [reviewId, caseId, agency.id, actorId],
+    );
     // The ส่งต่อ tab: counts plus the scoped drill-down of referred students.
     await client.call('Page.navigate', { url: `${FRONTEND_URL}/student-risk-report/referrals` });
     await waitFor(
@@ -810,51 +1025,72 @@ async function main() {
       'authorized referral drill-down did not render scoped student row',
     );
 
-    // Executive sees aggregate but never receives or renders PII drill-down.
+    // An executive reads the report like any other role — the full register,
+    // fenced to their own scope (owner, 2026-09-29) — and nothing outside it.
+    await client.call('Page.navigate', { url: `${FRONTEND_URL}/home` });
     await setBrowserSession(client, setSessionCookie(sessionCookieService, executiveId), {
       id: executiveId,
       username: EXECUTIVE_USERNAME,
       roles: ['EXECUTIVE'],
       permissions: ['dashboard'],
     });
-    await client.call('Page.navigate', { url: `${FRONTEND_URL}/student-risk-report/risk` });
+    await client.call('Page.navigate', { url: `${FRONTEND_URL}/student-risk-report/referrals` });
     await waitFor(
       async () =>
-        await client.evaluate(`Boolean(document.querySelector('[data-referral-register]'))`),
-      'executive aggregate-only dashboard did not render',
+        await client.evaluate(
+          `Boolean(document.querySelector('[data-referral-register]'))
+            && document.body.innerText.includes(${JSON.stringify(enrollment.student_name)})`,
+        ),
+      async () =>
+        `executive referral register did not render the in-scope student: ${await client.evaluate(
+          `JSON.stringify({ path: location.pathname, text: document.body.innerText.slice(0, 600) })`,
+        )}`,
     );
+    const executiveRows = JSON.parse(
+      await client.evaluate(
+        `fetch(${JSON.stringify(`${BACKEND_URL}/api/dashboard/referrals?limit=100`)}, { credentials: 'include' })
+          .then((response) => response.json())
+          .then((body) => JSON.stringify(body.data.map((row) => row.schoolId)))`,
+      ),
+    );
+    assert(executiveRows.length > 0, 'executive referral drill-down returned no rows');
     assert(
-      !(await client.evaluate(
-        `document.body.innerText.includes(${JSON.stringify(enrollment.student_name)})`,
-      )),
-      'executive UI rendered a referred student by name',
+      executiveRows.every((schoolId) => Number(schoolId) === Number(enrollment.school_id)),
+      `executive referral drill-down left their school scope: ${[...new Set(executiveRows)].join(', ')}`,
     );
-    const drilldownStatus = await client.evaluate(
-      `fetch(${JSON.stringify(`${BACKEND_URL}/api/dashboard/referrals`)}, { credentials: 'include' })
-        .then((response) => response.status)`,
-    );
-    assert(drilldownStatus === 403, `executive referral drill-down returned ${drilldownStatus}`);
 
     console.log(
-      'conversational reports browser smoke passed (development Google email allow/deny, VISIT/ASSIST one-page forms, contact choice, split absence type/reason, care provenance, reviewer completeness, ASSIST proposal/prefill, single submit, repeat ASSIST, all-schools scoped report, aggregate/drill-down scope)',
+      'conversational reports browser smoke passed (development Google email allow/deny, VISIT/ASSIST one-page forms, contact channel prefill, split absence type/reason, care provenance, reviewer completeness, ASSIST proposal/prefill, single submit, repeat ASSIST, all-schools scoped report, executive scoped register)',
     );
+  } catch (error) {
+    runError = error;
+    throw error;
   } finally {
-    if (chrome) chrome.close();
-    await cleanupActorFixtures(dataSource, actorId);
+    const cleanupErrors = [];
+    const cleanup = async (stage, action) => {
+      try { await action(); } catch (error) {
+        cleanupErrors.push(new Error(`Cleanup ${stage} failed`, { cause: error }));
+      }
+    };
+    await cleanup('Chrome', async () => { chrome?.close(); });
+    await cleanup('actor fixtures', () => cleanupActorFixtures(dataSource, actorId));
     if (observedStudentUuid && observedDisadvantageCode && !observedDisadvantageWasPresent) {
-      await dataSource.query(
-        `DELETE FROM student_term_disadvantages
-         WHERE student_uuid=$1 AND disadvantage_type_code=$2`,
-        [observedStudentUuid, observedDisadvantageCode],
-      );
+      await cleanup('disadvantage fixture', () => dataSource.query(
+        `DELETE FROM student_term_disadvantages WHERE student_uuid=$1 AND disadvantage_type_code=$2`,
+        [observedStudentUuid,observedDisadvantageCode]));
     }
-    if (actorId) {
-      await dataSource.query(`UPDATE users SET status='DISABLED' WHERE id=$1`, [actorId]);
+    for (const id of [actorId,executiveId].filter(Boolean)) {
+      await cleanup('actor disabling', () => dataSource.query("UPDATE users SET status='DISABLED' WHERE id=$1", [id]));
     }
-    if (executiveId) {
-      await dataSource.query(`UPDATE users SET status='DISABLED' WHERE id=$1`, [executiveId]);
+    if (createdContactChannel) {
+      await cleanup('contact catalog', () => dataSource.query(
+        'DELETE FROM contact_channel_options WHERE code=$1 AND created_by=$2', [CONTACT_DETAIL_CODE,actorId]));
     }
-    await app.close();
+    await cleanup('app close', () => app.close());
+    if (cleanupErrors.length) {
+      throw new AggregateError(runError ? [runError,...cleanupErrors] : cleanupErrors,
+        cleanupErrors.map(error => error.message).join('; '));
+    }
   }
 }
 

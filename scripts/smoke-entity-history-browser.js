@@ -272,27 +272,71 @@ async function waitForHistoryPanel(client, panelTitle) {
   }
 }
 
-async function selectAction(client, value) {
-  // The base Select renders a custom trigger button carrying the id plus a
-  // hidden native <select> (with the real onChange) as its sibling. Drive the
-  // native select so React state updates exactly as a real change would.
+async function comboboxOptions(client, inputId) {
+  // The base Combobox is an <input>; focusing it opens a portalled <ul> of
+  // option buttons. innerText's first line is the label (a description may follow).
   await evaluate(
     client,
     `(() => {
-      const trigger = document.getElementById('audit-action');
-      if (!trigger) throw new Error('Action filter trigger not found');
-      const select = trigger.parentElement?.querySelector('select');
-      if (!select) throw new Error('Hidden native action select not found');
-      const values = [...select.querySelectorAll('option')].map((option) => option.value);
-      if (!values.includes(${JSON.stringify(value)})) {
-        throw new Error('Action option missing (' + ${JSON.stringify(value)} + '); have: ' + values.join(','));
-      }
-      const setter = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value').set;
-      setter.call(select, ${JSON.stringify(value)});
-      select.dispatchEvent(new Event('input', { bubbles: true }));
-      select.dispatchEvent(new Event('change', { bubbles: true }));
+      const input = document.getElementById(${JSON.stringify(inputId)});
+      if (!input) throw new Error('Combobox not found: ' + ${JSON.stringify(inputId)});
+      input.blur();
     })()`,
   );
+  // The input's blur closes the panel on a 120ms timer; let it lapse before
+  // reopening, or it shuts the panel this focus just opened.
+  await new Promise((resolve) => setTimeout(resolve, 250));
+  await evaluate(
+    client,
+    `(() => {
+      const input = document.getElementById(${JSON.stringify(inputId)});
+      input.focus();
+      input.click();
+    })()`,
+  );
+  await waitFor(
+    async () => (await evaluate(client, `document.querySelectorAll('ul.fixed button').length`)) > 0,
+    `Combobox ${inputId} did not open`,
+  );
+  return JSON.parse(
+    await evaluate(
+      client,
+      `JSON.stringify([...document.querySelectorAll('ul.fixed button')].map((button) => button.innerText.split('\\n')[0].trim()))`,
+    ),
+  );
+}
+
+async function pickComboboxOption(client, inputId, label) {
+  const labels = await comboboxOptions(client, inputId);
+  assert(labels.includes(label), `Option "${label}" missing from ${inputId}; have: ${labels.join(', ')}`);
+  await evaluate(
+    client,
+    `(() => {
+      const button = [...document.querySelectorAll('ul.fixed button')]
+        .find((entry) => entry.innerText.split('\\n')[0].trim() === ${JSON.stringify(label)});
+      button.click();
+    })()`,
+  );
+  try {
+    await waitFor(
+      async () => (await evaluate(client, `document.querySelectorAll('ul.fixed button').length`)) === 0,
+      `Combobox ${inputId} did not close after picking "${label}"`,
+    );
+  } catch (error) {
+    const diagnostic = await evaluate(
+      client,
+      `JSON.stringify({ active: document.activeElement?.id, value: document.getElementById(${JSON.stringify(inputId)})?.value, options: [...document.querySelectorAll('ul.fixed button')].map((b) => b.innerText).slice(0, 12) })`,
+    );
+    throw new Error(`${errorMessage(error)}: ${diagnostic}`);
+  }
+}
+
+async function waitForAuditIdle(client, message) {
+  await waitFor(async () => {
+    const text = await bodyText(client);
+    return !text.includes('กำลังอัปเดต') && !text.includes('กำลังโหลดประวัติ');
+  }, message);
+  assert(!(await bodyText(client)).includes('โหลดประวัติไม่สำเร็จ'), `${message}: the log returned an error`);
 }
 
 function assertNoSecretLeak(text, context) {
@@ -399,12 +443,17 @@ async function main() {
     assertNoSecretLeak(await bodyText(client), 'Student history (unfiltered)');
     await capture(client, '/tmp/sts-entity-history-students-desktop.png');
 
-    await selectAction(client, 'STUDENT_UPDATE');
-    await waitFor(async () => {
-      const text = await bodyText(client);
-      return !text.includes('กำลังอัปเดต') && !text.includes('กำลังโหลดประวัติ');
-    }, 'Action filter STUDENT_UPDATE did not finish');
-    assert(!(await bodyText(client)).includes('โหลดประวัติไม่สำเร็จ'), 'Student history filter returned an error');
+    // One หมวด only on this panel, so it offers no หมวด picker.
+    assert(
+      (await evaluate(client, `document.getElementById('audit-category') === null`)) === true,
+      'Student history shows a category picker although it holds a single category',
+    );
+    await pickComboboxOption(client, 'audit-action', 'แก้ไขข้อมูลนักเรียน');
+    await waitForAuditIdle(client, 'Action filter STUDENT_UPDATE did not finish');
+    assert(
+      (await evaluate(client, `new URLSearchParams(location.search).get('auditAction')`)) === 'STUDENT_UPDATE',
+      'Picking an action did not reach the URL',
+    );
     assertNoSecretLeak(await bodyText(client), 'Student history (filtered)');
 
     await client.call('Emulation.setDeviceMetricsOverride', {
@@ -424,8 +473,128 @@ async function main() {
     assertNoSecretLeak(await bodyText(client), 'Council audit log');
     await capture(client, '/tmp/sts-entity-history-council-mobile.png');
 
+    // หมวด narrows ประเภท, and both reach the API as the backend's own vocabulary.
+    await client.call('Emulation.setDeviceMetricsOverride', {
+      width: 1440, height: 900, deviceScaleFactor: 1, mobile: false,
+    });
+    const categories = await comboboxOptions(client, 'audit-category');
+    for (const label of ['ทุกหมวด', 'บัญชีผู้ใช้', 'นักเรียน', 'ลิงก์และสิทธิ์เข้าถึงของครู']) {
+      assert(categories.includes(label), `Category "${label}" missing; have: ${categories.join(', ')}`);
+    }
+    await pickComboboxOption(client, 'audit-category', 'บัญชีผู้ใช้');
+    await waitForAuditIdle(client, 'Category filter did not finish');
+    assert(
+      (await evaluate(client, `new URLSearchParams(location.search).get('auditCategory')`)) === 'accounts',
+      'Picking a category did not reach the URL',
+    );
+    const accountActions = await comboboxOptions(client, 'audit-action');
+    assert(accountActions.includes('สร้างผู้ใช้งาน'), 'Account category lost its own actions');
+    assert(
+      !accountActions.includes('เปิดเคส') && !accountActions.includes('แก้ไขข้อมูลนักเรียน'),
+      `Account category still lists other categories' actions: ${accountActions.join(', ')}`,
+    );
+    // Headless Chrome fires no blur here, so close the panel by picking.
+    await pickComboboxOption(client, 'audit-action', 'ทุกประเภท');
+    await capture(client, '/tmp/sts-entity-history-council-category-desktop.png');
+
+    const filtered = JSON.parse(
+      await evaluate(
+        client,
+        `fetch(${JSON.stringify(`${BACKEND_URL}/api/audit-log?domain=all&category=accounts&limit=20`)}, { credentials: 'include' })
+          .then((response) => response.json()).then((body) => JSON.stringify(body.data.map((entry) => entry.action)))`,
+      ),
+    );
+    assert(filtered.length > 0, 'Category smoke needs at least one account event in the log');
+    assert(
+      filtered.every((action) => action.startsWith('USER_')),
+      `category=accounts returned other categories: ${[...new Set(filtered)].join(', ')}`,
+    );
+
+    // The picked school has student events (the history panel above listed
+    // them), so this หมวด must still show rows — and only its own.
+    await pickComboboxOption(client, 'audit-category', 'นักเรียน');
+    await waitForAuditIdle(client, 'Student category filter did not finish');
+    assert((await detailLinkCount(client)) > 0, 'Student category shows no rows for a school with student history');
+    const studentLabels = (await comboboxOptions(client, 'audit-action')).filter((label) => label !== 'ทุกประเภท');
+    await pickComboboxOption(client, 'audit-action', 'ทุกประเภท');
+    const shownTypes = JSON.parse(
+      await evaluate(
+        client,
+        `JSON.stringify([...new Set([...document.querySelectorAll('table tbody tr td:nth-child(2)')].map((cell) => cell.innerText.trim()))])`,
+      ),
+    );
+    assert(shownTypes.length > 0, 'Student category rows carry no type badge');
+    assert(
+      shownTypes.every((label) => studentLabels.includes(label)),
+      `Student category shows other categories' rows: ${shownTypes.join(', ')}`,
+    );
+    await capture(client, '/tmp/sts-entity-history-council-students-desktop.png');
+
+    // Opening a national id is one event in two linked places: the PDPA access
+    // record and the row this page lists under its own category.
+    const [revealStudent] = await dataSource.query(
+      `SELECT student_uuid::text AS id FROM student_term
+       WHERE "SchoolID_Onec" = $1 AND COALESCE("PersonID_Onec", '') <> ''
+       ORDER BY student_uuid LIMIT 1`,
+      [historySchool.id],
+    );
+    assert(revealStudent?.id, 'PDPA smoke needs a student with a national id in the picked school');
+    const revealStatus = await evaluate(
+      client,
+      `fetch(${JSON.stringify(`${BACKEND_URL}/api/students/${revealStudent.id}/pii-reveal`)}, {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ field_group: 'NATIONAL_ID', reason_code: 'VERIFY_DATA' }),
+      }).then((response) => response.status)`,
+    );
+    assert(revealStatus === 200 || revealStatus === 201, `National id reveal answered ${revealStatus}`);
+    // A reveal repeated inside the reveal window writes nothing new, so accept
+    // the row an earlier run left within that window.
+    const [linkedReveal] = await dataSource.query(
+      `SELECT audit.action, audit.target_type, audit.metadata ->> 'reasonLabel' AS reason_label,
+              audit.metadata -> 'scope' -> 'school_ids' ->> 0 AS school_id
+       FROM pii_access_events event
+       JOIN audit_log audit ON audit.id = event.audit_log_id
+       WHERE event.actor_user_id = $1 AND audit.target_id = $2
+         AND event.field_group = 'NATIONAL_ID'
+         AND event.created_at > now() - interval '20 minutes'
+       ORDER BY event.id DESC LIMIT 1`,
+      [adminId, revealStudent.id],
+    );
+    assert(linkedReveal, 'National id reveal wrote no access record linked to an audit row');
+    assert(
+      linkedReveal.action === 'STUDENT_NATIONAL_ID_VIEW' && linkedReveal.target_type === 'student',
+      `Reveal audit row is wrong: ${JSON.stringify(linkedReveal)}`,
+    );
+    assert(linkedReveal.reason_label === 'ตรวจสอบ/แก้ไขข้อมูล', 'Reveal audit row lost its reason');
+    assert(
+      String(linkedReveal.school_id) === String(historySchool.id),
+      'Reveal audit row is not scoped to the student school',
+    );
+
+    await pickComboboxOption(client, 'audit-category', 'ข้อมูลส่วนบุคคล (PDPA)');
+    await waitForAuditIdle(client, 'PDPA category filter did not finish');
+    assert((await detailLinkCount(client)) > 0, 'PDPA category shows no rows after a reveal');
+    const pdpaTypes = JSON.parse(
+      await evaluate(
+        client,
+        `JSON.stringify([...new Set([...document.querySelectorAll('table tbody tr td:nth-child(2)')].map((cell) => cell.innerText.trim()))])`,
+      ),
+    );
+    assert(
+      pdpaTypes.includes('เปิดดูเลขบัตรประชาชนนักเรียน'),
+      `PDPA category does not list the national id reveal: ${pdpaTypes.join(', ')}`,
+    );
+    assert(
+      pdpaTypes.every((label) => label.startsWith('เปิดดู')),
+      `PDPA category shows other categories' rows: ${pdpaTypes.join(', ')}`,
+    );
+    assertNoSecretLeak(await bodyText(client), 'Council audit log (PDPA category)');
+    await capture(client, '/tmp/sts-entity-history-council-pdpa-desktop.png');
+
     console.log(
-      'entity history browser smoke passed (student history and council audit, no secret leak, desktop/mobile)',
+      'entity history browser smoke passed (student history, council audit with category filter and PDPA reveal rows, no secret leak, desktop/mobile)',
     );
   } finally {
     await closeChrome(chrome);

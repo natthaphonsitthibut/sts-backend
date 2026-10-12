@@ -34,13 +34,13 @@ function createHarness() {
     findTeacherById: jest.fn(),
     findActiveHomeroomTeacherInScope: jest.fn(),
     listActivePiiRevealGroups: jest.fn().mockResolvedValue([]),
-    insertPiiAccessEvent: jest.fn().mockResolvedValue(undefined),
     updateTeacher: jest.fn(),
     lockHomeroomClassroomsForTeacher: jest.fn().mockResolvedValue(undefined),
     deactivateTeacher: jest.fn(),
   };
   const auditLog = { recordAtomic: jest.fn().mockResolvedValue(undefined) };
   const storage = { save: jest.fn(), delete: jest.fn(), resolve: jest.fn(), open: jest.fn() };
+  const piiAccessLog = { record: jest.fn().mockResolvedValue(undefined) };
   const service = new TeachersService(
     repository as unknown as TeachersRepository,
     auditLog as never,
@@ -50,8 +50,9 @@ function createHarness() {
       hashKeyVersion: 1,
       revealTtlSeconds: 900,
     },
+    piiAccessLog as never,
   );
-  return { service, repository, storage };
+  return { service, repository, storage, piiAccessLog };
 }
 
 const PROFILE_ROW = {
@@ -164,7 +165,7 @@ describe('TeachersService read-only profile access', () => {
   });
 
   it('does not let classroom-link-only viewers reveal the national id', async () => {
-    const { service, repository } = createHarness();
+    const { service, repository, piiAccessLog } = createHarness();
     repository.findActiveHomeroomTeacherInScope.mockResolvedValue(PROFILE_ROW);
 
     await expect(
@@ -175,11 +176,11 @@ describe('TeachersService read-only profile access', () => {
         { requestId: null, ip: null, userAgent: null },
       ),
     ).rejects.toBeInstanceOf(ForbiddenException);
-    expect(repository.insertPiiAccessEvent).not.toHaveBeenCalled();
+    expect(piiAccessLog.record).not.toHaveBeenCalled();
   });
 
   it('reveals to a scoped directory viewer and audits only a keyed reference', async () => {
-    const { service, repository } = createHarness();
+    const { service, repository, piiAccessLog } = createHarness();
     const directoryActor: AuthenticatedRequestUser = {
       ...ACTOR,
       permissions: ['teachers'],
@@ -202,16 +203,18 @@ describe('TeachersService read-only profile access', () => {
       values: { citizenId: '1234567890123' },
     });
 
-    expect(repository.insertPiiAccessEvent).toHaveBeenCalledWith(
+    expect(piiAccessLog.record).toHaveBeenCalledWith(
       expect.objectContaining({
         actorUserId: directoryActor.id,
+        subjectType: 'TEACHER',
+        fieldGroup: 'NATIONAL_ID',
         reasonCode: 'VERIFY_DATA',
         reasonNote: 'ตรวจความถูกต้องก่อนประสานงาน',
+        targetType: 'teachers',
+        targetId: '7',
       }),
     );
-    expect(JSON.stringify(repository.insertPiiAccessEvent.mock.calls)).not.toContain(
-      '1234567890123',
-    );
+    expect(JSON.stringify(piiAccessLog.record.mock.calls)).not.toContain('1234567890123');
   });
 
   it('hides an out-of-scope guessed teacher id', async () => {

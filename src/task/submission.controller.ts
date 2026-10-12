@@ -121,6 +121,10 @@ export class SubmissionController {
     // races with expiry, completion, or an admin lock.
     await this.taskService.assertVisitSubmissionAccess(token, sessionToken);
 
+    if (Object.prototype.hasOwnProperty.call(body, 'guardian_type_code')) {
+      throw new BadRequestException('แบบฟอร์มนี้เป็นเวอร์ชันเก่า กรุณาโหลดหน้าใหม่ก่อนส่งรายงาน');
+    }
+
     // Images are re-encoded to strip EXIF/GPS. Documents are signature-checked.
     // Every stored name is server-generated and raw uploads stay in memory.
     const storedKeys: string[] = [];
@@ -156,7 +160,10 @@ export class SubmissionController {
         body.parental_status_code,
         'สถานะของบิดา-มารดาไม่ถูกต้อง',
       ),
-      guardian_type_code: this.parseOptionCode(body.guardian_type_code, 'ผู้ปกครองไม่ถูกต้อง'),
+      guardian_type_codes: this.parseOptionCodeList(
+        (body as Record<string, unknown>).guardian_type_codes,
+        'ผู้ปกครองไม่ถูกต้อง',
+      ),
       guardian_type_detail: body.guardian_type_detail?.trim() || null,
       residence_environment_codes: this.parseOptionCodeList(
         (body as Record<string, unknown>).residence_environment_codes,
@@ -172,6 +179,7 @@ export class SubmissionController {
       execution_outcome_detail: body.execution_outcome_detail?.trim() || null,
       contact_person_name: body.contact_person_name?.trim() || null,
       contact_channel_code: body.contact_channel_code?.trim().toUpperCase() || null,
+      contact_channel_detail: body.contact_channel_detail,
       recommendation: body.recommendation,
       notes: causeDetail,
       status: body.status || 'COMPLETED',

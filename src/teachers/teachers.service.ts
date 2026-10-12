@@ -16,6 +16,7 @@ import {
   normalizeDataScope,
 } from '../auth';
 import { AuditLogService } from '../audit-log/audit-log.service';
+import { PiiAccessLogService } from '../audit-log/pii-access-log.service';
 import { resolveAuditActorId } from '../common/audit/audit-actor.util';
 import { buildPiiSubjectRef } from '../common/utils/pii-ref.util';
 import { piiConfig } from '../config/pii.config';
@@ -77,6 +78,7 @@ export class TeachersService {
     private readonly storage: FileStorageAdapter,
     @Inject(piiConfig.KEY)
     private readonly piiRuntimeConfig: ConfigType<typeof piiConfig>,
+    private readonly piiAccessLog: PiiAccessLogService,
   ) {}
 
   /** Orders a multi-school teacher's memberships only; access is checked separately. */
@@ -301,16 +303,22 @@ export class TeachersService {
       this.piiRuntimeConfig.revealTtlSeconds,
     );
     if (!activeGroups.includes('NATIONAL_ID')) {
-      await this.repository.insertPiiAccessEvent({
+      await this.piiAccessLog.record({
         actorUserId: resolveAuditActorId(actor),
+        actorLabel: actor.username ?? null,
         actorRoles: actor.roles,
+        subjectType: 'TEACHER',
         subjectRef,
         subjectRefKeyVersion: this.piiRuntimeConfig.hashKeyVersion,
+        fieldGroup: 'NATIONAL_ID',
         reasonCode,
         reasonNote,
         requestId: meta.requestId,
         ip: meta.ip,
         userAgent: meta.userAgent,
+        targetType: 'teachers',
+        targetId: String(teacher.id),
+        scopeMetadata: { schoolId: teacher.school_id },
       });
     }
     return { field_group: 'NATIONAL_ID', values: { citizenId } };

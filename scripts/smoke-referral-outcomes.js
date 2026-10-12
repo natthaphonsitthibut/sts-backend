@@ -1,7 +1,8 @@
 /**
  * End-to-end check of referral outcome tracking on the real schema: ส่งต่อ
- * parks the case in รอผลการส่งต่อ, ยังไม่สำเร็จ hands it back to รอพิจารณา,
- * a second referral can then close it with สำเร็จ, and every refusal (no
+ * parks the case in รอผลการส่งต่อ, ยังไม่สำเร็จ parks it in ส่งต่อไม่สำเร็จ
+ * (no closing from there), a second referral reported สำเร็จ goes to รอพิจารณา
+ * and can then be closed, and every refusal (no
  * permission, other school, repeat, stale referral, concurrent double submit)
  * holds on the server.
  */
@@ -64,7 +65,7 @@ async function main() {
            WHERE existing.student_uuid = enrollment.student_uuid
              AND existing.deleted_at IS NULL
              AND existing.status IN ('OPEN', 'IN_PROGRESS', 'PENDING_REVIEW',
-               'STUDENT_NOT_FOUND', 'AWAITING_REFERRAL', 'AWAITING_REFERRAL_OUTCOME')
+               'STUDENT_NOT_FOUND', 'AWAITING_REFERRAL', 'AWAITING_REFERRAL_OUTCOME', 'REFERRAL_NOT_SUCCEEDED')
          )
        ORDER BY enrollment.student_uuid
        LIMIT 1`,
@@ -116,6 +117,20 @@ async function main() {
     // ส่งต่อหน่วยงาน on the review parks the case in รอส่งต่อ; sending the
     // referral from the case page (agency + link window) is the referral's
     // มอบหมาย and moves it to รอผลการส่งต่อ.
+    const assertRiskTab = async (expected, when) => {
+      const risk = await taskStatsService.getRiskDashboard(director, {
+        studentGroup: 'RISK',
+        schoolId,
+        searchTerm: enrollment.student_name,
+        limit: 100,
+      });
+      const listed = risk.data.some((row) => row.studentId === enrollment.student_uuid);
+      assert(
+        listed === expected,
+        `กลุ่มเสี่ยง ${listed ? 'lists' : 'does not list'} the student ${when}`,
+      );
+    };
+
     const refer = async (note) => {
       const reviewed = await caseService.reviewCase(
         caseId,
@@ -126,6 +141,21 @@ async function main() {
         reviewed.case_status === 'AWAITING_REFERRAL' && reviewed.completion_outcome_code === null,
         `REFER_AGENCY returned ${reviewed.case_status}/${reviewed.completion_outcome_code}`,
       );
+      // รอส่งต่อ already belongs to งานส่งต่อ — as a case-only row with no
+      // agency yet — and no longer to กลุ่มเสี่ยง (owner, 2026-10-11).
+      const waiting = await taskStatsService.getReferralDrilldown(
+        director,
+        { schoolId, stageCode: 'AWAITING_REFERRAL', searchTerm: enrollment.student_name },
+        1,
+        100,
+      );
+      const waitingRow = waiting.data.find((item) => item.caseId === Number(caseId));
+      assert(
+        waitingRow && waitingRow.id === null && waitingRow.agencyName === null &&
+          waitingRow.referredAt === null && waitingRow.stageCode === 'AWAITING_REFERRAL',
+        `รอส่งต่อ case is not a case-only register row: ${JSON.stringify(waitingRow ?? null)}`,
+      );
+      await assertRiskTab(false, 'while the case is รอส่งต่อ');
       const sent = await referralLinks.sendReferral(
         caseId,
         {
@@ -144,8 +174,12 @@ async function main() {
       return latest.id;
     };
 
+    // Until a referral is chosen the student is an ordinary กลุ่มเสี่ยง row.
+    await assertRiskTab(true, 'before any referral');
+
     // 1. ส่งต่อ parks the case without closing it.
     const firstReferralId = await refer('ส่งต่อพบนักจิตวิทยา');
+    await assertRiskTab(false, 'while the case is รอผลการส่งต่อ');
     let state = await caseState();
     assert(
       state.status === 'AWAITING_REFERRAL_OUTCOME' && state.completion_outcome_code === null,
@@ -224,10 +258,11 @@ async function main() {
     // 3. The agency's report is the only way a result comes in.
     const body = { result_code: 'NOT_SUCCEEDED', result_note: 'ครอบครัวไม่ไปตามนัด' };
 
-    // 4. ยังไม่สำเร็จ returns the case to รอพิจารณา and keeps the note.
+    // 4. ยังไม่สำเร็จ becomes the case's own status (owner, 2026-10-12) and
+    // keeps the note.
     const notYet = await reportAsAgency(firstReferralId, body.result_code, body.result_note);
     assert(
-      notYet.data.case_status === 'PENDING_REVIEW',
+      notYet.data.case_status === 'REFERRAL_NOT_SUCCEEDED',
       `ยังไม่สำเร็จ left ${notYet.data.case_status}`,
     );
     assert(
@@ -239,15 +274,30 @@ async function main() {
     );
     state = await caseState();
     assert(
-      state.status === 'PENDING_REVIEW' && state.completion_outcome_code === null,
+      state.status === 'REFERRAL_NOT_SUCCEEDED' && state.completion_outcome_code === null,
       `case after ยังไม่สำเร็จ is ${JSON.stringify(state)}`,
+    );
+    const failedDetail = await caseService.getCase(caseId, director);
+    assert(
+      failedDetail.data.display_status_label === 'ส่งต่อไม่สำเร็จ',
+      `display label after ยังไม่สำเร็จ is ${failedDetail.data.display_status_label}`,
+    );
+    await assertRiskTab(false, 'while the case is ส่งต่อไม่สำเร็จ');
+    await expectRejected(
+      caseService.reviewCase(
+        caseId,
+        { review_action: 'CLOSE', review_note: 'ปิดเคสทั้งที่ส่งต่อไม่สำเร็จ' },
+        director,
+      ),
+      400,
+      'closing a case in ส่งต่อไม่สำเร็จ',
     );
     await expectRejected(
       reportAsAgency(firstReferralId, body.result_code, body.result_note),
       409,
       'second result on the same referral',
     );
-    await expectStages({ [firstReferralId]: 'PENDING_REVIEW' });
+    await expectStages({ [firstReferralId]: 'REFERRAL_NOT_SUCCEEDED' });
 
     // 5. A new referral supersedes the old one; only it can take a result.
     const secondReferralId = await refer('ส่งต่อโรงพยาบาลอีกครั้ง');
@@ -257,7 +307,7 @@ async function main() {
       'result on a superseded referral',
     );
     await expectStages({
-      [firstReferralId]: 'NOT_SUCCEEDED',
+      [firstReferralId]: 'REFERRAL_NOT_SUCCEEDED',
       [secondReferralId]: 'AWAITING_REFERRAL_OUTCOME',
     });
 
@@ -306,7 +356,12 @@ async function main() {
     }
     await dataSource.query(`UPDATE cases SET completion_outcome_code = 'CLOSED' WHERE id = $1`, [caseId]);
     console.log('ok both closed-case outcomes display เสร็จสิ้น only; recorded outcome stays intact');
-    await expectStages({ [firstReferralId]: 'NOT_SUCCEEDED', [secondReferralId]: 'COMPLETED' });
+    // The stage is how each round ended: the unsuccessful one keeps saying
+    // ส่งต่อไม่สำเร็จ after the case moved on, the successful one is เสร็จสิ้น.
+    await expectStages({
+      [firstReferralId]: 'REFERRAL_NOT_SUCCEEDED',
+      [secondReferralId]: 'RESOLVED',
+    });
     const rows = await dataSource.query(
       `SELECT referral.status_code, COUNT(result.case_referral_id)::int AS results
        FROM case_referrals referral
@@ -326,7 +381,7 @@ async function main() {
     );
 
     console.log(
-      'referral outcome smoke passed (refer → ยังไม่สำเร็จ → refer again → สำเร็จ → รอพิจารณา → ปิดเคส; 409 + concurrency)',
+      'referral outcome smoke passed (refer → ส่งต่อไม่สำเร็จ → refer again → สำเร็จ → รอพิจารณา → ปิดเคส; 409 + concurrency)',
     );
   } finally {
     if (caseId) {

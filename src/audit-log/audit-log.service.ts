@@ -16,7 +16,13 @@ import {
 } from '../common/pagination/pagination.util';
 import { queryDataSource } from '../database/sql-query';
 import { getBangkokDayBounds } from '../common/utils/date.util';
-import type { AuditLogDomain, AuditLogSortKey, AuditLogTaskType } from './dto/audit-log.dto';
+import type {
+  AuditLogCategory,
+  AuditLogDomain,
+  AuditLogSortKey,
+  AuditLogTaskType,
+} from './dto/audit-log.dto';
+import { AUDIT_LOG_CATEGORIES } from './dto/audit-log.dto';
 import type { AuditAction } from './dto/audit-log.dto';
 
 export type { AuditAction } from './dto/audit-log.dto';
@@ -116,6 +122,7 @@ const AUDIT_TARGET_NAME_SQL = `
 
 interface AuditActionDefinition {
   domain: AuditLogDomain;
+  category: AuditLogCategory;
   label: string;
   detailKeys: Array<{ key: string; label: string }>;
 }
@@ -144,6 +151,7 @@ interface SchoolScopeRow extends Record<string, unknown> {
 interface AuditLogListFilters {
   domain: AuditLogDomain;
   action?: AuditAction;
+  category?: AuditLogCategory;
   searchTerm?: string;
   dateFrom?: string;
   dateTo?: string;
@@ -175,14 +183,59 @@ export interface AuditLogEntryResponse {
   details: Array<{ label: string; value: string | number }>;
 }
 
+/** Every reveal of personal data states why, and for which school's record. */
+const PII_VIEW_DETAIL_KEYS = [
+  { key: 'reasonLabel', label: 'เหตุผล' },
+  { key: 'reasonNote', label: 'รายละเอียดเหตุผล' },
+  { key: 'schoolId', label: 'โรงเรียน' },
+];
+
 const ACTION_DEFINITIONS: Record<string, AuditActionDefinition> = {
+  STUDENT_NATIONAL_ID_VIEW: {
+    domain: 'students',
+    category: 'personal_data_access',
+    label: 'เปิดดูเลขบัตรประชาชนนักเรียน',
+    detailKeys: PII_VIEW_DETAIL_KEYS,
+  },
+  STUDENT_PASSPORT_VIEW: {
+    domain: 'students',
+    category: 'personal_data_access',
+    label: 'เปิดดูเลขหนังสือเดินทางนักเรียน',
+    detailKeys: PII_VIEW_DETAIL_KEYS,
+  },
+  STUDENT_ADDRESS_VIEW: {
+    domain: 'students',
+    category: 'personal_data_access',
+    label: 'เปิดดูที่อยู่นักเรียน',
+    detailKeys: PII_VIEW_DETAIL_KEYS,
+  },
+  TEACHER_NATIONAL_ID_VIEW: {
+    domain: 'users',
+    category: 'personal_data_access',
+    label: 'เปิดดูเลขบัตรประชาชนครู',
+    detailKeys: PII_VIEW_DETAIL_KEYS,
+  },
+  USER_NATIONAL_ID_VIEW: {
+    domain: 'users',
+    category: 'personal_data_access',
+    label: 'เปิดดูเลขบัตรประชาชนผู้ใช้งาน',
+    detailKeys: PII_VIEW_DETAIL_KEYS,
+  },
+  USER_ADDRESS_VIEW: {
+    domain: 'users',
+    category: 'personal_data_access',
+    label: 'เปิดดูที่อยู่ผู้ใช้งาน',
+    detailKeys: PII_VIEW_DETAIL_KEYS,
+  },
   USER_TEMP_PASSWORD_REISSUE: {
     domain: 'users',
+    category: 'accounts',
     label: 'ออกรหัสชั่วคราวใหม่',
     detailKeys: [{ key: 'expiresAt', label: 'รหัสหมดอายุ' }],
   },
   TEACHER_ACCESS_GRANT_ISSUE: {
     domain: 'tasks',
+    category: 'teacher_access',
     label: 'ออกลิงก์เข้าใช้งานครู',
     detailKeys: [
       { key: 'teacherName', label: 'ครู' },
@@ -192,6 +245,7 @@ const ACTION_DEFINITIONS: Record<string, AuditActionDefinition> = {
   },
   TEACHER_ACCESS_GRANT_UPDATE: {
     domain: 'tasks',
+    category: 'teacher_access',
     label: 'แก้ไขลิงก์เข้าใช้งานครู',
     detailKeys: [
       { key: 'startsAt', label: 'เริ่มต้น' },
@@ -200,6 +254,7 @@ const ACTION_DEFINITIONS: Record<string, AuditActionDefinition> = {
   },
   TEACHER_ACCESS_GRANT_REVOKE: {
     domain: 'tasks',
+    category: 'teacher_access',
     label: 'ยกเลิกลิงก์เข้าใช้งานครู',
     detailKeys: [
       { key: 'teacherName', label: 'ครู' },
@@ -208,6 +263,7 @@ const ACTION_DEFINITIONS: Record<string, AuditActionDefinition> = {
   },
   TEACHER_ACCESS_GRANT_ROTATE: {
     domain: 'tasks',
+    category: 'teacher_access',
     label: 'หมุนลิงก์เข้าใช้งานครู',
     detailKeys: [
       { key: 'teacherName', label: 'ครู' },
@@ -216,6 +272,7 @@ const ACTION_DEFINITIONS: Record<string, AuditActionDefinition> = {
   },
   TEACHER_ACCESS_GRANT_REVEAL: {
     domain: 'tasks',
+    category: 'teacher_access',
     label: 'คัดลอกลิงก์เข้าใช้งานครู',
     detailKeys: [
       { key: 'teacherName', label: 'ครู' },
@@ -224,11 +281,13 @@ const ACTION_DEFINITIONS: Record<string, AuditActionDefinition> = {
   },
   TEACHER_ACCESS_ARAID_VERIFY: {
     domain: 'tasks',
+    category: 'teacher_access',
     label: 'ยืนยัน AraID ของลิงก์ครูสำเร็จ',
     detailKeys: [{ key: 'authMethod', label: 'วิธียืนยันตัวตน' }],
   },
   CLASSROOM_ATTENDANCE_LINK_OPEN: {
     domain: 'tasks',
+    category: 'attendance',
     label: 'เปิดลิงก์เช็กชื่อและยืนยันตัวตนสำเร็จ',
     detailKeys: [
       { key: 'teacherName', label: 'ครู' },
@@ -237,21 +296,25 @@ const ACTION_DEFINITIONS: Record<string, AuditActionDefinition> = {
   },
   TASK_LINK_ARAID_VERIFY: {
     domain: 'tasks',
+    category: 'tasks',
     label: 'ยืนยัน AraID ของลิงก์ติดตาม/ช่วยเหลือสำเร็จ',
     detailKeys: [{ key: 'authMethod', label: 'วิธียืนยันตัวตน' }],
   },
   TASK_LINK_GOOGLE_VERIFY: {
     domain: 'tasks',
+    category: 'tasks',
     label: 'ยืนยัน Google ของลิงก์ติดตาม/ช่วยเหลือสำเร็จ',
     detailKeys: [{ key: 'authMethod', label: 'วิธียืนยันตัวตน' }],
   },
   TEACHER_ACCESS_ARAID_FAILED: {
     domain: 'tasks',
+    category: 'teacher_access',
     label: 'ยืนยัน AraID ของลิงก์ครูไม่สำเร็จ',
     detailKeys: [{ key: 'reason', label: 'เหตุผล' }],
   },
   TEACHER_ACCESS_GRANT_SEND: {
     domain: 'tasks',
+    category: 'teacher_access',
     label: 'ส่งลิงก์เข้าใช้งานครูทาง LINE',
     detailKeys: [
       { key: 'teacherName', label: 'ครู' },
@@ -260,6 +323,7 @@ const ACTION_DEFINITIONS: Record<string, AuditActionDefinition> = {
   },
   TEACHER_MESSAGING_LINK: {
     domain: 'tasks',
+    category: 'teacher_access',
     label: 'เชื่อมบัญชี LINE ของครู',
     detailKeys: [
       { key: 'provider', label: 'ช่องทาง' },
@@ -268,6 +332,7 @@ const ACTION_DEFINITIONS: Record<string, AuditActionDefinition> = {
   },
   TEACHER_LINE_INVITATION_ISSUE: {
     domain: 'tasks',
+    category: 'teacher_access',
     label: 'ออกคำเชิญยืนยันบัญชี LINE ของครู',
     detailKeys: [
       { key: 'teacherName', label: 'ครู' },
@@ -276,6 +341,7 @@ const ACTION_DEFINITIONS: Record<string, AuditActionDefinition> = {
   },
   TEACHER_LINE_INVITATION_REVOKE: {
     domain: 'tasks',
+    category: 'teacher_access',
     label: 'ยกเลิกคำเชิญยืนยันบัญชี LINE ของครู',
     detailKeys: [
       { key: 'teacherName', label: 'ครู' },
@@ -284,6 +350,7 @@ const ACTION_DEFINITIONS: Record<string, AuditActionDefinition> = {
   },
   TEACHER_MESSAGING_LINK_DENIED: {
     domain: 'tasks',
+    category: 'teacher_access',
     label: 'เชื่อมบัญชี LINE ของครูไม่สำเร็จ',
     detailKeys: [
       { key: 'provider', label: 'ช่องทาง' },
@@ -292,6 +359,7 @@ const ACTION_DEFINITIONS: Record<string, AuditActionDefinition> = {
   },
   TEACHER_MESSAGING_UNLINK: {
     domain: 'tasks',
+    category: 'teacher_access',
     label: 'ยกเลิกการเชื่อมบัญชี LINE ของครู',
     detailKeys: [
       { key: 'provider', label: 'ช่องทาง' },
@@ -300,6 +368,7 @@ const ACTION_DEFINITIONS: Record<string, AuditActionDefinition> = {
   },
   TEACHER_ACCESS_GRANT_USE: {
     domain: 'tasks',
+    category: 'teacher_access',
     label: 'ใช้ลิงก์เข้าใช้งานครู',
     detailKeys: [
       { key: 'teacherName', label: 'ครู' },
@@ -308,6 +377,7 @@ const ACTION_DEFINITIONS: Record<string, AuditActionDefinition> = {
   },
   TEACHER_ACCESS_GRANT_DENIED: {
     domain: 'tasks',
+    category: 'teacher_access',
     label: 'ปฏิเสธการใช้ลิงก์ครู',
     detailKeys: [
       { key: 'teacherName', label: 'ครู' },
@@ -316,6 +386,7 @@ const ACTION_DEFINITIONS: Record<string, AuditActionDefinition> = {
   },
   STUDENT_OBSERVATION_CREATE: {
     domain: 'students',
+    category: 'students',
     label: 'บันทึกข้อสังเกตนักเรียน',
     detailKeys: [
       { key: 'concernLevel', label: 'ระดับข้อสังเกต' },
@@ -324,6 +395,7 @@ const ACTION_DEFINITIONS: Record<string, AuditActionDefinition> = {
   },
   STUDENT_OBSERVATION_UPDATE: {
     domain: 'students',
+    category: 'students',
     label: 'แก้ไขข้อสังเกตนักเรียน',
     detailKeys: [
       { key: 'concernLevel', label: 'ระดับข้อสังเกต' },
@@ -332,11 +404,13 @@ const ACTION_DEFINITIONS: Record<string, AuditActionDefinition> = {
   },
   STUDENT_OBSERVATION_VIEW: {
     domain: 'students',
+    category: 'students',
     label: 'ดูข้อสังเกตนักเรียน',
     detailKeys: [{ key: 'resultCount', label: 'จำนวนรายการ' }],
   },
   DATA_IMPORT: {
     domain: 'imports',
+    category: 'data_transfer',
     label: 'นำเข้าข้อมูล',
     detailKeys: [
       { key: 'target', label: 'ประเภทข้อมูล' },
@@ -349,6 +423,7 @@ const ACTION_DEFINITIONS: Record<string, AuditActionDefinition> = {
   },
   IMPORT_QUARANTINE_RESOLVED: {
     domain: 'imports',
+    category: 'data_transfer',
     label: 'แก้ไขรายการนำเข้าที่รอตรวจสอบ',
     detailKeys: [
       { key: 'studentName', label: 'นักเรียน' },
@@ -366,6 +441,7 @@ const ACTION_DEFINITIONS: Record<string, AuditActionDefinition> = {
   },
   IMPORT_QUARANTINE_REJECTED: {
     domain: 'imports',
+    category: 'data_transfer',
     label: 'ปฏิเสธรายการนำเข้าที่รอตรวจสอบ',
     detailKeys: [
       { key: 'studentName', label: 'นักเรียน' },
@@ -382,6 +458,7 @@ const ACTION_DEFINITIONS: Record<string, AuditActionDefinition> = {
   },
   IMPORT_QUARANTINE_EXPORT: {
     domain: 'imports',
+    category: 'data_transfer',
     label: 'ดาวน์โหลดรายงานรายการนำเข้าที่รอตรวจสอบ',
     detailKeys: [
       { key: 'statusLabel', label: 'สถานะรายงาน' },
@@ -396,26 +473,31 @@ const ACTION_DEFINITIONS: Record<string, AuditActionDefinition> = {
   },
   USER_CREATE: {
     domain: 'users',
+    category: 'accounts',
     label: 'สร้างผู้ใช้งาน',
     detailKeys: [],
   },
   USER_UPDATE: {
     domain: 'users',
+    category: 'accounts',
     label: 'แก้ไขผู้ใช้งาน',
     detailKeys: [{ key: 'fieldCount', label: 'จำนวนข้อมูลที่แก้' }],
   },
   USER_PROFILE_UPDATE: {
     domain: 'users',
+    category: 'accounts',
     label: 'แก้ไขข้อมูลส่วนตัว',
     detailKeys: [{ key: 'fieldCount', label: 'จำนวนข้อมูลที่แก้' }],
   },
   USER_DELETE: {
     domain: 'users',
+    category: 'accounts',
     label: 'ปิดหรือลบผู้ใช้งาน',
     detailKeys: [],
   },
   USER_DEACTIVATE: {
     domain: 'users',
+    category: 'accounts',
     label: 'ปิดใช้งานผู้ใช้งาน',
     detailKeys: [
       { key: 'reasonCode', label: 'รหัสเหตุผล' },
@@ -424,84 +506,116 @@ const ACTION_DEFINITIONS: Record<string, AuditActionDefinition> = {
   },
   USER_REACTIVATE: {
     domain: 'users',
+    category: 'accounts',
     label: 'เปิดใช้งานผู้ใช้งานอีกครั้ง',
     detailKeys: [],
   },
   TASK_CREATE: {
     domain: 'tasks',
+    category: 'tasks',
     label: 'สร้างภารกิจหรือลิงก์',
     detailKeys: [
       { key: 'taskType', label: 'ประเภท' },
       { key: 'schoolId', label: 'รหัสโรงเรียน' },
       { key: 'grade', label: 'ชั้นเรียน' },
       { key: 'room', label: 'ห้อง' },
+      { key: 'previousWorkflowPhaseCode', label: 'ขั้นตอนก่อนมอบหมาย' },
+      { key: 'nextWorkflowPhaseCode', label: 'ขั้นตอนหลังมอบหมาย' },
     ],
   },
   CASE_CREATE: {
     domain: 'cases',
+    category: 'cases',
     label: 'เปิดเคส',
     detailKeys: [{ key: 'schoolId', label: 'รหัสโรงเรียน' }],
   },
   LINK_LOCK: {
     domain: 'tasks',
+    category: 'tasks',
     label: 'ปิดลิงก์',
     detailKeys: [{ key: 'taskType', label: 'ประเภทลิงก์' }],
   },
   LINK_UNLOCK: {
     domain: 'tasks',
+    category: 'tasks',
     label: 'เปิดลิงก์อีกครั้ง',
     detailKeys: [{ key: 'taskType', label: 'ประเภทลิงก์' }],
   },
   CASE_REVIEW: {
     domain: 'cases',
+    category: 'cases',
     label: 'ตรวจสอบเคส',
     detailKeys: [{ key: 'reviewAction', label: 'ผลการตรวจสอบ' }],
   },
   CASE_CLOSE: {
     domain: 'cases',
+    category: 'cases',
     label: 'ปิดเคส',
     detailKeys: [{ key: 'resolutionOutcome', label: 'ผลลัพธ์' }],
   },
   CASE_REFER_AGENCY: {
     domain: 'cases',
+    category: 'cases',
     label: 'ส่งต่อหน่วยงาน',
     detailKeys: [{ key: 'completionOutcome', label: 'ผลการดำเนินการ' }],
   },
   CASE_REFERRAL_RESULT: {
     domain: 'cases',
+    category: 'cases',
     label: 'บันทึกผลการส่งต่อ',
     detailKeys: [{ key: 'resultCode', label: 'ผลการส่งต่อ' }],
   },
   CASE_REFERRAL_LINK_CODE_REFRESH: {
     domain: 'cases',
+    category: 'cases',
     label: 'เปลี่ยนรหัสสำหรับหน่วยงาน',
     detailKeys: [{ key: 'accessCodeRevision', label: 'รุ่นรหัส' }],
   },
   CASE_REFERRAL_LINK_ISSUE: {
     domain: 'cases',
+    category: 'cases',
     label: 'ออกลิงก์ให้หน่วยงาน',
     detailKeys: [{ key: 'expiresAt', label: 'ใช้ได้ถึง' }],
   },
-  CASE_REFERRAL_LINK_REVOKE: { domain: 'cases', label: 'ยกเลิกลิงก์ของหน่วยงาน', detailKeys: [] },
+  CASE_REFERRAL_LINK_REVOKE: {
+    domain: 'cases',
+    category: 'cases',
+    label: 'ยกเลิกลิงก์ของหน่วยงาน',
+    detailKeys: [],
+  },
   CASE_REFERRAL_LINK_CODE_FAIL: {
     domain: 'cases',
+    category: 'cases',
     label: 'กรอกรหัสลิงก์หน่วยงานผิด',
     detailKeys: [{ key: 'attempts', label: 'จำนวนครั้ง' }],
   },
-  CASE_REFERRAL_LINK_LOCK: { domain: 'cases', label: 'ลิงก์หน่วยงานถูกล็อก', detailKeys: [] },
-  CASE_REFERRAL_LINK_VERIFY: { domain: 'cases', label: 'หน่วยงานยืนยันตัวตน', detailKeys: [] },
+  CASE_REFERRAL_LINK_LOCK: {
+    domain: 'cases',
+    category: 'cases',
+    label: 'ลิงก์หน่วยงานถูกล็อก',
+    detailKeys: [],
+  },
+  CASE_REFERRAL_LINK_VERIFY: {
+    domain: 'cases',
+    category: 'cases',
+    label: 'หน่วยงานยืนยันตัวตน',
+    detailKeys: [],
+  },
   CASE_ASSIST: {
     domain: 'cases',
+    category: 'cases',
     label: 'ให้ความช่วยเหลือ',
     detailKeys: [{ key: 'targetWorkflowPhase', label: 'ขั้นตอนถัดไป' }],
   },
   CASE_AUTO_CANCEL: {
     domain: 'cases',
+    category: 'cases',
     label: 'ยกเลิกเคสอัตโนมัติ',
     detailKeys: [],
   },
   CASE_RISK_SIGNAL_DETECTED: {
     domain: 'cases',
+    category: 'cases',
     label: 'ตรวจพบสัญญาณความเสี่ยง',
     detailKeys: [
       { key: 'signalRuleCode', label: 'กฎที่ตรวจพบ' },
@@ -510,6 +624,7 @@ const ACTION_DEFINITIONS: Record<string, AuditActionDefinition> = {
   },
   CASE_RISK_TIER_ESCALATE: {
     domain: 'cases',
+    category: 'cases',
     label: 'ปรับระดับความเสี่ยงอัตโนมัติ',
     detailKeys: [
       { key: 'fromTier', label: 'จากระดับ' },
@@ -523,6 +638,7 @@ const ACTION_DEFINITIONS: Record<string, AuditActionDefinition> = {
   // that has a historical SLA row.
   CASE_SLA_WARNING: {
     domain: 'cases',
+    category: 'cases',
     label: 'แจ้งเตือน SLA เคส',
     detailKeys: [
       { key: 'riskTier', label: 'ระดับความเสี่ยง' },
@@ -531,6 +647,7 @@ const ACTION_DEFINITIONS: Record<string, AuditActionDefinition> = {
   },
   CASE_SLA_BREACHED: {
     domain: 'cases',
+    category: 'cases',
     label: 'ยกระดับเคสเกิน SLA',
     detailKeys: [
       { key: 'riskTier', label: 'ระดับความเสี่ยง' },
@@ -539,11 +656,13 @@ const ACTION_DEFINITIONS: Record<string, AuditActionDefinition> = {
   },
   TASK_DELETE: {
     domain: 'tasks',
+    category: 'tasks',
     label: 'ลบภารกิจ',
     detailKeys: [],
   },
   TASK_CANCEL: {
     domain: 'tasks',
+    category: 'tasks',
     label: 'ยกเลิกการมอบหมาย',
     detailKeys: [
       { key: 'caseId', label: 'เคส' },
@@ -552,6 +671,7 @@ const ACTION_DEFINITIONS: Record<string, AuditActionDefinition> = {
   },
   TASK_LINK_LINE_SEND: {
     domain: 'tasks',
+    category: 'tasks',
     label: 'ส่งลิงก์มอบหมายผ่าน LINE',
     detailKeys: [
       { key: 'caseId', label: 'เคส' },
@@ -560,16 +680,19 @@ const ACTION_DEFINITIONS: Record<string, AuditActionDefinition> = {
   },
   TASK_EXPIRE: {
     domain: 'tasks',
+    category: 'tasks',
     label: 'ลิงก์มอบหมายหมดอายุ',
     detailKeys: [{ key: 'caseId', label: 'เคส' }],
   },
   DELEGATION: {
     domain: 'tasks',
+    category: 'tasks',
     label: 'ส่งต่อภารกิจ',
     detailKeys: [{ key: 'toDepth', label: 'ลำดับการส่งต่อ' }],
   },
   ATTENDANCE_SUBMIT: {
     domain: 'attendance',
+    category: 'attendance',
     label: 'บันทึกการเช็กชื่อ',
     detailKeys: [
       { key: 'attendanceDate', label: 'วันที่' },
@@ -580,6 +703,7 @@ const ACTION_DEFINITIONS: Record<string, AuditActionDefinition> = {
   },
   ATTENDANCE_REOPEN: {
     domain: 'attendance',
+    category: 'attendance',
     label: 'เปิดรอบเช็กชื่อเพื่อแก้ไข',
     detailKeys: [
       { key: 'attendanceDate', label: 'วันที่' },
@@ -588,16 +712,19 @@ const ACTION_DEFINITIONS: Record<string, AuditActionDefinition> = {
   },
   STUDENT_CREATE: {
     domain: 'students',
+    category: 'students',
     label: 'เพิ่มข้อมูลนักเรียน',
     detailKeys: [{ key: 'fieldCount', label: 'จำนวนข้อมูลที่ส่ง' }],
   },
   STUDENT_UPDATE: {
     domain: 'students',
+    category: 'students',
     label: 'แก้ไขข้อมูลนักเรียน',
     detailKeys: [{ key: 'fieldCount', label: 'จำนวนข้อมูลที่แก้' }],
   },
   STUDENT_NATIONAL_ID_CORRECTION: {
     domain: 'students',
+    category: 'students',
     label: 'แก้ไขเลขบัตรประชาชนนักเรียน',
     detailKeys: [
       { key: 'reasonLabel', label: 'เหตุผล' },
@@ -606,6 +733,7 @@ const ACTION_DEFINITIONS: Record<string, AuditActionDefinition> = {
   },
   STUDENT_PASSPORT_CORRECTION: {
     domain: 'students',
+    category: 'students',
     label: 'แก้ไขเลขหนังสือเดินทางนักเรียน',
     detailKeys: [
       { key: 'reasonLabel', label: 'เหตุผล' },
@@ -614,11 +742,13 @@ const ACTION_DEFINITIONS: Record<string, AuditActionDefinition> = {
   },
   STUDENT_DELETE: {
     domain: 'students',
+    category: 'students',
     label: 'ลบข้อมูลนักเรียน',
     detailKeys: [{ key: 'fieldCount', label: 'จำนวนข้อมูลที่เกี่ยวข้อง' }],
   },
   CLASSROOM_DATA_EXPORT: {
     domain: 'students',
+    category: 'data_transfer',
     label: 'ส่งออกข้อมูลห้องเรียน',
     detailKeys: [
       { key: 'exportScope', label: 'ขอบเขตข้อมูล' },
@@ -628,6 +758,7 @@ const ACTION_DEFINITIONS: Record<string, AuditActionDefinition> = {
   },
   CLASSROOM_ATTENDANCE_ASSIGNMENT_CREATE: {
     domain: 'attendance',
+    category: 'attendance',
     label: 'มอบหมายเช็กชื่อ',
     detailKeys: [
       { key: 'schoolId', label: 'โรงเรียน' },
@@ -638,6 +769,7 @@ const ACTION_DEFINITIONS: Record<string, AuditActionDefinition> = {
   },
   CLASSROOM_ATTENDANCE_LINK_BULK_CREATE: {
     domain: 'attendance',
+    category: 'attendance',
     label: 'สร้างลิงก์ครู',
     detailKeys: [
       { key: 'schoolId', label: 'โรงเรียน' },
@@ -646,6 +778,7 @@ const ACTION_DEFINITIONS: Record<string, AuditActionDefinition> = {
   },
   CLASSROOM_ATTENDANCE_LINK_ROTATE: {
     domain: 'attendance',
+    category: 'attendance',
     label: 'หมุนลิงก์ห้องเรียน',
     detailKeys: [
       { key: 'schoolId', label: 'โรงเรียน' },
@@ -654,6 +787,7 @@ const ACTION_DEFINITIONS: Record<string, AuditActionDefinition> = {
   },
   CLASSROOM_ATTENDANCE_LINK_DEACTIVATE: {
     domain: 'attendance',
+    category: 'attendance',
     label: 'ปิดลิงก์ห้องเรียน',
     detailKeys: [
       { key: 'schoolId', label: 'โรงเรียน' },
@@ -662,6 +796,7 @@ const ACTION_DEFINITIONS: Record<string, AuditActionDefinition> = {
   },
   CLASSROOM_ATTENDANCE_LINK_LINE_SEND: {
     domain: 'attendance',
+    category: 'attendance',
     label: 'ส่งลิงก์ห้องเรียนผ่าน LINE',
     detailKeys: [
       { key: 'schoolId', label: 'โรงเรียน' },
@@ -671,16 +806,19 @@ const ACTION_DEFINITIONS: Record<string, AuditActionDefinition> = {
   },
   SUBJECT_CREATE: {
     domain: 'timetable',
+    category: 'timetable',
     label: 'เพิ่มรายวิชา',
     detailKeys: [{ key: 'code', label: 'รหัสวิชา' }],
   },
   SUBJECT_UPDATE: {
     domain: 'timetable',
+    category: 'timetable',
     label: 'แก้ไขรายวิชา',
     detailKeys: [{ key: 'code', label: 'รหัสวิชา' }],
   },
   SCHOOL_SUBJECT_UPSERT: {
     domain: 'subjects',
+    category: 'timetable',
     label: 'เพิ่มรายวิชาของโรงเรียน',
     detailKeys: [
       { key: 'schoolId', label: 'โรงเรียน' },
@@ -689,6 +827,7 @@ const ACTION_DEFINITIONS: Record<string, AuditActionDefinition> = {
   },
   SCHOOL_SUBJECT_STATUS_UPDATE: {
     domain: 'subjects',
+    category: 'timetable',
     label: 'เปลี่ยนสถานะรายวิชาของโรงเรียน',
     detailKeys: [
       { key: 'schoolId', label: 'โรงเรียน' },
@@ -697,6 +836,7 @@ const ACTION_DEFINITIONS: Record<string, AuditActionDefinition> = {
   },
   CLASSROOM_SUBJECTS_REPLACE: {
     domain: 'subjects',
+    category: 'timetable',
     label: 'กำหนดรายวิชาของห้องเรียน',
     detailKeys: [
       { key: 'schoolId', label: 'โรงเรียน' },
@@ -706,6 +846,7 @@ const ACTION_DEFINITIONS: Record<string, AuditActionDefinition> = {
   },
   TIMETABLE_SLOT_CREATE: {
     domain: 'timetable',
+    category: 'timetable',
     label: 'เพิ่มคาบสอน',
     detailKeys: [
       { key: 'dayOfWeek', label: 'วัน' },
@@ -714,6 +855,7 @@ const ACTION_DEFINITIONS: Record<string, AuditActionDefinition> = {
   },
   TIMETABLE_SLOT_UPDATE: {
     domain: 'timetable',
+    category: 'timetable',
     label: 'แก้ไขคาบสอน',
     detailKeys: [
       { key: 'dayOfWeek', label: 'วัน' },
@@ -722,6 +864,7 @@ const ACTION_DEFINITIONS: Record<string, AuditActionDefinition> = {
   },
   TIMETABLE_SLOT_DELETE: {
     domain: 'timetable',
+    category: 'timetable',
     label: 'ลบคาบสอน',
     detailKeys: [
       { key: 'dayOfWeek', label: 'วัน' },
@@ -730,6 +873,7 @@ const ACTION_DEFINITIONS: Record<string, AuditActionDefinition> = {
   },
   PERIOD_TIME_GENERATE: {
     domain: 'timetable',
+    category: 'timetable',
     label: 'สร้างเวลาคาบเรียนอัตโนมัติ',
     detailKeys: [
       { key: 'days', label: 'วันที่สร้าง' },
@@ -738,12 +882,25 @@ const ACTION_DEFINITIONS: Record<string, AuditActionDefinition> = {
   },
   PERIOD_TIME_OVERRIDE: {
     domain: 'timetable',
+    category: 'timetable',
     label: 'แก้ไขเวลาคาบเรียนรายคาบ',
     detailKeys: [
       { key: 'dayOfWeek', label: 'วัน' },
       { key: 'period', label: 'คาบ' },
     ],
   },
+};
+
+const CATEGORY_LABELS: Record<AuditLogCategory, string> = {
+  accounts: 'บัญชีผู้ใช้',
+  students: 'นักเรียน',
+  cases: 'เคสและการส่งต่อหน่วยงาน',
+  attendance: 'เช็กชื่อ',
+  tasks: 'ภารกิจและการมอบหมาย',
+  teacher_access: 'ลิงก์และสิทธิ์เข้าถึงของครู',
+  data_transfer: 'นำเข้าและส่งออกข้อมูล',
+  timetable: 'ตารางเรียนและรายวิชา',
+  personal_data_access: 'ข้อมูลส่วนบุคคล (PDPA)',
 };
 
 /** Which page's permission opens each slice of the log. */
@@ -904,16 +1061,24 @@ export class AuditLogService {
   private resolveListActions(filters: {
     domain: AuditLogDomain;
     taskType?: AuditLogTaskType;
+    category?: AuditLogCategory;
   }): AuditAction[] {
+    let actions: AuditAction[];
     if (filters.taskType) {
       if (LINK_HISTORY_DOMAINS[filters.taskType] !== filters.domain) {
         throw new BadRequestException('taskType ไม่ตรงกับประเภทประวัติลิงก์');
       }
-      return LINK_HISTORY_ACTIONS;
+      actions = LINK_HISTORY_ACTIONS;
+    } else {
+      actions = Object.entries(ACTION_DEFINITIONS)
+        .filter(
+          ([, definition]) => filters.domain === 'all' || definition.domain === filters.domain,
+        )
+        .map(([action]) => action as AuditAction);
     }
-    return Object.entries(ACTION_DEFINITIONS)
-      .filter(([, definition]) => filters.domain === 'all' || definition.domain === filters.domain)
-      .map(([action]) => action as AuditAction);
+    return actions.filter(
+      (action) => !filters.category || ACTION_DEFINITIONS[action].category === filters.category,
+    );
   }
 
   getActionOptions(
@@ -922,8 +1087,17 @@ export class AuditLogService {
   ) {
     this.assertDomainPermission(actor, filters.domain);
     const actions = this.resolveListActions(filters);
+    const definitions = actions.map((value) => ACTION_DEFINITIONS[value]);
     return {
-      data: actions.map((value) => ({ value, label: ACTION_DEFINITIONS[value].label })),
+      data: actions.map((value, index) => ({
+        value,
+        label: definitions[index].label,
+        category: definitions[index].category,
+      })),
+      // Only the หมวด these actions actually use.
+      categories: AUDIT_LOG_CATEGORIES.filter((category) =>
+        definitions.some((definition) => definition.category === category),
+      ).map((value) => ({ value, label: CATEGORY_LABELS[value] })),
     };
   }
 
@@ -1418,13 +1592,13 @@ export class AuditLogService {
   private async writeRecord(
     event: AuditLogRecordInput,
     executor?: AuditQueryExecutor,
-  ): Promise<void> {
+  ): Promise<string> {
     const metadata = await this.addScopeSnapshot(event.metadata, executor);
     const query = async (sql: string, params?: unknown[]) =>
       executor
         ? await executor.query(sql, params)
         : await queryDataSource(this.dataSource, sql, params);
-    await query(
+    const inserted = (await query(
       `
         INSERT INTO audit_log (
           actor_user_id,
@@ -1443,6 +1617,7 @@ export class AuditLogService {
             'OPERATIONAL'
           )
         )
+        RETURNING id
       `,
       [
         event.actorUserId ?? null,
@@ -1453,7 +1628,9 @@ export class AuditLogService {
         metadata == null ? null : JSON.stringify(metadata),
         event.ip ?? null,
       ],
-    );
+    )) as Array<{ id: string }> | { rows?: Array<{ id: string }> } | undefined;
+    const rows = Array.isArray(inserted) ? inserted : (inserted?.rows ?? []);
+    return rows[0]?.id == null ? '' : String(rows[0].id);
   }
 
   async record(event: AuditLogRecordInput): Promise<void> {
@@ -1467,5 +1644,17 @@ export class AuditLogService {
 
   async recordAtomic(event: AuditLogRecordInput, executor: AuditQueryExecutor): Promise<void> {
     await this.writeRecord(event, executor);
+  }
+
+  /** For a caller that must point another row at the audit row it just wrote. */
+  async recordAtomicReturningId(
+    event: AuditLogRecordInput,
+    executor: AuditQueryExecutor,
+  ): Promise<string> {
+    const id = await this.writeRecord(event, executor);
+    if (!id) {
+      throw new Error(`Audit log write for "${event.action}" returned no id`);
+    }
+    return id;
   }
 }

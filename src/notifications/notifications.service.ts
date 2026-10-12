@@ -16,6 +16,7 @@ const CASE_STATUS_LABELS: Record<string, string> = {
   STUDENT_NOT_FOUND: 'ไม่พบนักเรียน',
   AWAITING_REFERRAL: 'รอส่งต่อ',
   AWAITING_REFERRAL_OUTCOME: 'รอผลการส่งต่อ',
+  REFERRAL_NOT_SUCCEEDED: 'ส่งต่อไม่สำเร็จ',
 };
 const NOTIFICATION_RETENTION_DAYS = 90;
 const NOTIFICATION_RETENTION_CRON = '0 30 3 * * *';
@@ -72,6 +73,10 @@ function formatCaseStatusDetail(
     case 'AWAITING_REFERRAL':
     case 'AWAITING_REFERRAL_OUTCOME':
       return reviewResult ? `เหตุผลการส่งต่อ: ${reviewResult}` : null;
+    case 'REFERRAL_NOT_SUCCEEDED':
+      // This context has pre-referral review notes, not the agency result note.
+      // Either the agency or school staff may report the result.
+      return 'ผลการส่งต่อยังไม่สำเร็จ';
     case 'STUDENT_NOT_FOUND':
       return reviewResult
         ? `ผลการตรวจสอบ: ${reviewResult}`

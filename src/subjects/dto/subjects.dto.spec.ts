@@ -54,7 +54,7 @@ describe('CreateSubjectDto', () => {
     }
   });
 
-  it('keeps legacy codes editable but rejects them on creation', async () => {
+  it('rejects a code outside the rule on creation and on edit alike', async () => {
     const body = {
       schoolId: 1,
       termId: 2,
@@ -68,6 +68,12 @@ describe('CreateSubjectDto', () => {
     ).rejects.toBeInstanceOf(BadRequestException);
     await expect(
       pipe.transform(body, { type: 'body', metatype: UpdateGradeSchoolSubjectDto }),
-    ).resolves.toMatchObject({ code: 'M21/01' });
+    ).rejects.toBeInstanceOf(BadRequestException);
+    await expect(
+      pipe.transform(
+        { ...body, code: 'ค21101' },
+        { type: 'body', metatype: UpdateGradeSchoolSubjectDto },
+      ),
+    ).resolves.toMatchObject({ code: 'ค21101' });
   });
 });

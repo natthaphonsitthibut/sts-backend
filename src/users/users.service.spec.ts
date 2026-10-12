@@ -41,9 +41,7 @@ describe('UsersService', () => {
       | 'updateOwnProfile'
       | 'upsertStudentPersonContact'
       | 'hasActiveUserAddressReveal'
-      | 'insertUserAddressAccessEvent'
       | 'hasActiveUserNationalIdReveal'
-      | 'insertUserNationalIdAccessEvent'
       | 'listUsersPaginated'
     >
   >;
@@ -65,6 +63,7 @@ describe('UsersService', () => {
   let auditLog: jest.Mocked<Pick<AuditLogService, 'recordAtomic' | 'record'>>;
   let fileStorage: jest.Mocked<FileStorageAdapter>;
   let service: UsersService;
+  let piiAccessLog: { record: jest.Mock };
 
   beforeEach(() => {
     usersRepository = {
@@ -99,9 +98,7 @@ describe('UsersService', () => {
       updateOwnProfile: jest.fn().mockResolvedValue(undefined),
       upsertStudentPersonContact: jest.fn().mockResolvedValue(undefined),
       hasActiveUserAddressReveal: jest.fn().mockResolvedValue(false),
-      insertUserAddressAccessEvent: jest.fn().mockResolvedValue(undefined),
       hasActiveUserNationalIdReveal: jest.fn().mockResolvedValue(false),
-      insertUserNationalIdAccessEvent: jest.fn().mockResolvedValue(undefined),
       listUsersPaginated: jest.fn().mockResolvedValue({
         rows: [],
         totalCount: 0,
@@ -171,6 +168,7 @@ describe('UsersService', () => {
       open: jest.fn().mockResolvedValue(null),
       delete: jest.fn().mockResolvedValue(undefined),
     };
+    piiAccessLog = { record: jest.fn().mockResolvedValue(undefined) };
     service = new UsersService(
       usersRepository as unknown as UsersRepository,
       usersPolicyService as unknown as UsersPolicyService,
@@ -182,6 +180,7 @@ describe('UsersService', () => {
         revealTtlSeconds: 900,
       },
       fileStorage,
+      piiAccessLog as never,
     );
   });
 
@@ -580,8 +579,15 @@ describe('UsersService', () => {
     );
 
     expect(result.address_line).toBe('99/1');
-    expect(usersRepository.insertUserAddressAccessEvent).toHaveBeenCalledWith(
-      expect.objectContaining({ actorUserId: actor.id, reasonCode: 'VERIFY_DATA' }),
+    expect(piiAccessLog.record).toHaveBeenCalledWith(
+      expect.objectContaining({
+        actorUserId: actor.id,
+        subjectType: 'USER',
+        fieldGroup: 'ADDRESS',
+        reasonCode: 'VERIFY_DATA',
+        targetType: 'user',
+        targetId: '77',
+      }),
     );
   });
 
@@ -600,8 +606,15 @@ describe('UsersService', () => {
     );
 
     expect(result).toEqual({ PersonID_Onec: '1234567890123' });
-    expect(usersRepository.insertUserNationalIdAccessEvent).toHaveBeenCalledWith(
-      expect.objectContaining({ actorUserId: actor.id, reasonCode: 'VERIFY_DATA' }),
+    expect(piiAccessLog.record).toHaveBeenCalledWith(
+      expect.objectContaining({
+        actorUserId: actor.id,
+        subjectType: 'USER',
+        fieldGroup: 'NATIONAL_ID',
+        reasonCode: 'VERIFY_DATA',
+        targetType: 'user',
+        targetId: '77',
+      }),
     );
   });
 
@@ -618,7 +631,7 @@ describe('UsersService', () => {
     ).rejects.toThrow(ForbiddenException);
 
     expect(usersRepository.findOwnProfileById).not.toHaveBeenCalled();
-    expect(usersRepository.insertUserNationalIdAccessEvent).not.toHaveBeenCalled();
+    expect(piiAccessLog.record).not.toHaveBeenCalled();
   });
 
   it('updates only the authenticated user profile fields', async () => {
@@ -948,6 +961,7 @@ describe('UsersService.getRoles school groups', () => {
       {} as unknown as AuditLogService,
       {} as never,
       {} as unknown as FileStorageAdapter,
+      {} as never,
     );
     return { service, usersRepository, usersPolicyService };
   }

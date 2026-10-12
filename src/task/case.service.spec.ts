@@ -677,6 +677,44 @@ describe('CaseService', () => {
     expect(taskRepository.transitionPendingReviewCase).not.toHaveBeenCalled();
   });
 
+  describe('a case in ส่งต่อไม่สำเร็จ', () => {
+    beforeEach(() => {
+      taskRepository.findCaseById.mockResolvedValueOnce({
+        id: 10,
+        student_name: 'นักเรียน ทดสอบ',
+        school_id: 10010002,
+        status: 'REFERRAL_NOT_SUCCEEDED',
+      });
+    });
+
+    it('can be referred again', async () => {
+      const result = await service.reviewCase(
+        10,
+        { review_action: 'REFER_AGENCY', review_note: 'ส่งต่อหน่วยงานอื่น' },
+        buildActor(['dashboard', 'case:assign', 'case:review']),
+      );
+
+      expect(result.case_status).toBe('AWAITING_REFERRAL');
+      expect(taskRepository.insertCaseReview).toHaveBeenCalledWith(
+        expect.objectContaining({ caseId: 10, reviewAction: 'REFER_AGENCY' }),
+        undefined,
+      );
+    });
+
+    it('cannot be closed', async () => {
+      await expect(
+        service.reviewCase(
+          10,
+          { review_action: 'CLOSE', review_note: 'พยายามปิดเคสที่ส่งต่อไม่สำเร็จ' },
+          buildActor(['dashboard', 'case:review']),
+        ),
+      ).rejects.toThrow('ปิดเคสได้เมื่อผลการติดตาม ช่วยเหลือ หรือส่งต่อล่าสุดสำเร็จแล้วเท่านั้น');
+      expect(taskRepository.lockCaseWithSuccessfulLatestOutcome).not.toHaveBeenCalled();
+      expect(taskRepository.transitionPendingReviewCase).not.toHaveBeenCalled();
+      expect(taskRepository.insertCaseReview).not.toHaveBeenCalled();
+    });
+  });
+
   // Reviewing, closing and referring used to be three separate permissions;
   // they are all work done on รายงานสถานะนักเรียน, so that page's permission is
   // what decides — and an actor without it still gets nothing.
@@ -822,18 +860,18 @@ describe('CaseService', () => {
       );
     });
 
-    it('hands the case back to review when the agency did not succeed', async () => {
+    it('parks the case in ส่งต่อไม่สำเร็จ when the agency did not succeed', async () => {
       await report('NOT_SUCCEEDED');
 
       expect(taskRepository.recordCaseReferralResult).toHaveBeenCalledWith(
         expect.objectContaining({
           referralStatusCode: 'NOT_SUCCEEDED',
-          nextCaseStatus: 'PENDING_REVIEW',
+          nextCaseStatus: 'REFERRAL_NOT_SUCCEEDED',
         }),
         undefined,
       );
       expect(notificationsService.notifyCaseStatusChanged).toHaveBeenCalledWith(
-        expect.objectContaining({ caseId: 10, nextStatus: 'PENDING_REVIEW' }),
+        expect.objectContaining({ caseId: 10, nextStatus: 'REFERRAL_NOT_SUCCEEDED' }),
       );
     });
 

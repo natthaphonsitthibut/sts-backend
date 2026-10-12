@@ -66,7 +66,7 @@ async function main() {
            WHERE existing.student_uuid = enrollment.student_uuid
              AND existing.deleted_at IS NULL
              AND existing.status IN ('OPEN', 'IN_PROGRESS', 'PENDING_REVIEW',
-               'STUDENT_NOT_FOUND', 'AWAITING_REFERRAL', 'AWAITING_REFERRAL_OUTCOME')
+               'STUDENT_NOT_FOUND', 'AWAITING_REFERRAL', 'AWAITING_REFERRAL_OUTCOME', 'REFERRAL_NOT_SUCCEEDED')
          )
        ORDER BY enrollment.student_uuid
        LIMIT 1`,
@@ -543,8 +543,6 @@ async function main() {
       reportStep.text.includes(`${REPORTER.given} ${REPORTER.family}`) &&
         reportStep.text.includes('AraID') &&
         reportStep.text.includes('สถานะการส่งต่อ : รอพิจารณา') &&
-        reportStep.text.includes('ผลการส่งต่อ') &&
-        reportStep.text.includes('สำเร็จ') &&
         reportStep.text.includes(REPORT_NOTE),
       `report step reads: ${reportStep.text}`,
     );

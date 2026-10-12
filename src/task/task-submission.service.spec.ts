@@ -37,7 +37,7 @@ describe('TaskSubmissionService', () => {
       | 'getHomeVisitException'
       | 'getFollowUpProblemCategory'
       | 'getParentalStatus'
-      | 'getGuardianType'
+      | 'getGuardianTypes'
       | 'getResidenceEnvironments'
       | 'getTaskExecutionOutcome'
       | 'getNonFollowUpReason'
@@ -97,9 +97,11 @@ describe('TaskSubmissionService', () => {
       getParentalStatus: jest
         .fn()
         .mockResolvedValue({ code: 'LIVE_TOGETHER', label: 'อยู่ด้วยกัน' }),
-      getGuardianType: jest
+      getGuardianTypes: jest
         .fn()
-        .mockResolvedValue({ code: 'FATHER', label: 'บิดา', requiresDetail: false }),
+        .mockResolvedValue([
+          { code: 'FATHER', label: 'บิดา', isExclusive: false, requiresDetail: false },
+        ]),
       getResidenceEnvironments: jest
         .fn()
         .mockResolvedValue([
@@ -114,7 +116,9 @@ describe('TaskSubmissionService', () => {
       getAbsenceSelection: jest.fn((reasonCode: string | null, categoryCode: string | null) =>
         Promise.resolve({ reasonCode, categoryCode }),
       ),
-      getContactChannel: jest.fn((code: string | null) => Promise.resolve(code)),
+      getContactChannel: jest.fn((code: string | null) =>
+        Promise.resolve(code ? { code, requiresDetail: code === 'OTHER' } : null),
+      ),
       getCareObservationCodes: jest.fn((_kind, codes: string[]) => Promise.resolve(codes)),
     };
 
@@ -153,7 +157,7 @@ describe('TaskSubmissionService', () => {
       case_id: 10,
     });
     trackingOptions.getParentalStatus.mockResolvedValueOnce(null);
-    trackingOptions.getGuardianType.mockResolvedValueOnce(null);
+    trackingOptions.getGuardianTypes.mockResolvedValueOnce([]);
     trackingOptions.getResidenceEnvironments.mockResolvedValueOnce([]);
     trackingOptions.getFollowUpProblemCategory.mockResolvedValueOnce(null);
 
@@ -272,6 +276,7 @@ describe('TaskSubmissionService', () => {
       execution_outcome_detail: 'ผู้ปกครองยังไม่พร้อม',
       contact_person_name: 'ค่าที่ client ไม่ควรเขียนใน ASSIST',
       contact_channel_code: 'PHONE',
+      contact_channel_detail: 'รายละเอียดที่ไม่ใช่ของ ASSIST',
     });
 
     expect(taskRepository.insertTaskSubmission).toHaveBeenLastCalledWith(
@@ -279,6 +284,180 @@ describe('TaskSubmissionService', () => {
         executionOutcomeDetail: 'ผู้ปกครองยังไม่พร้อม',
         contactPersonName: null,
         contactChannelCode: null,
+        contactChannelDetail: null,
+      }),
+      undefined,
+    );
+  });
+
+  describe('other contact channel detail', () => {
+    beforeEach(() => {
+      taskAccessService.getTaskByToken.mockResolvedValue({
+        task_type: 'VISIT',
+        auth_required: false,
+        link_id: 'link-1',
+      });
+      taskRepository.findTaskSubmissionContextByTokenHash.mockResolvedValue({
+        link_id: 'link-1',
+        task_id: 'task-1',
+        task_type: 'VISIT',
+        case_id: 10,
+      });
+    });
+
+    it.each(['OTHER', 'FAX'])(
+      'asks a stale form using %s to reload when the detail field is absent',
+      async (code) => {
+        trackingOptions.getContactChannel.mockResolvedValueOnce({ code, requiresDetail: true });
+        await expect(
+          service.saveTaskSubmission(
+            'public-token',
+            validVisitData({ contact_channel_code: code }),
+          ),
+        ).rejects.toThrow('แบบฟอร์มนี้เป็นเวอร์ชันเก่า กรุณาโหลดหน้าใหม่ก่อนส่งรายงาน');
+        expect(taskRepository.insertTaskSubmission).not.toHaveBeenCalled();
+      },
+    );
+
+    it.each([null, '', '  '])(
+      'rejects any flagged channel without a detail (%s)',
+      async (detail) => {
+        trackingOptions.getContactChannel.mockResolvedValueOnce({
+          code: 'FAX',
+          requiresDetail: true,
+        });
+        await expect(
+          service.saveTaskSubmission(
+            'public-token',
+            validVisitData({
+              contact_channel_code: 'FAX',
+              contact_channel_detail: detail,
+            }),
+          ),
+        ).rejects.toThrow('กรุณาระบุช่องทางติดต่ออื่น');
+        expect(taskRepository.insertTaskSubmission).not.toHaveBeenCalled();
+      },
+    );
+
+    it('persists detail for a flagged channel whose code is not OTHER', async () => {
+      trackingOptions.getContactChannel.mockResolvedValueOnce({
+        code: 'FAX',
+        requiresDetail: true,
+      });
+      await service.saveTaskSubmission(
+        'public-token',
+        validVisitData({ contact_channel_code: 'FAX', contact_channel_detail: '  ฝ่ายดูแล  ' }),
+      );
+      expect(taskRepository.insertTaskSubmission).toHaveBeenLastCalledWith(
+        expect.objectContaining({ contactChannelCode: 'FAX', contactChannelDetail: 'ฝ่ายดูแล' }),
+        undefined,
+      );
+    });
+
+    it.each([null, '', '  '])('rejects OTHER without a detail (%s)', async (detail) => {
+      await expect(
+        service.saveTaskSubmission(
+          'public-token',
+          validVisitData({
+            contact_channel_code: 'OTHER',
+            contact_channel_detail: detail,
+          }),
+        ),
+      ).rejects.toThrow('กรุณาระบุช่องทางติดต่ออื่น');
+      expect(taskRepository.insertTaskSubmission).not.toHaveBeenCalled();
+    });
+
+    it('rejects an oversized detail before writing', async () => {
+      await expect(
+        service.saveTaskSubmission(
+          'public-token',
+          validVisitData({
+            contact_channel_code: 'OTHER',
+            contact_channel_detail: 'ก'.repeat(201),
+          }),
+        ),
+      ).rejects.toThrow('ช่องทางติดต่ออื่นต้องไม่เกิน 200 ตัวอักษร');
+      expect(taskRepository.insertTaskSubmission).not.toHaveBeenCalled();
+    });
+
+    it('stores the trimmed channel name and drops stale detail for a named channel', async () => {
+      await service.saveTaskSubmission(
+        'public-token',
+        validVisitData({
+          contact_channel_code: 'OTHER',
+          contact_channel_detail: '  อีเมล  ',
+        }),
+      );
+      expect(taskRepository.insertTaskSubmission).toHaveBeenLastCalledWith(
+        expect.objectContaining({ contactChannelCode: 'OTHER', contactChannelDetail: 'อีเมล' }),
+        undefined,
+      );
+      await service.saveTaskSubmission(
+        'public-token',
+        validVisitData({
+          contact_channel_code: 'PHONE',
+          contact_channel_detail: 'อีเมล',
+        }),
+      );
+      expect(taskRepository.insertTaskSubmission).toHaveBeenLastCalledWith(
+        expect.objectContaining({ contactChannelCode: 'PHONE', contactChannelDetail: null }),
+        undefined,
+      );
+    });
+  });
+
+  it('stores every ticked guardian and keeps the detail only for อื่น ๆ', async () => {
+    taskAccessService.getTaskByToken.mockResolvedValue({
+      task_type: 'VISIT',
+      auth_required: false,
+      link_id: 'link-1',
+    });
+    taskRepository.findTaskSubmissionContextByTokenHash.mockResolvedValue({
+      link_id: 'link-1',
+      task_id: 'task-1',
+      task_type: 'VISIT',
+      case_id: 10,
+    });
+    trackingOptions.getGuardianTypes.mockResolvedValueOnce([
+      { code: 'FATHER', label: 'บิดา', isExclusive: false, requiresDetail: false },
+      { code: 'MOTHER', label: 'มารดา', isExclusive: false, requiresDetail: false },
+    ]);
+
+    await service.saveTaskSubmission(
+      'public-token',
+      validVisitData({
+        guardian_type_codes: [' father ', 'mother'],
+        guardian_type_detail: 'ข้อความค้างจากตอนเลือกอื่น ๆ',
+      }),
+    );
+
+    expect(trackingOptions.getGuardianTypes).toHaveBeenLastCalledWith(
+      ['FATHER', 'MOTHER'],
+      'ข้อความค้างจากตอนเลือกอื่น ๆ',
+    );
+    expect(taskRepository.insertTaskSubmission).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        guardianTypeCodes: ['FATHER', 'MOTHER'],
+        guardianTypeDetail: null,
+      }),
+      undefined,
+    );
+
+    trackingOptions.getGuardianTypes.mockResolvedValueOnce([
+      { code: 'MOTHER', label: 'มารดา', isExclusive: false, requiresDetail: false },
+      { code: 'OTHER', label: 'อื่น ๆ', isExclusive: false, requiresDetail: true },
+    ]);
+    await service.saveTaskSubmission(
+      'public-token',
+      validVisitData({
+        guardian_type_codes: ['MOTHER', 'OTHER'],
+        guardian_type_detail: 'ป้าข้างบ้าน',
+      }),
+    );
+    expect(taskRepository.insertTaskSubmission).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        guardianTypeCodes: ['MOTHER', 'OTHER'],
+        guardianTypeDetail: 'ป้าข้างบ้าน',
       }),
       undefined,
     );
@@ -302,7 +481,7 @@ describe('TaskSubmissionService', () => {
       requiresUpdatedAddress: false,
     });
     trackingOptions.getParentalStatus.mockResolvedValueOnce(null);
-    trackingOptions.getGuardianType.mockResolvedValueOnce(null);
+    trackingOptions.getGuardianTypes.mockResolvedValueOnce([]);
     trackingOptions.getResidenceEnvironments.mockResolvedValueOnce([]);
 
     await service.saveTaskSubmission(

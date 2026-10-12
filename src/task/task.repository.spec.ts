@@ -1,6 +1,61 @@
 import { TaskRepository } from './task.repository';
 
 describe('TaskRepository', () => {
+  it('reads live links with a fresh query after obtaining the scoped case lock', async () => {
+    const executor = {
+      query: jest
+        .fn()
+        .mockResolvedValueOnce({
+          rows: [{ id: 123, status: 'IN_PROGRESS', workflow_phase_code: 'FOLLOW_UP' }],
+        })
+        .mockResolvedValueOnce({ rows: [{ has_live_assignment: true }] }),
+    };
+    const repository = new TaskRepository({} as never, undefined as never, undefined as never);
+    const actor = {
+      id: 7,
+      username: 'reviewer',
+      roles: ['ADMIN'],
+      permissions: ['case:assign'],
+      data_scope: { school_ids: [10010002] },
+    };
+    await expect(
+      repository.lockCaseForVisitAssignment(123, actor, executor),
+    ).resolves.toMatchObject({
+      id: 123,
+      has_live_assignment: true,
+    });
+    expect(executor.query.mock.calls[0]).toEqual([
+      expect.stringMatching(/c\.school_id = ANY\(\$2::int\[\]\)[\s\S]*FOR UPDATE OF c/),
+      [123, [10010002]],
+    ]);
+    expect(executor.query.mock.calls[1]).toEqual([
+      expect.stringMatching(/active_task\.case_id = \$1/),
+      [123],
+    ]);
+  });
+
+  it('changes assignment status and phase together without shifting the school scope incorrectly', async () => {
+    const executor = { query: jest.fn().mockResolvedValue([]) };
+    const repository = new TaskRepository({} as never, undefined as never, undefined as never);
+    await repository.updateCaseStatus(
+      123,
+      'IN_PROGRESS',
+      executor,
+      {
+        id: 7,
+        username: 'reviewer',
+        roles: ['ADMIN'],
+        permissions: ['case:assign'],
+        data_scope: { school_ids: [10010002] },
+      },
+      'FOLLOW_UP',
+    );
+    expect(executor.query).toHaveBeenCalledWith(
+      expect.stringMatching(/workflow_phase_code = \$3[\s\S]*c\.school_id = ANY\(\$4::int\[\]\)/),
+      ['IN_PROGRESS', 123, 'FOLLOW_UP', [10010002]],
+    );
+  });
+
   it('persists task links without legacy OTP columns', async () => {
     const executor = { query: jest.fn().mockResolvedValue({ rows: [] }) };
     const repository = new TaskRepository({} as never, undefined as never, undefined as never);
@@ -165,6 +220,7 @@ describe('TaskRepository', () => {
         'STUDENT_NOT_FOUND',
         'AWAITING_REFERRAL',
         'AWAITING_REFERRAL_OUTCOME',
+        'REFERRAL_NOT_SUCCEEDED',
       ],
       [101],
       [6],
@@ -401,7 +457,9 @@ describe('TaskRepository', () => {
     expect(queries[0].params).toEqual([[101], 101, '%เด็ก%', 'HIGH']);
     expect(queries[1].params).toEqual([[101], 101, '%เด็ก%', 'HIGH']);
     expect(queries[2].params).toEqual([[101], 101, '%เด็ก%', 'HIGH', 10, 10]);
-    expect(queries[0].sql).toContain('student_current_enrollment_resolution');
+    expect(queries[0].sql).not.toContain('student_current_enrollment_resolution');
+    expect(queries[0].sql).toContain('s.deleted_at IS NULL');
+    expect(queries[0].sql).toContain('s."AcademicYear_Onec" AS academic_year');
     expect(queries[0].sql).toContain('LEFT JOIN student_risk_profiles profile');
     expect(queries[0].sql).toContain('profile.term_absent_days');
     expect(queries[0].sql).toContain('profile.absence_reset_after_date');
@@ -448,7 +506,7 @@ describe('TaskRepository', () => {
         username: 'dashboard-admin',
         roles: ['ADMIN'],
         permissions: ['dashboard', 'students'],
-        data_scope: {},
+        data_scope: { global: true },
       },
       { studentGroup: 'WATCHLIST', page: 1, limit: 20, sortBy: 'problemCategory' },
       { highAbsentDays: 3 },
@@ -498,6 +556,7 @@ describe('TaskRepository', () => {
         username: 'national-admin',
         roles: ['ADMIN'],
         permissions: ['dashboard'],
+        data_scope: { global: true },
       },
       {},
       { highAbsentDays: 3 },
@@ -512,6 +571,7 @@ describe('TaskRepository', () => {
         username: 'national-admin',
         roles: ['ADMIN'],
         permissions: ['dashboard'],
+        data_scope: { global: true },
       },
       { searchTerm: 'เด็ก_100%' },
       { highAbsentDays: 3 },
@@ -521,45 +581,48 @@ describe('TaskRepository', () => {
     expect(queries[0].sql).not.toContain('s."PersonID_Onec" ILIKE');
   });
 
-  it('fails closed for own-only actors on the risk dashboard', async () => {
-    const queryRunner = {
-      connect: jest.fn().mockResolvedValue(undefined),
-      release: jest.fn().mockResolvedValue(undefined),
-      query: jest.fn(),
-    };
-    const dataSource = { createQueryRunner: jest.fn(() => queryRunner) };
-    const repository = new TaskRepository(
-      dataSource as never,
-      undefined as never,
-      undefined as never,
-    );
+  it.each([undefined, {}, { own_only: true }, { school_ids: [] }])(
+    'fails closed for missing or denied dashboard scope %j',
+    async (scope) => {
+      const queryRunner = {
+        connect: jest.fn().mockResolvedValue(undefined),
+        release: jest.fn().mockResolvedValue(undefined),
+        query: jest.fn(),
+      };
+      const dataSource = { createQueryRunner: jest.fn(() => queryRunner) };
+      const repository = new TaskRepository(
+        dataSource as never,
+        undefined as never,
+        undefined as never,
+      );
 
-    await expect(
-      repository.listRiskDashboardStudents(
-        {
-          id: 7,
-          username: 'student-like',
-          roles: ['STUDENT'],
-          permissions: ['dashboard'],
-          data_scope: { own_only: true },
+      await expect(
+        repository.listRiskDashboardStudents(
+          {
+            id: 7,
+            username: 'student-like',
+            roles: ['STUDENT'],
+            permissions: ['dashboard'],
+            data_scope: scope,
+          },
+          {},
+          { highAbsentDays: 3 },
+        ),
+      ).resolves.toEqual({
+        rows: [],
+        totalCount: 0,
+        summary: { HIGH: 0, WATCH: 0, NORMAL: 0 },
+        caseStatusSummary: {
+          OPEN: 0,
+          IN_PROGRESS: 0,
+          PENDING_REVIEW: 0,
+          STUDENT_NOT_FOUND: 0,
         },
-        {},
-        { highAbsentDays: 3 },
-      ),
-    ).resolves.toEqual({
-      rows: [],
-      totalCount: 0,
-      summary: { HIGH: 0, WATCH: 0, NORMAL: 0 },
-      caseStatusSummary: {
-        OPEN: 0,
-        IN_PROGRESS: 0,
-        PENDING_REVIEW: 0,
-        STUDENT_NOT_FOUND: 0,
-      },
-      concernLevelSummary: { NOTE: 0, WATCH: 0, CONCERN: 0 },
-    });
-    expect(queryRunner.query).not.toHaveBeenCalled();
-  });
+        concernLevelSummary: { NOTE: 0, WATCH: 0, CONCERN: 0 },
+      });
+      expect(queryRunner.query).not.toHaveBeenCalled();
+    },
+  );
 
   it('transitions a case from an active tracking status only', async () => {
     const queries: Array<{ sql: string; params?: unknown[] }> = [];
@@ -687,6 +750,8 @@ describe('TaskRepository', () => {
     expect(queries[0].sql).toContain('source_task_id <> $2');
     expect(queries[0].sql).toContain('contact_person_name');
     expect(queries[0].sql).toContain('residence_environment_codes');
+    expect(queries[0].sql).toContain('task_submission_guardian_types');
+    expect(queries[0].sql).toContain('AS guardian_type_codes');
     expect(queries[0].sql).not.toContain('photo_paths');
     expect(queries[0].sql).not.toContain('task_execution_outcome_code');
     expect(queries[0].sql).not.toContain('case_referrals');

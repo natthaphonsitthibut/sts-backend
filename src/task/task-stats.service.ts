@@ -12,6 +12,7 @@ import type {
   ActorContext,
   FollowUpAreaFilters,
   ReferralDrilldownFilters,
+  RiskDashboardFilterOptionsFilters,
   RiskDashboardFilters,
   RiskDashboardThresholds,
   RiskDashboardTier,
@@ -29,6 +30,17 @@ export class TaskStatsService {
     private readonly taskRepository: TaskRepository,
     private readonly taskPolicyService: TaskPolicyService,
   ) {}
+
+  async getRiskDashboardFilterOptions(
+    actor?: ActorContext,
+    filters: RiskDashboardFilterOptionsFilters = {},
+  ) {
+    const currentActor = this.taskPolicyService.ensureActor(actor);
+    return {
+      success: true,
+      data: await this.taskRepository.getRiskDashboardFilterOptions(currentActor, filters),
+    };
+  }
 
   async getCases(actor?: ActorContext, filters: CaseListFilters = {}) {
     const currentActor = this.taskPolicyService.ensureActor(actor);
@@ -135,13 +147,16 @@ export class TaskStatsService {
     let referralTotal = 0;
     let overdue = 0;
     referralRows.forEach((row) => {
-      const status = String(row.status_code);
-      const agencyName = String(row.agency_name);
       const count = Number(row.referral_count ?? 0);
-      byStatus[status] = (byStatus[status] ?? 0) + count;
-      byAgency.set(agencyName, (byAgency.get(agencyName) ?? 0) + count);
       const stage = String(row.stage_code);
       byStage[stage] = (byStage[stage] ?? 0) + count;
+      // รอส่งต่อ is a case waiting to be sent, not a referral yet: it has a
+      // stage card but no agency, status or place in the referral totals.
+      if (stage === 'AWAITING_REFERRAL') return;
+      const status = String(row.status_code);
+      const agencyName = String(row.agency_name);
+      byStatus[status] = (byStatus[status] ?? 0) + count;
+      byAgency.set(agencyName, (byAgency.get(agencyName) ?? 0) + count);
       referralTotal += count;
       overdue += Number(row.overdue_count ?? 0);
     });
@@ -193,6 +208,8 @@ export class TaskStatsService {
           studentName: row.student_name,
           schoolId: row.school_id == null ? null : Number(row.school_id),
           schoolName: row.school_name ?? null,
+          academicYear: row.academic_year == null ? null : Number(row.academic_year),
+          semester: row.semester == null ? null : Number(row.semester),
           studentId,
           studentPhotoUrl:
             studentId && row.photo_storage_key
@@ -203,9 +220,10 @@ export class TaskStatsService {
           statusCode: row.status_code,
           stageCode: row.stage_code,
           awaitingResult: row.stage_code === 'AWAITING_REFERRAL_OUTCOME',
-          referredAt: row.referred_at,
-          agencyName: row.agency_name,
-          agencyKindLabel: row.agency_kind_label,
+          // A case in รอส่งต่อ has not been sent anywhere yet.
+          referredAt: row.stage_code === 'AWAITING_REFERRAL' ? null : row.referred_at,
+          agencyName: row.agency_name ?? null,
+          agencyKindLabel: row.agency_kind_label ?? null,
           // The agency's newest link: shareable while it opens, and its state so
           // the row can warn when it ran out or locked.
           linkUrl: typeof row.link_url === 'string' ? row.link_url : null,
@@ -283,6 +301,8 @@ export class TaskStatsService {
             : null,
           schoolId: row.school_id,
           schoolName: row.school_name,
+          academicYear: row.academic_year == null ? null : Number(row.academic_year),
+          semester: row.semester == null ? null : Number(row.semester),
           grade: row.grade,
           room: row.room,
           consecutiveAbsentDays: Number(row.consecutive_absent_days ?? 0),

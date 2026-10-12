@@ -1,7 +1,7 @@
 /**
  * End-to-end check of the assistance phase: a follow-up review can send a case
  * into ให้ความช่วยเหลือ, the assistance round is assignable and reportable, and
- * the assistance review offers only ปิดเคส / ส่งต่อหน่วยงาน.
+ * the assistance review offers another assistance round, ปิดเคส and ส่งต่อหน่วยงาน.
  */
 const { NestFactory } = require('@nestjs/core');
 const { DataSource } = require('typeorm');
@@ -57,14 +57,15 @@ async function main() {
          SELECT 1 FROM cases existing
          WHERE existing.student_uuid = enrollment.student_uuid
            AND existing.deleted_at IS NULL
-           AND existing.status IN ('OPEN', 'IN_PROGRESS', 'PENDING_REVIEW', 'STUDENT_NOT_FOUND')
+           AND existing.status IN ('OPEN', 'IN_PROGRESS', 'PENDING_REVIEW', 'STUDENT_NOT_FOUND',
+             'AWAITING_REFERRAL', 'AWAITING_REFERRAL_OUTCOME', 'REFERRAL_NOT_SUCCEEDED')
        )
        ORDER BY enrollment.student_uuid
        LIMIT 1`,
     );
     assert(enrollment, 'need one canonical student whose classroom has a teacher');
 
-    const permissions = JSON.stringify(['dashboard', 'students']);
+    const permissions = ['dashboard', 'students', 'case:assign', 'case:review'];
     const [actor] = await dataSource.query(
       `INSERT INTO users (username, password, "FirstName", "LastName", status, permissions,
          role, data_scope, must_change_password, data_origin_code)
@@ -73,7 +74,11 @@ async function main() {
        ON CONFLICT (username) DO UPDATE SET status = 'ACTIVE', permissions = $2::jsonb,
          data_scope = $3::jsonb, data_origin_code = 'AUTOMATED_TEST'
        RETURNING id`,
-      [USERNAME, permissions, JSON.stringify({ school_ids: [Number(enrollment.school_id)] })],
+      [
+        USERNAME,
+        JSON.stringify(permissions),
+        JSON.stringify({ school_ids: [Number(enrollment.school_id)] }),
+      ],
     );
     actorId = Number(actor.id);
     const reviewer = {
@@ -82,7 +87,7 @@ async function main() {
       FirstName: 'Assistance',
       LastName: 'Smoke',
       roles: ['ADMIN'],
-      permissions: ['dashboard', 'students'],
+      permissions,
       data_scope: { school_ids: [Number(enrollment.school_id)] },
     };
 
@@ -142,6 +147,23 @@ async function main() {
       followUpActions.assistanceMeasures.length >= 5,
       'assistance measures catalogue is not seeded',
     );
+
+    // A fixture gets real permissions; an actor without case:review still fails.
+    let reviewDenied = false;
+    try {
+      await caseService.reviewCase(
+        caseId,
+        { review_action: 'ASSIST', assistance_measure_codes: ['SCHOLARSHIP'] },
+        {
+          ...reviewer,
+          permissions: permissions.filter((permission) => permission !== 'case:review'),
+        },
+      );
+    } catch (error) {
+      reviewDenied = error.getStatus?.() === 403;
+      if (!reviewDenied) throw error;
+    }
+    assert(reviewDenied, 'review without case:review was not denied');
 
     // 2. ASSIST moves the case back to OPEN inside the assistance phase.
     const assisted = await caseService.reviewCase(
@@ -254,7 +276,7 @@ async function main() {
       causeCategory: null,
       followUpAssessmentCode: null,
       parentalStatusCode: null,
-      guardianTypeCode: null,
+      guardianTypeCodes: [],
       guardianTypeDetail: null,
       residenceEnvironmentCodes: [],
       residenceEnvironmentDetail: null,

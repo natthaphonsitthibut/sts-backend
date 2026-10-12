@@ -593,7 +593,7 @@ export class ReferralLinkService {
     return { stream, contentType };
   }
 
-  /** Files the agency's report once; the case goes back to รอพิจารณา. */
+  /** Files the agency report once: success awaits review; failure becomes ส่งต่อไม่สำเร็จ. */
   async submitReport(token: string, body: SubmitReferralReportDto, sessionToken?: string) {
     const link = await this.findUsableLink(token);
     const reporter = await this.readSessionReporter(link, sessionToken);

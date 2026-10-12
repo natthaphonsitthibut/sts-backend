@@ -129,6 +129,7 @@ describe('AutomationRepository', () => {
         'STUDENT_NOT_FOUND',
         'AWAITING_REFERRAL',
         'AWAITING_REFERRAL_OUTCOME',
+        'REFERRAL_NOT_SUCCEEDED',
       ],
       'student-uuid-1',
       'สมชาย ใจดี',

@@ -102,6 +102,22 @@ async function main() {
     const client = chrome;
     await client.call('Page.enable', {});
     await client.call('Network.enable', {});
+    await client.call('Page.addScriptToEvaluateOnNewDocument', {
+      source: `(() => {
+        window.__reportFilterRequests = [];
+        const open = XMLHttpRequest.prototype.open;
+        XMLHttpRequest.prototype.open = function(method, url, ...args) {
+          const parsed = new URL(String(url), location.href);
+          if (parsed.pathname.endsWith('/dashboard/risk-watchlist')) {
+            window.__reportFilterRequests.push({
+              studentGroup: parsed.searchParams.get('studentGroup'),
+              caseStatus: parsed.searchParams.get('caseStatus'),
+            });
+          }
+          return open.call(this, method, url, ...args);
+        };
+      })()`,
+    });
     await client.call('Emulation.setDeviceMetricsOverride', {
       width: 1440,
       height: 1000,
@@ -167,7 +183,7 @@ async function main() {
       'referral row lost the school name under the student',
     );
     const searchPlaceholder = await client.evaluate(
-      `document.querySelector('input[placeholder="ค้นหาชื่อนักเรียนหรือหน่วยงาน"]') !== null`,
+      `document.querySelector('input[placeholder="ค้นหาชื่อนักเรียน"]') !== null`,
     );
     assert(searchPlaceholder, 'referral search placeholder changed');
 
@@ -207,6 +223,42 @@ async function main() {
     })()`);
     assert(statusOptions && statusOptions[0] === 'ทุกสถานะการติดตาม', 'risk status select label');
     assert(statusOptions.length > 1, 'risk status options did not load from the catalog');
+
+    // Hidden statuses must never reach RISK, even on the first request from an
+    // old bookmark or when moving from the watchlist without remounting.
+    for (const status of ['AWAITING_REFERRAL', 'AWAITING_REFERRAL_OUTCOME']) {
+      await navigate(client, `/student-risk-report/risk?caseStatus=${status}`);
+      const riskIsNormalized = `(() => {
+        const requests = window.__reportFilterRequests ?? [];
+        return location.pathname.endsWith('/risk') &&
+          !new URLSearchParams(location.search).has('caseStatus') &&
+          requests.some((request) => request.studentGroup === 'RISK') &&
+          document.querySelector('select[aria-label="สถานะการติดตาม"]')?.value === '';
+      })()`;
+      await waitFor(() => client.evaluate(riskIsNormalized), `Risk bookmark retained ${status}`);
+      const assertRiskRequests = async () => assert(
+        await client.evaluate(`window.__reportFilterRequests.filter((request) =>
+          request.studentGroup === 'RISK').every((request) => request.caseStatus === null)`),
+        `A hidden ${status} filter reached the risk API`,
+      );
+      await assertRiskRequests();
+      await navigate(client, `/student-risk-report/watchlist?caseStatus=${status}`);
+      await waitFor(() => client.evaluate(`window.__reportFilterRequests.some((request) =>
+        request.studentGroup === 'WATCHLIST' && request.caseStatus === ${JSON.stringify(status)})`),
+      `Watchlist lost the valid ${status} filter`);
+      await client.evaluate(`[...document.querySelectorAll('[role="tab"]')]
+        .find((tab) => tab.innerText.trim() === 'กลุ่มเสี่ยง').click()`);
+      await waitFor(() => client.evaluate(riskIsNormalized), `Tab switch retained ${status}`);
+      await assertRiskRequests();
+      await client.evaluate(`[...document.querySelectorAll('[role="tab"]')]
+        .find((tab) => tab.innerText.trim() === 'กลุ่มเฝ้าระวัง').click()`);
+      await waitFor(() => client.evaluate(`(() => {
+        const latest = window.__reportFilterRequests.at(-1);
+        return location.pathname.endsWith('/watchlist') &&
+          !new URLSearchParams(location.search).has('caseStatus') &&
+          latest?.studentGroup === 'WATCHLIST' && latest.caseStatus === null;
+      })()`), `Returning to watchlist resurrected ${status}`);
+    }
 
     // ---- home: the grade chart has its own ชั้น/ห้อง selectors
     await navigate(client, '/');

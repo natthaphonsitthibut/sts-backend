@@ -3,8 +3,8 @@
  * รอผลการส่งต่อ with no result step and nothing for the school to fill in (the
  * result is the agency's report), the งานส่งต่อ register files it under
  * รอผลการส่งต่อ with ดูรายละเอียดเคส + แชร์, an agency report of ยังไม่สำเร็จ
- * brings the case back to รอพิจารณา with the report step and its review
- * buttons, and after a second referral สำเร็จ goes back to รอพิจารณา, where
+ * parks the case in ส่งต่อไม่สำเร็จ with มอบหมายติดตาม / ส่งต่อหน่วยงานอีกครั้ง
+ * on the report step and no ปิดเคส, and after a second referral สำเร็จ goes to รอพิจารณา, where
  * ปิดเคส closes it. Also checks the page fits a phone.
  */
 const { NestFactory } = require('@nestjs/core');
@@ -13,6 +13,7 @@ const { AppModule } = require('../dist/app.module');
 const { SessionCookieService } = require('../dist/auth/session-cookie.service');
 const { CaseService } = require('../dist/task/case.service');
 const { ReferralLinkService } = require('../dist/task/referral-link.service');
+const { TaskRepository } = require('../dist/task/task.repository');
 const { assert, openChrome, wait, waitFor } = require('./smoke-case-assistance-browser');
 
 if (process.env.NODE_ENV === 'production') {
@@ -27,6 +28,8 @@ const FRONTEND_URL = process.env.SMOKE_FRONTEND_URL || 'http://localhost:5175';
 const USERNAME = 'referral_outcome_browser_smoke';
 const PERMISSIONS = ['home', 'dashboard', 'students', 'case:assign', 'case:review'];
 const REASON = 'Automated referral outcome browser smoke';
+const INITIAL_PHASE = process.env.SMOKE_REFERRAL_INITIAL_PHASE || 'FOLLOW_UP';
+assert(['FOLLOW_UP', 'ASSISTANCE'].includes(INITIAL_PHASE), 'invalid fixture phase');
 
 async function main() {
   const app = await NestFactory.createApplicationContext(AppModule, {
@@ -48,13 +51,16 @@ async function main() {
               CONCAT_WS(' ', enrollment."FirstName_Onec", enrollment."LastName_Onec") AS student_name
        FROM student_term enrollment
        INNER JOIN schools school ON school.id = enrollment."SchoolID_Onec"
+       INNER JOIN student_current_enrollment_resolution resolution
+         ON resolution.selected_student_uuid = enrollment.student_uuid
+        AND resolution.resolution_state = 'ACTIVE'
        WHERE enrollment.student_uuid IS NOT NULL
          AND NOT EXISTS (
            SELECT 1 FROM cases existing
            WHERE existing.student_uuid = enrollment.student_uuid
              AND existing.deleted_at IS NULL
              AND existing.status IN ('OPEN', 'IN_PROGRESS', 'PENDING_REVIEW',
-               'STUDENT_NOT_FOUND', 'AWAITING_REFERRAL', 'AWAITING_REFERRAL_OUTCOME')
+               'STUDENT_NOT_FOUND', 'AWAITING_REFERRAL', 'AWAITING_REFERRAL_OUTCOME', 'REFERRAL_NOT_SUCCEEDED')
          )
        ORDER BY enrollment.student_uuid
        LIMIT 1`,
@@ -90,7 +96,7 @@ async function main() {
     const [createdCase] = await dataSource.query(
       `INSERT INTO cases (student_uuid, student_name, school_id, student_school, reason_flagged,
          status, workflow_phase_code)
-       VALUES ($1, $2, $3, $4, $5, 'PENDING_REVIEW', 'FOLLOW_UP')
+       VALUES ($1, $2, $3, $4, $5, 'PENDING_REVIEW', $6)
        RETURNING id`,
       [
         enrollment.student_uuid,
@@ -98,6 +104,7 @@ async function main() {
         enrollment.school_id,
         enrollment.school_name,
         REASON,
+        INITIAL_PHASE,
       ],
     );
     caseId = Number(createdCase.id);
@@ -127,6 +134,9 @@ async function main() {
 
     chrome = await openChrome();
     await chrome.call('Page.enable');
+    await chrome.call('Emulation.setEmulatedMedia', {
+      features: [{ name: 'prefers-reduced-motion', value: 'reduce' }],
+    });
     await chrome.call('Network.enable');
     await chrome.call('Emulation.setDeviceMetricsOverride', {
       width: 1440,
@@ -258,8 +268,28 @@ async function main() {
     const registerText = await chrome.evaluate(
       `document.querySelector('[data-referral-register]').innerText`,
     );
-    for (const label of ['รอผลการส่งต่อ', 'รอพิจารณา', 'ส่งต่อสำเร็จ', 'ยังไม่สำเร็จ']) {
+    for (const label of [
+      'ส่งต่อไม่สำเร็จ',
+      'รอส่งต่อ',
+      'รอผลการส่งต่อ',
+      'รอพิจารณา',
+      'เสร็จสิ้น',
+    ]) {
       assert(registerText.includes(label), `register card ${label} is missing`);
+    }
+    // The badge says how a referral ended; there is no result column beside it.
+    assert(
+      !(await chrome.evaluate(
+        `[...document.querySelectorAll('[data-referral-register] th')].some((heading) => heading.innerText.trim() === 'ผลการส่งต่อ')`,
+      )),
+      'the register still has a ผลการส่งต่อ column',
+    );
+    if (typeof chrome.call === 'function') {
+      const shot = await chrome.call('Page.captureScreenshot', { format: 'png' });
+      require('fs').writeFileSync(
+        '/tmp/sts-referral-register.png',
+        Buffer.from((shot.result ?? shot).data, 'base64'),
+      );
     }
     for (const retired of ['หน่วยงานรับแล้ว', 'หน่วยงานปฏิเสธ']) {
       assert(!registerText.includes(retired), `register still shows ${retired}`);
@@ -317,12 +347,13 @@ async function main() {
     });
     console.log('ok no horizontal overflow at 390px');
 
-    // 3. ยังไม่สำเร็จ → รอพิจารณา, the note shows on the card, no button left.
+    // 3. ยังไม่สำเร็จ → ส่งต่อไม่สำเร็จ: the status says it, the note shows on
+    // the card, and the school picks a new follow-up or another referral.
     const notYetNote = 'หน่วยงานแจ้งว่าครอบครัวไม่ไปตามนัด';
     await reportAsAgency('NOT_SUCCEEDED', notYetNote);
     await waitFor(
-      async () => (await caseStatus()) === 'PENDING_REVIEW',
-      'case did not return to รอพิจารณา',
+      async () => (await caseStatus()) === 'REFERRAL_NOT_SUCCEEDED',
+      'case did not move to ส่งต่อไม่สำเร็จ',
     );
     await waitFor(
       async () => (await chrome.evaluate(referralStepText(-1))).includes(notYetNote),
@@ -330,29 +361,184 @@ async function main() {
     );
     const afterNotYet = await chrome.evaluate(referralStepText(-1));
     assert(
-      afterNotYet.includes('สถานะการส่งต่อ : รอพิจารณา'),
-      'unsuccessful referral result is used as its workflow status',
+      afterNotYet.includes('สถานะการส่งต่อ : ส่งต่อไม่สำเร็จ'),
+      `the failed referral step does not read ส่งต่อไม่สำเร็จ: ${afterNotYet}`,
     );
     assert(
-      await chrome.evaluate(
-        `document.querySelector('[data-referral-result] input[aria-label="ผลการส่งต่อ"]').value === 'ยังไม่สำเร็จ'`,
+      (await chrome.evaluate('document.body.innerText')).includes(
+        'สถานะการติดตาม : ส่งต่อไม่สำเร็จ',
       ),
-      'unsuccessful result was lost from the separate outcome field',
+      'the case header does not read ส่งต่อไม่สำเร็จ',
     );
-    // The reviewer decides the next step right under the referral that failed.
+    assert(
+      !(await chrome.evaluate(
+        `Boolean(document.querySelector('[data-referral-result] input[aria-label="ผลการส่งต่อ"]'))`,
+      )),
+      'the separate ผลการส่งต่อ field is still shown',
+    );
+    // The next step is decided right under the referral that failed.
     await waitFor(
       async () => await chrome.evaluate(buttonInNewestReferral('ส่งต่อหน่วยงานอีกครั้ง')),
       'ส่งต่อหน่วยงานอีกครั้ง is not offered on the failed referral step',
     );
     assert(
+      await chrome.evaluate(buttonInNewestReferral('มอบหมายติดตาม')),
+      'มอบหมายติดตาม is not offered on the failed referral step',
+    );
+    assert(
+      !(await chrome.evaluate(buttonInNewestReferral('ปิดเคส'))),
+      'ปิดเคส is offered on a referral that did not succeed',
+    );
+    // มอบหมายติดตาม brings the follow-up assignment form back, as มอบหมายอีกครั้ง
+    // does after ไม่พบนักเรียน.
+    const flowStepCount = `document.querySelectorAll('[data-flow-step]').length`;
+    const stepsBeforeReassign = await chrome.evaluate(flowStepCount);
+    await chrome.evaluate(`${visibleButton('มอบหมายติดตาม')}.click()`);
+    await waitFor(
+      async () => (await chrome.evaluate(flowStepCount)) === stepsBeforeReassign + 1,
+      'มอบหมายติดตาม did not open the assignment form step',
+    );
+    assert(
+      (
+        await chrome.evaluate(`[...document.querySelectorAll('[data-flow-step]')].at(-1).innerText`)
+      ).includes('มอบหมายการติดตาม'),
+      'the step opened by มอบหมายติดตาม is not the follow-up assignment form',
+    );
+    // Finish the actual UI assignment, including its confirmation, in both phases.
+    await waitFor(
+      async () =>
+        await chrome.evaluate(`Boolean(
+      [...document.querySelectorAll('button')].find(button => button.offsetParent !== null &&
+        button.innerText.trim() === 'มอบหมาย' && !button.disabled))`),
+      'assignment form is not ready',
+    );
+    const teachers = await app.get(TaskRepository).listVisitAssignees(enrollment.student_uuid);
+    assert(teachers.length > 0, 'need an eligible school teacher for UI assignment');
+    await chrome.evaluate(
+      `document.querySelector('input[aria-label="ครูผู้ได้รับมอบหมาย"]').click()`,
+    );
+    await waitFor(
+      async () =>
+        await chrome.evaluate(`Boolean([...document.querySelectorAll('button')].find(button =>
+        button.offsetParent !== null && button.innerText.trim().startsWith(${JSON.stringify(teachers[0].display_name)})))`),
+      'assignee picker did not show the eligible teacher',
+    );
+    await chrome.clickText(teachers[0].display_name);
+    const nextDay = new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'Asia/Bangkok',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    }).format(new Date(Date.now() + 86_400_000));
+    await chrome.evaluate(
+      `document.querySelector('button[aria-label="วันที่สิ้นสุดมอบหมาย"]').click()`,
+    );
+    await waitFor(
+      async () =>
+        await chrome.evaluate(`Boolean(document.querySelector(
+      '[role="dialog"] button[aria-label="${nextDay}"]'))`),
+      'end-date calendar did not open',
+    );
+    await chrome.evaluate(
+      `document.querySelector('[role="dialog"] button[aria-label="${nextDay}"]').click()`,
+    );
+    await chrome.clickText('มอบหมาย', '[...document.querySelectorAll("[data-flow-step]")].at(-1)');
+    await waitFor(
+      async () =>
+        await chrome.evaluate(`Boolean(
+      [...document.querySelectorAll('[role="dialog"] button')].find(button =>
+        button.innerText.trim() === 'ยืนยัน'))`),
+      async () =>
+        `assignment confirmation did not open: ${await chrome.evaluate(
+          `[...[...document.querySelectorAll('[data-flow-step]')].at(-1).querySelectorAll('[role="alert"]')]
+          .map(node => node.innerText.trim()).join(' | ')`,
+        )}`,
+    );
+    await chrome.clickText('ยืนยัน', 'document.querySelector("[role=dialog]")');
+    await waitFor(
+      async () => (await caseStatus()) === 'IN_PROGRESS',
+      'follow-up assignment was not persisted',
+    );
+    const [afterAssignment] = await dataSource.query(
+      'SELECT status, workflow_phase_code FROM cases WHERE id = $1',
+      [caseId],
+    );
+    assert(
+      afterAssignment.workflow_phase_code === 'FOLLOW_UP',
+      'failed assistance referral did not return to FOLLOW_UP',
+    );
+    const assignedRounds = await dataSource.query(
+      `SELECT task.id, task.task_type, count(link.id)::int AS links
+       FROM tasks task JOIN task_links link ON link.task_id = task.id
+       WHERE task.case_id = $1 GROUP BY task.id`,
+      [caseId],
+    );
+    assert(
+      assignedRounds.length === 1 &&
+        assignedRounds[0].task_type === 'VISIT' &&
+        assignedRounds[0].links === 1,
+      'UI must persist one VISIT and one link',
+    );
+    console.log(`ok failed ${INITIAL_PHASE} referral -> UI VISIT assignment -> FOLLOW_UP`);
+    // Return this fixture to its failed-referral checkpoint so the independent
+    // second-referral/closure assertions below still exercise the original flow.
+    await dataSource.transaction(async (manager) => {
+      await manager.query('DELETE FROM task_links WHERE task_id = $1', [assignedRounds[0].id]);
+      await manager.query('DELETE FROM tasks WHERE id = $1', [assignedRounds[0].id]);
+      await manager.query(
+        `UPDATE cases SET status = 'REFERRAL_NOT_SUCCEEDED',
+        workflow_phase_code = $2 WHERE id = $1`,
+        [caseId, INITIAL_PHASE],
+      );
+    });
+    // งานส่งต่อ files the row under the same badge.
+    await chrome.call('Page.navigate', { url: `${FRONTEND_URL}/student-risk-report/referrals` });
+    await waitFor(
+      async () =>
+        await chrome.evaluate(
+          `Boolean(document.querySelector('[data-referral-register] input[placeholder="ค้นหาชื่อนักเรียน"]'))`,
+        ),
+      'the referral register did not render again',
+    );
+    await chrome.evaluate(`(() => {
+      const field = document.querySelector('[data-referral-register] input[placeholder="ค้นหาชื่อนักเรียน"]');
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
+      setter.call(field, ${JSON.stringify(enrollment.student_name)});
+      field.dispatchEvent(new Event('input', { bubbles: true }));
+    })()`);
+    await waitFor(
+      async () =>
+        await chrome.evaluate(`(() => {
+          const link = [...document.querySelectorAll('a[aria-label]')].find((anchor) =>
+            anchor.offsetParent !== null && anchor.getAttribute('aria-label') === ${JSON.stringify(caseLinkLabel)});
+          return Boolean(link && link.closest('tr')?.innerText.includes('ส่งต่อไม่สำเร็จ'));
+        })()`),
+      'the register row does not read ส่งต่อไม่สำเร็จ',
+    );
+    {
+      const shot = await chrome.call('Page.captureScreenshot', { format: 'png' });
+      require('fs').writeFileSync(
+        '/tmp/sts-referral-register-not-succeeded.png',
+        Buffer.from((shot.result ?? shot).data, 'base64'),
+      );
+    }
+    await openCasePage();
+    {
+      const shot = await chrome.call('Page.captureScreenshot', { format: 'png' });
+      require('fs').writeFileSync(
+        '/tmp/sts-referral-case-not-succeeded.png',
+        Buffer.from((shot.result ?? shot).data, 'base64'),
+      );
+    }
+    assert(
       !(await chrome.evaluate(`Boolean(${visibleButton('บันทึกผลการส่งต่อ')})`)),
       'the button is still offered after the result was recorded',
     );
     console.log(
-      'ok ยังไม่สำเร็จ returned the case to รอพิจารณา, shows the note and offers ส่งต่อหน่วยงานอีกครั้ง there',
+      'ok ยังไม่สำเร็จ parks the case in ส่งต่อไม่สำเร็จ, with มอบหมายติดตาม / ส่งต่อหน่วยงานอีกครั้ง and no ปิดเคส',
     );
 
-    // 4. Refer again; สำเร็จ goes back to รอพิจารณา too, and ปิดเคส closes it.
+    // 4. Refer again; สำเร็จ goes to รอพิจารณา, and ปิดเคส closes it.
     await refer('ส่งต่อโรงพยาบาลอีกครั้ง');
     await openCasePage();
     assert(
@@ -394,17 +580,15 @@ async function main() {
     );
     const finishedReferralStates =
       await chrome.evaluate(`[...document.querySelectorAll('[data-referral-result]')]
-      .map(step => ({ text: step.innerText,
-        result: step.querySelector('input[aria-label="ผลการส่งต่อ"]').value }))`);
+      .map(step => ({ text: step.innerText }))`);
     assert(
       finishedReferralStates.length === 2 &&
-        finishedReferralStates.every((step) => step.text.includes('สถานะการส่งต่อ : เสร็จสิ้น')) &&
-        finishedReferralStates[0].result === 'ยังไม่สำเร็จ' &&
-        finishedReferralStates[1].result === 'สำเร็จ',
-      'finished referral statuses do not match tracking status or their results changed',
+        finishedReferralStates[0].text.includes('สถานะการส่งต่อ : ส่งต่อไม่สำเร็จ') &&
+        finishedReferralStates[1].text.includes('สถานะการส่งต่อ : เสร็จสิ้น'),
+      `finished referral steps read: ${JSON.stringify(finishedReferralStates)}`,
     );
     console.log(
-      'ok tracking/referral statuses both read เสร็จสิ้น; outcome fields retain สำเร็จ / ยังไม่สำเร็จ',
+      'ok the failed round keeps ส่งต่อไม่สำเร็จ after the case closed; the successful one reads เสร็จสิ้น',
     );
     console.log('ok closed case status reads สถานะการติดตาม : เสร็จสิ้น only');
     console.log(
@@ -412,30 +596,49 @@ async function main() {
     );
     console.log('Referral outcome browser smoke passed');
   } finally {
-    chrome?.close();
-    if (caseId) {
-      await dataSource
-        .query(
-          `DELETE FROM case_referral_results WHERE case_referral_id IN
-             (SELECT id FROM case_referrals WHERE case_id = $1)`,
+    try {
+      await dataSource.transaction(async (manager) => {
+        if (!caseId) return;
+        const referrals = '(SELECT id FROM case_referrals WHERE case_id = $1)';
+        const tasks = '(SELECT id FROM tasks WHERE case_id = $1)';
+        for (const sql of [
+          `DELETE FROM task_submissions WHERE task_link_id IN (SELECT id FROM task_links WHERE task_id IN ${tasks})`,
+          `DELETE FROM task_links WHERE task_id IN ${tasks}`,
+          `DELETE FROM tasks WHERE case_id = $1`,
+          `DELETE FROM case_referral_results WHERE case_referral_id IN ${referrals}`,
+          `DELETE FROM case_referral_links WHERE case_referral_id IN ${referrals}`,
+          'DELETE FROM case_referrals WHERE case_id = $1',
+          'DELETE FROM notifications WHERE case_id = $1',
+          'DELETE FROM case_reviews WHERE case_id = $1',
+          'DELETE FROM cases WHERE id = $1',
+        ])
+          await manager.query(sql, [caseId]);
+      });
+      if (caseId) {
+        const [remaining] = await dataSource.query(
+          `SELECT
+          (SELECT count(*) FROM cases WHERE id = $1) +
+          (SELECT count(*) FROM case_referrals WHERE case_id = $1) +
+          (SELECT count(*) FROM case_reviews WHERE case_id = $1) +
+          (SELECT count(*) FROM notifications WHERE case_id = $1) +
+          (SELECT count(*) FROM tasks WHERE case_id = $1) AS count`,
           [caseId],
-        )
-        .catch(() => undefined);
-      await dataSource
-        .query(`DELETE FROM case_referrals WHERE case_id = $1`, [caseId])
-        .catch(() => undefined);
-      await dataSource
-        .query(`DELETE FROM notifications WHERE case_id = $1`, [caseId])
-        .catch(() => undefined);
-      await dataSource
-        .query(`DELETE FROM case_reviews WHERE case_id = $1`, [caseId])
-        .catch(() => undefined);
-      await dataSource.query(`DELETE FROM cases WHERE id = $1`, [caseId]).catch(() => undefined);
+        );
+        assert(Number(remaining.count) === 0, 'referral browser fixture was not removed');
+      }
+    } finally {
+      try {
+        try {
+          chrome?.close();
+        } finally {
+          await dataSource.query(`UPDATE users SET status = 'DISABLED' WHERE username = $1`, [
+            USERNAME,
+          ]);
+        }
+      } finally {
+        await app.close();
+      }
     }
-    await dataSource
-      .query(`UPDATE users SET status = 'DISABLED' WHERE username = $1`, [USERNAME])
-      .catch(() => undefined);
-    await app.close();
   }
 }
 

@@ -1,6 +1,7 @@
 import { Global, Module } from '@nestjs/common';
 import { AuditLogController } from './audit-log.controller';
 import { AuditLogService } from './audit-log.service';
+import { PiiAccessLogService } from './pii-access-log.service';
 
 /**
  * Global so any feature service can inject AuditLogService without each module
@@ -10,7 +11,7 @@ import { AuditLogService } from './audit-log.service';
 @Global()
 @Module({
   controllers: [AuditLogController],
-  providers: [AuditLogService],
-  exports: [AuditLogService],
+  providers: [AuditLogService, PiiAccessLogService],
+  exports: [AuditLogService, PiiAccessLogService],
 })
 export class AuditLogModule {}

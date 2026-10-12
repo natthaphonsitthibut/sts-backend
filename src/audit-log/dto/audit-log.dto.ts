@@ -23,6 +23,12 @@ export const AUDIT_ACTIONS = [
   'STUDENT_NATIONAL_ID_CORRECTION',
   'STUDENT_PASSPORT_CORRECTION',
   'STUDENT_DELETE',
+  'STUDENT_NATIONAL_ID_VIEW',
+  'STUDENT_PASSPORT_VIEW',
+  'STUDENT_ADDRESS_VIEW',
+  'TEACHER_NATIONAL_ID_VIEW',
+  'USER_NATIONAL_ID_VIEW',
+  'USER_ADDRESS_VIEW',
   'ROLE_GROUP_CREATE',
   'ROLE_GROUP_UPDATE',
   'ROLE_GROUP_DELETE',
@@ -115,6 +121,24 @@ export const AUDIT_LOG_DOMAINS = [
 
 export type AuditLogDomain = (typeof AUDIT_LOG_DOMAINS)[number];
 
+/**
+ * หมวด the reader picks first on บันทึกการใช้งาน. A reader-facing grouping, not
+ * the permission `domain`: ลิงก์ครู and ภารกิจ share one domain but not a หมวด.
+ */
+export const AUDIT_LOG_CATEGORIES = [
+  'accounts',
+  'students',
+  'cases',
+  'attendance',
+  'tasks',
+  'teacher_access',
+  'data_transfer',
+  'timetable',
+  'personal_data_access',
+] as const;
+
+export type AuditLogCategory = (typeof AUDIT_LOG_CATEGORIES)[number];
+
 export const AUDIT_LOG_TASK_TYPES = ['VISIT', 'ASSIST'] as const;
 
 export type AuditLogTaskType = (typeof AUDIT_LOG_TASK_TYPES)[number];
@@ -129,6 +153,10 @@ export class GetAuditLogQueryDto extends PaginationQueryDto {
   @IsOptional()
   @IsIn(AUDIT_ACTIONS)
   action?: AuditAction;
+
+  @IsOptional()
+  @IsIn(AUDIT_LOG_CATEGORIES)
+  category?: AuditLogCategory;
 
   @IsOptional()
   @IsString()

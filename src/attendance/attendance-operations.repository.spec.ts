@@ -36,6 +36,82 @@ function expectCurrentEnrollmentPolicy(sql: string) {
 }
 
 describe('AttendanceOperationsRepository roster policy', () => {
+  it('synchronizes only real term enrollments and their risk profiles without altering events', async () => {
+    const { queries, repository } = createRepositoryWithQueryCapture();
+    const executor = createExecutorWithQueryCapture(queries);
+    const counts = await repository.synchronizeTermEnrollmentLabels(
+      10,
+      {
+        schoolId: 10010002,
+        academicYear: 2570,
+        semester: 2,
+        startsOn: '2027-05-01',
+        endsOn: '2027-10-31',
+        status: 'DRAFT',
+        actorUserId: 5,
+      },
+      executor,
+    );
+
+    expect(counts).toEqual({ enrollments: 0, riskProfiles: 0 });
+    expect(queries).toHaveLength(2);
+    expect(queries[0].sql).toContain('school_term_id = $1 AND "SchoolID_Onec" = $2');
+    expect(queries[0].sql).not.toContain('deleted_at IS NULL');
+    expect(queries[1].sql).toContain('enrollment.school_term_id = $1');
+    expect(queries[1].sql).toContain('profile.student_uuid = enrollment.student_uuid');
+    expect(queries[1].sql).toContain('profile.school_id = $2');
+    for (const { sql } of queries) {
+      expect(sql).not.toContain('attendance_date');
+      expect(sql).not.toContain('AttendanceDate');
+      expect(sql).not.toContain('UPDATE attendance');
+      expect(sql).not.toContain('UPDATE student_current_enrollment_resolution');
+    }
+    expect(queries[0].params).toEqual([10, 10010002, 2570, 2, 5]);
+  });
+
+  it('creation inserts a new identity and cannot rewrite a natural-key match', async () => {
+    const { queries, repository } = createRepositoryWithQueryCapture();
+    const executor = createExecutorWithQueryCapture(queries);
+    await repository.upsertTerm(
+      {
+        schoolId: 10010002,
+        academicYear: 2570,
+        semester: 2,
+        startsOn: '2027-05-01',
+        endsOn: '2027-10-31',
+        status: 'DRAFT',
+        actorUserId: 5,
+      },
+      executor,
+    );
+    expect(queries[0].sql).toContain('INSERT INTO school_terms');
+    expect(queries[0].sql).not.toContain('ON CONFLICT');
+    expect(queries.map(({ sql }) => sql).join('\n')).not.toContain('UPDATE');
+  });
+
+  it('preflights persisted unique constraints including retained enrollment identities', async () => {
+    const { queries, repository } = createRepositoryWithQueryCapture();
+    await repository.findTermWriteConflict(
+      10,
+      {
+        schoolId: 10010002,
+        academicYear: 2570,
+        semester: 2,
+        startsOn: '2027-05-01',
+        endsOn: '2027-10-31',
+        status: 'ACTIVE',
+        actorUserId: 5,
+      },
+      createExecutorWithQueryCapture(queries),
+    );
+    expect(queries[0].sql).toContain("THEN 'TERM_IDENTITY'");
+    expect(queries[0].sql).toContain("THEN 'ACTIVE_TERM'");
+    expect(queries[0].sql).toContain("THEN 'ENROLLMENT_IDENTITY'");
+    expect(queries[0].sql).toContain("THEN 'STUDENT_NUMBER'");
+    expect(queries[0].sql).toContain('linked.school_term_id = $1');
+    expect(queries[0].params).toEqual([10, 10010002, 2570, 2, 'ACTIVE']);
+  });
+
   it('loads submitted class metadata through current enrollment policy', async () => {
     const { queries, repository } = createRepositoryWithQueryCapture();
     const executor = createExecutorWithQueryCapture(queries);
