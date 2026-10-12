@@ -82,6 +82,7 @@ export interface RiskDashboardFilters {
     | 'STUDENT_NOT_FOUND'
     | 'AWAITING_REFERRAL'
     | 'AWAITING_REFERRAL_OUTCOME'
+    | 'REFERRAL_NOT_SUCCEEDED'
     | 'RESOLVED';
   /**
    * Narrows the watchlist to one concern level. Unset lists every level, so the

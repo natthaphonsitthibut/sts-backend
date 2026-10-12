@@ -79,6 +79,7 @@ export class FollowUpSummaryQueryDto {
 export const REFERRAL_STAGE_CODES = [
   'AWAITING_REFERRAL',
   'AWAITING_REFERRAL_OUTCOME',
+  'REFERRAL_NOT_SUCCEEDED',
   'PENDING_REVIEW',
   'RESOLVED',
 ] as const;
@@ -378,9 +379,10 @@ export class SaveTaskSubmissionDto {
   parental_status_code?: string | null;
 
   @IsOptional()
-  @IsString()
-  @MaxLength(40)
-  guardian_type_code?: string | null;
+  @IsArray()
+  @IsString({ each: true })
+  @MaxLength(40, { each: true })
+  guardian_type_codes?: string[] | null;
 
   @IsOptional()
   @IsString()
@@ -423,6 +425,11 @@ export class SaveTaskSubmissionDto {
   @IsString()
   @MaxLength(24)
   contact_channel_code?: string | null;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(200)
+  contact_channel_detail?: string | null;
 
   @IsOptional()
   cause_detail?: string | null;
@@ -656,6 +663,7 @@ export const RISK_DASHBOARD_CASE_STATUSES = [
   'STUDENT_NOT_FOUND',
   'AWAITING_REFERRAL',
   'AWAITING_REFERRAL_OUTCOME',
+  'REFERRAL_NOT_SUCCEEDED',
   'RESOLVED',
 ] as const;
 export const RISK_DASHBOARD_STUDENT_GROUPS = ['RISK', 'WATCHLIST'] as const;

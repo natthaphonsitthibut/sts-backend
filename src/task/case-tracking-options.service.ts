@@ -42,6 +42,8 @@ export interface ParentalStatusOption {
 export interface GuardianTypeOption {
   code: string;
   label: string;
+  /** `ไม่มีผู้ปกครอง` cannot be combined with a guardian. */
+  isExclusive: boolean;
   requiresDetail: boolean;
 }
 
@@ -171,6 +173,7 @@ export class CaseTrackingOptionsService {
       contactChannels: contactChannels.map((row) => ({
         code: this.stringValue(row.code),
         label: this.stringValue(row.label_th),
+        requiresDetail: row.requires_detail === true,
       })),
     };
   }
@@ -209,6 +212,7 @@ export class CaseTrackingOptionsService {
     return {
       code: this.stringValue(row.code),
       label: this.stringValue(row.label_th),
+      isExclusive: row.is_exclusive === true,
       requiresDetail: row.requires_detail === true,
     };
   }
@@ -229,11 +233,26 @@ export class CaseTrackingOptionsService {
     return this.mapParentalStatus(row);
   }
 
-  async getGuardianType(code: string | null): Promise<GuardianTypeOption | null> {
-    if (!code) return null;
-    const row = await this.taskRepository.findGuardianTypeOption(code);
-    if (!row) throw new BadRequestException('ผู้ปกครองไม่ถูกต้อง');
-    return this.mapGuardianType(row);
+  /**
+   * Resolves the ticked guardians under the same two option-table rules as the
+   * residence environment below: `ไม่มีผู้ปกครอง` stands alone, and `อื่น ๆ`
+   * needs the guardian named in the detail.
+   */
+  async getGuardianTypes(codes: string[], detail: string | null): Promise<GuardianTypeOption[]> {
+    const unique = Array.from(new Set(codes.filter((code) => code.length > 0)));
+    if (unique.length === 0) return [];
+    const rows = await this.taskRepository.findGuardianTypeOptions(unique);
+    if (rows.length !== unique.length) {
+      throw new BadRequestException('ผู้ปกครองไม่ถูกต้อง');
+    }
+    const options = rows.map((row) => this.mapGuardianType(row));
+    if (options.length > 1 && options.some((option) => option.isExclusive)) {
+      throw new BadRequestException('เลือกไม่มีผู้ปกครองร่วมกับผู้ปกครองอื่นไม่ได้');
+    }
+    if (options.some((option) => option.requiresDetail) && !detail) {
+      throw new BadRequestException('กรุณาระบุผู้ปกครอง');
+    }
+    return options;
   }
 
   /**
@@ -291,11 +310,13 @@ export class CaseTrackingOptionsService {
     return this.stringValue(row.code);
   }
 
-  async getContactChannel(code: string | null): Promise<string | null> {
+  async getContactChannel(
+    code: string | null,
+  ): Promise<{ code: string; requiresDetail: boolean } | null> {
     if (!code) return null;
     const row = await this.taskRepository.findContactChannelOption(code);
     if (!row) throw new BadRequestException('ช่องทางติดต่อไม่ถูกต้อง');
-    return this.stringValue(row.code);
+    return { code: this.stringValue(row.code), requiresDetail: row.requires_detail === true };
   }
 
   async getNonFollowUpReason(code: string | null): Promise<string | null> {

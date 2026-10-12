@@ -58,6 +58,18 @@ const RESIDENCE_ENVIRONMENTS_JSON_SQL = `COALESCE((
           WHERE link.task_submission_id = submission.id
         ), '[]'::json)`;
 
+/** Who looks after the student in one submission; same contract as above. */
+const GUARDIAN_TYPES_JSON_SQL = `COALESCE((
+          SELECT json_agg(
+                   json_build_object('code', option.code, 'label', option.label_th)
+                   ORDER BY option.sort_order, option.code
+                 )
+          FROM task_submission_guardian_types link
+          JOIN guardian_type_options option
+            ON option.code = link.guardian_type_code
+          WHERE link.task_submission_id = submission.id
+        ), '[]'::json)`;
+
 const EMPTY_RISK_DASHBOARD_SUMMARY: RiskDashboardSummary = {
   HIGH: 0,
   WATCH: 0,
@@ -176,7 +188,7 @@ interface TaskSubmissionInput {
   absenceReasonCode: string | null;
   absenceReasonCategoryCode: string | null;
   parentalStatusCode: string | null;
-  guardianTypeCode: string | null;
+  guardianTypeCodes: string[];
   guardianTypeDetail: string | null;
   residenceEnvironmentCodes: string[];
   residenceEnvironmentDetail: string | null;
@@ -202,6 +214,7 @@ interface TaskSubmissionInput {
   executionOutcomeDetail: string | null;
   contactPersonName: string | null;
   contactChannelCode: string | null;
+  contactChannelDetail?: string | null;
   nonFollowUpReasonCode: string | null;
 }
 
@@ -308,11 +321,12 @@ export type RoundLineClaimResult =
  *   - `AWAITING_REFERRAL` its case sits in รอส่งต่อ and nothing was sent yet
  *     (the register's case-only row, see `REFERRAL_REGISTER_SOURCE_SQL`)
  *   - `AWAITING_REFERRAL_OUTCOME` its case sits in รอผลการส่งต่อ, no result yet
- *   - `PENDING_REVIEW` the result is in and the case is back in รอพิจารณา
+ *   - `REFERRAL_NOT_SUCCEEDED` the agency reported ยังไม่สำเร็จ. It stays the
+ *     referral's stage after the school acts on it, so the register and the
+ *     case page keep saying how that round ended (owner, 2026-10-12)
+ *   - `PENDING_REVIEW` the agency reported สำเร็จ and the case is in รอพิจารณา
  *     because of it — the newest referral, nobody sent out on the case since
- *   - `RESOLVED` the reviewer has moved on from its result. Whether that
- *     result was สำเร็จ or ยังไม่สำเร็จ stays in `status_code`: the stage reads
- *     เสร็จสิ้น either way, as the step does on the case page (owner, 2026-10-11)
+ *   - `RESOLVED` the reviewer has moved on from a สำเร็จ result
  *   - otherwise its own status (a cancelled referral)
  * Uses the `referral` and `c` aliases of the queries below.
  */
@@ -321,8 +335,9 @@ const REFERRAL_STAGE_SQL = `CASE
   WHEN c.status = 'AWAITING_REFERRAL_OUTCOME'
     AND referral.status_code IN ('REFERRED', 'ACCEPTED')
     THEN 'AWAITING_REFERRAL_OUTCOME'
+  WHEN referral.status_code = 'NOT_SUCCEEDED' THEN 'REFERRAL_NOT_SUCCEEDED'
   WHEN c.status = 'PENDING_REVIEW'
-    AND referral.status_code IN ('COMPLETED', 'NOT_SUCCEEDED')
+    AND referral.status_code = 'COMPLETED'
     AND NOT EXISTS (
       SELECT 1 FROM case_referrals newer_referral
       WHERE newer_referral.case_id = referral.case_id
@@ -335,7 +350,7 @@ const REFERRAL_STAGE_SQL = `CASE
         AND later_task.created_at > referral.referred_at
     )
     THEN 'PENDING_REVIEW'
-  WHEN referral.status_code IN ('COMPLETED', 'NOT_SUCCEEDED') THEN 'RESOLVED'
+  WHEN referral.status_code = 'COMPLETED' THEN 'RESOLVED'
   ELSE referral.status_code
 END`;
 
@@ -360,7 +375,7 @@ const REFERRAL_REGISTER_SOURCE_SQL = `(
  * the `c` alias.
  */
 const CASE_IN_REFERRAL_FLOW_SQL = `(
-  c.status IN ('AWAITING_REFERRAL', 'AWAITING_REFERRAL_OUTCOME')
+  c.status IN ('AWAITING_REFERRAL', 'AWAITING_REFERRAL_OUTCOME', 'REFERRAL_NOT_SUCCEEDED')
   OR EXISTS (
     SELECT 1 FROM case_referrals flow_referral
     WHERE flow_referral.case_id = c.id
@@ -672,19 +687,7 @@ export class TaskRepository {
         c.school_id,
         c.student_uuid::text,
         c.status,
-        c.workflow_phase_code,
-        EXISTS (
-          SELECT 1
-          FROM tasks active_task
-          JOIN task_links active_link
-            ON active_link.task_id = active_task.id
-           AND active_link.deleted_at IS NULL
-          WHERE active_task.case_id = c.id
-            AND active_task.task_type IN ('VISIT', 'ASSIST')
-            AND active_task.deleted_at IS NULL
-            AND active_link.status = 'ACTIVE'
-            AND active_link.expires_at > NOW()
-        ) AS has_live_assignment
+        c.workflow_phase_code
       FROM cases c
       WHERE c.id = $1
         AND c.deleted_at IS NULL${scopeSql}
@@ -692,7 +695,26 @@ export class TaskRepository {
       `,
       [caseId, ...scopeQuery.params],
     );
-    return result.rows[0] || null;
+    const lockedCase = result.rows[0];
+    if (!lockedCase) return null;
+    // A locking SELECT may wait on an earlier assignment while its subqueries
+    // still use the pre-wait snapshot. Read links only after obtaining the lock.
+    const live = await executor.query<QueryResultRow>(
+      `SELECT EXISTS (
+          SELECT 1
+          FROM tasks active_task
+          JOIN task_links active_link
+            ON active_link.task_id = active_task.id
+           AND active_link.deleted_at IS NULL
+          WHERE active_task.case_id = $1
+            AND active_task.task_type IN ('VISIT', 'ASSIST')
+            AND active_task.deleted_at IS NULL
+            AND active_link.status = 'ACTIVE'
+            AND active_link.expires_at > NOW()
+        ) AS has_live_assignment`,
+      [caseId],
+    );
+    return { ...lockedCase, has_live_assignment: live.rows[0]?.has_live_assignment === true };
   }
 
   async listVisitAssignees(
@@ -922,7 +944,7 @@ export class TaskRepository {
       WHERE c.student_uuid = $1
         AND c.status IN (
           'OPEN', 'IN_PROGRESS', 'PENDING_REVIEW', 'STUDENT_NOT_FOUND', 'AWAITING_REFERRAL',
-          'AWAITING_REFERRAL_OUTCOME'
+          'AWAITING_REFERRAL_OUTCOME', 'REFERRAL_NOT_SUCCEEDED'
         )
         AND c.deleted_at IS NULL${scopeSql}
       ORDER BY c.created_at DESC, c.id DESC
@@ -988,8 +1010,9 @@ export class TaskRepository {
     status: string,
     executor?: QueryExecutor,
     actor?: ActorContext,
+    nextWorkflowPhaseCode?: 'FOLLOW_UP' | 'ASSISTANCE',
   ): Promise<void> {
-    const scopeQuery = this.buildCaseScopeQuery(actor, 3);
+    const scopeQuery = this.buildCaseScopeQuery(actor, nextWorkflowPhaseCode ? 4 : 3);
     const scopeSql = scopeQuery.sql ? ` AND ${scopeQuery.sql}` : '';
     await this.getExecutor(executor).query(
       `UPDATE cases c
@@ -997,9 +1020,14 @@ export class TaskRepository {
            completion_outcome_code = CASE
              WHEN $1 = 'RESOLVED' THEN COALESCE(c.completion_outcome_code, 'CLOSED')
              ELSE NULL
-           END
+           END${nextWorkflowPhaseCode ? ', workflow_phase_code = $3' : ''}
        WHERE c.id = $2 AND c.deleted_at IS NULL${scopeSql}`,
-      [status, caseId, ...scopeQuery.params],
+      [
+        status,
+        caseId,
+        ...(nextWorkflowPhaseCode ? [nextWorkflowPhaseCode] : []),
+        ...scopeQuery.params,
+      ],
     );
   }
 
@@ -1025,7 +1053,7 @@ export class TaskRepository {
             completion_outcome_code = $2,
             workflow_phase_code = COALESCE($3, c.workflow_phase_code)
         WHERE c.id = $4
-          AND c.status = 'PENDING_REVIEW'
+          AND c.status IN ('PENDING_REVIEW', 'REFERRAL_NOT_SUCCEEDED')
           AND c.deleted_at IS NULL${scopeSql}
         RETURNING c.id
       `,
@@ -1519,10 +1547,15 @@ export class TaskRepository {
             ORDER BY task.created_at, submission.submitted_at, submission.id
           ) AS source_round_number,
           submission.parental_status_code,
-          submission.guardian_type_code,
+          COALESCE((
+            SELECT json_agg(guardian.guardian_type_code ORDER BY guardian.guardian_type_code)
+            FROM task_submission_guardian_types guardian
+            WHERE guardian.task_submission_id = submission.id
+          ), '[]'::json) AS guardian_type_codes,
           submission.guardian_type_detail,
           submission.contact_person_name,
           submission.contact_channel_code,
+          submission.contact_channel_detail,
           submission.residence_environment_detail,
           COALESCE((
             SELECT json_agg(environment.residence_environment_code ORDER BY environment.residence_environment_code)
@@ -1702,8 +1735,7 @@ export class TaskRepository {
         absence_category.label_th AS absence_reason_category_label,
         submission.parental_status_code,
         parental_status.label_th AS parental_status_label,
-        submission.guardian_type_code,
-        guardian_type.label_th AS guardian_type_label,
+        ${GUARDIAN_TYPES_JSON_SQL} AS guardian_types,
         submission.guardian_type_detail,
         submission.residence_environment_detail,
         ${RESIDENCE_ENVIRONMENTS_JSON_SQL} AS residence_environments,
@@ -1716,6 +1748,7 @@ export class TaskRepository {
         submission.execution_outcome_detail,
         submission.contact_person_name,
         submission.contact_channel_code,
+        submission.contact_channel_detail,
         contact_channel.label_th AS contact_channel_label,
         submission.non_follow_up_reason_code,
         non_follow_up_reason.label_th AS non_follow_up_reason_label,
@@ -1738,9 +1771,6 @@ export class TaskRepository {
       LEFT JOIN parental_status_options parental_status
         ON parental_status.code = submission.parental_status_code
         AND parental_status.deleted_at IS NULL
-      LEFT JOIN guardian_type_options guardian_type
-        ON guardian_type.code = submission.guardian_type_code
-        AND guardian_type.deleted_at IS NULL
       LEFT JOIN task_execution_outcome_options execution_outcome
         ON execution_outcome.code = submission.task_execution_outcome_code
       LEFT JOIN non_follow_up_reason_options non_follow_up_reason
@@ -1795,7 +1825,6 @@ export class TaskRepository {
         absence_reason_category_code,
         absence_reason_code,
         parental_status_code,
-        guardian_type_code,
         guardian_type_detail,
         residence_environment_detail,
         cause_detail,
@@ -1819,7 +1848,8 @@ export class TaskRepository {
         execution_outcome_detail,
         contact_person_name,
         contact_channel_code,
-        non_follow_up_reason_code
+        non_follow_up_reason_code,
+        contact_channel_detail
       )
       VALUES (
         $1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
@@ -1837,7 +1867,6 @@ export class TaskRepository {
         data.absenceReasonCategoryCode,
         data.absenceReasonCode,
         data.parentalStatusCode,
-        data.guardianTypeCode,
         data.guardianTypeDetail,
         data.residenceEnvironmentDetail,
         data.causeDetail,
@@ -1862,12 +1891,27 @@ export class TaskRepository {
         data.contactPersonName,
         data.contactChannelCode,
         data.nonFollowUpReasonCode,
+        data.contactChannelDetail ?? null,
       ],
     );
 
     const submissionId = inserted.rows[0]?.id;
     if (submissionId == null) {
       throw new Error('task submission insert did not return an id');
+    }
+    if (data.guardianTypeCodes.length > 0) {
+      // One row per guardian: บิดา with มารดา, or มารดา with ตา / ยาย.
+      await this.getExecutor(executor).query(
+        `
+        INSERT INTO task_submission_guardian_types (
+          task_submission_id,
+          guardian_type_code
+        )
+        SELECT $1, code
+        FROM unnest($2::varchar[]) AS code
+      `,
+        [submissionId, data.guardianTypeCodes],
+      );
     }
     if (data.residenceEnvironmentCodes.length === 0) return submissionId;
     // One row per observed factor: a home can sit near a drug spot and carry a
@@ -2624,7 +2668,7 @@ export class TaskRepository {
     const scopeQuery = this.buildCaseScopeQuery(actor, 1);
     const scopeSql = scopeQuery.sql ? ` AND ${scopeQuery.sql}` : '';
     const result = await this.query<CountRow>(
-      `SELECT count(*) FROM cases c WHERE c.status IN ('OPEN', 'IN_PROGRESS', 'PENDING_REVIEW', 'STUDENT_NOT_FOUND', 'AWAITING_REFERRAL', 'AWAITING_REFERRAL_OUTCOME') AND c.deleted_at IS NULL${scopeSql}`,
+      `SELECT count(*) FROM cases c WHERE c.status IN ('OPEN', 'IN_PROGRESS', 'PENDING_REVIEW', 'STUDENT_NOT_FOUND', 'AWAITING_REFERRAL', 'AWAITING_REFERRAL_OUTCOME', 'REFERRAL_NOT_SUCCEEDED') AND c.deleted_at IS NULL${scopeSql}`,
       scopeQuery.params,
     );
 
@@ -2639,6 +2683,7 @@ export class TaskRepository {
       'STUDENT_NOT_FOUND',
       'AWAITING_REFERRAL',
       'AWAITING_REFERRAL_OUTCOME',
+      'REFERRAL_NOT_SUCCEEDED',
     ];
     const scopeQuery = this.buildCaseScopeQuery(actor, 2);
     const scopeSql = scopeQuery.sql ? ` AND ${scopeQuery.sql}` : '';
@@ -3490,7 +3535,7 @@ export class TaskRepository {
 
   /**
    * Writes the result, moves the referral to its outcome status and the case
-   * out of รอผลการส่งต่อ back to รอพิจารณา in one go. The caller holds the
+   * out of รอผลการส่งต่อ — to รอพิจารณา or ส่งต่อไม่สำเร็จ — in one go. The caller holds the
    * row locks.
    */
   async recordCaseReferralResult(
@@ -3794,12 +3839,12 @@ export class TaskRepository {
         latest_submission.absence_reason_category_label,
         latest_submission.parental_status_code,
         latest_submission.parental_status_label,
-        latest_submission.guardian_type_code,
-        latest_submission.guardian_type_label,
+        latest_submission.guardian_types,
         latest_submission.guardian_type_detail,
         latest_submission.contact_person_name,
         latest_submission.contact_channel_code,
         latest_submission.contact_channel_label,
+        latest_submission.contact_channel_detail,
         latest_submission.residence_environments,
         latest_submission.residence_environment_detail,
         latest_submission.observed_disadvantage_types,
@@ -3859,11 +3904,11 @@ export class TaskRepository {
                absence_category.label_th AS absence_reason_category_label,
                submission.parental_status_code,
                parental_status.label_th AS parental_status_label,
-               submission.guardian_type_code,
-               guardian_type.label_th AS guardian_type_label,
+               ${GUARDIAN_TYPES_JSON_SQL} AS guardian_types,
                submission.guardian_type_detail,
                submission.contact_person_name,
                submission.contact_channel_code,
+               submission.contact_channel_detail,
                contact_channel.label_th AS contact_channel_label,
                ${RESIDENCE_ENVIRONMENTS_JSON_SQL} AS residence_environments,
                submission.residence_environment_detail,
@@ -3923,9 +3968,6 @@ export class TaskRepository {
         LEFT JOIN parental_status_options parental_status
           ON parental_status.code = submission.parental_status_code
           AND parental_status.deleted_at IS NULL
-        LEFT JOIN guardian_type_options guardian_type
-          ON guardian_type.code = submission.guardian_type_code
-          AND guardian_type.deleted_at IS NULL
         LEFT JOIN task_execution_outcome_options execution_outcome
           ON execution_outcome.code = submission.task_execution_outcome_code
         LEFT JOIN non_follow_up_reason_options non_follow_up_reason
@@ -4696,7 +4738,7 @@ export class TaskRepository {
 
   async listContactChannelOptions(): Promise<QueryResultRow[]> {
     const result = await this.query<QueryResultRow>(`
-      SELECT code, label_th FROM contact_channel_options
+      SELECT code, label_th, requires_detail FROM contact_channel_options
       WHERE is_active = TRUE
       ORDER BY sort_order, code
     `);
@@ -4705,7 +4747,7 @@ export class TaskRepository {
 
   async findContactChannelOption(code: string): Promise<QueryResultRow | null> {
     const result = await this.query<QueryResultRow>(
-      `SELECT code, label_th FROM contact_channel_options
+      `SELECT code, label_th, requires_detail FROM contact_channel_options
        WHERE code = $1 AND is_active = TRUE LIMIT 1`,
       [code],
     );
@@ -4834,7 +4876,7 @@ export class TaskRepository {
 
   async listGuardianTypeOptions(): Promise<QueryResultRow[]> {
     const result = await this.query<QueryResultRow>(`
-      SELECT code, label_th, requires_detail
+      SELECT code, label_th, is_exclusive, requires_detail
       FROM guardian_type_options
       WHERE is_active = TRUE AND deleted_at IS NULL
       ORDER BY sort_order, code
@@ -4842,17 +4884,17 @@ export class TaskRepository {
     return result.rows;
   }
 
-  async findGuardianTypeOption(code: string): Promise<QueryResultRow | null> {
+  async findGuardianTypeOptions(codes: string[]): Promise<QueryResultRow[]> {
     const result = await this.query<QueryResultRow>(
       `
-      SELECT code, label_th, requires_detail
+      SELECT code, label_th, is_exclusive, requires_detail
       FROM guardian_type_options
-      WHERE code = $1 AND is_active = TRUE AND deleted_at IS NULL
-      LIMIT 1
+      WHERE code = ANY($1::varchar[]) AND is_active = TRUE AND deleted_at IS NULL
+      ORDER BY sort_order, code
     `,
-      [code],
+      [codes],
     );
-    return result.rows[0] ?? null;
+    return result.rows;
   }
 
   async listResidenceEnvironmentOptions(): Promise<QueryResultRow[]> {

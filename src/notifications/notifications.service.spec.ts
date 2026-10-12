@@ -1,6 +1,25 @@
 import { NotificationsService } from './notifications.service';
 
 describe('NotificationsService', () => {
+  it.each([
+    [null, 'ผลการส่งต่อยังไม่สำเร็จ'],
+    ['เหตุผลก่อนส่งต่อซึ่งไม่ใช่ผลล่าสุด', 'ผลการส่งต่อยังไม่สำเร็จ'],
+  ])('includes failed-referral detail for context %s', async (reviewSummary, reasonText) => {
+    const repository = {
+      fanOut: jest.fn().mockResolvedValue([7]),
+      findCaseStatusNotificationContext: jest.fn().mockResolvedValue({ reviewSummary }),
+    };
+    const service = new NotificationsService(repository as never);
+    await service.notifyCaseStatusChanged({
+      caseId: 11,
+      studentName: null,
+      schoolId: 10010002,
+      nextStatus: 'REFERRAL_NOT_SUCCEEDED',
+      actorUserId: 4,
+    });
+    expect(repository.fanOut).toHaveBeenCalledWith(expect.objectContaining({ reasonText }));
+  });
+
   it.each(['CLOSED', 'REFERRED_AGENCY'])(
     'shows only เสร็จสิ้น for closed notification outcome %s',
     async (completionOutcomeCode) => {

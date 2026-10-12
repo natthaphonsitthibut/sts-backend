@@ -240,14 +240,18 @@ export class TaskSubmissionService {
         this.toScalarString(data.absence_reason_category_code)?.toUpperCase() ?? null;
       const parentalStatusCode =
         this.toScalarString(data.parental_status_code)?.toUpperCase() ?? null;
-      const guardianTypeCode = this.toScalarString(data.guardian_type_code)?.toUpperCase() ?? null;
+      const guardianTypeDetail = this.toScalarString(data.guardian_type_detail);
+      const guardianTypeCodes = (data.guardian_type_codes ?? []).map((code) =>
+        code.trim().toUpperCase(),
+      );
       const residenceEnvironmentDetail = this.toScalarString(data.residence_environment_detail);
       const residenceEnvironmentCodes = (data.residence_environment_codes ?? []).map((code) =>
         code.trim().toUpperCase(),
       );
-      const requestedContactChannelCode = isAssistance
-        ? null
-        : (this.toScalarString(data.contact_channel_code)?.toUpperCase() ?? null);
+      const requestedContactChannelCode =
+        isAssistance || homeVisitExceptionCode === 'STUDENT_NOT_FOUND'
+          ? null
+          : (this.toScalarString(data.contact_channel_code)?.toUpperCase() ?? null);
       const [
         executionOutcome,
         nonFollowUpReason,
@@ -257,9 +261,9 @@ export class TaskSubmissionService {
         followUpProblemCategory,
         absenceSelection,
         parentalStatus,
-        guardianType,
+        guardianTypes,
         residenceEnvironments,
-        contactChannelCode,
+        contactChannel,
       ] = await Promise.all([
         this.caseTrackingOptions.getTaskExecutionOutcome(executionOutcomeCode),
         this.caseTrackingOptions.getNonFollowUpReason(nonFollowUpReasonCode),
@@ -269,7 +273,7 @@ export class TaskSubmissionService {
         this.caseTrackingOptions.getFollowUpProblemCategory(followUpProblemCategoryCode),
         this.caseTrackingOptions.getAbsenceSelection(absenceReasonCode, absenceReasonCategoryCode),
         this.caseTrackingOptions.getParentalStatus(parentalStatusCode),
-        this.caseTrackingOptions.getGuardianType(guardianTypeCode),
+        this.caseTrackingOptions.getGuardianTypes(guardianTypeCodes, guardianTypeDetail),
         this.caseTrackingOptions.getResidenceEnvironments(
           residenceEnvironmentCodes,
           residenceEnvironmentDetail,
@@ -303,9 +307,20 @@ export class TaskSubmissionService {
       const contactPersonName = isAssistance
         ? null
         : (this.toScalarString(data.contact_person_name) ?? null);
-      const guardianTypeDetail = this.toScalarString(data.guardian_type_detail);
-      if (guardianType?.requiresDetail && !guardianTypeDetail) {
-        throw new BadRequestException('กรุณาระบุผู้ปกครอง');
+      const contactChannelCode = contactChannel?.code ?? null;
+      if (contactChannel?.requiresDetail && data.contact_channel_detail === undefined) {
+        throw new BadRequestException('แบบฟอร์มนี้เป็นเวอร์ชันเก่า กรุณาโหลดหน้าใหม่ก่อนส่งรายงาน');
+      }
+      const contactChannelDetail = contactChannel?.requiresDetail
+        ? typeof data.contact_channel_detail === 'string'
+          ? data.contact_channel_detail.trim() || null
+          : null
+        : null;
+      if (contactChannel?.requiresDetail && !contactChannelDetail) {
+        throw new BadRequestException('กรุณาระบุช่องทางติดต่ออื่น');
+      }
+      if (contactChannelDetail && contactChannelDetail.length > 200) {
+        throw new BadRequestException('ช่องทางติดต่ออื่นต้องไม่เกิน 200 ตัวอักษร');
       }
       const causeDetail = this.toScalarString(data.notes ?? data.cause_detail);
       if (studentNotFound && !causeDetail) {
@@ -362,10 +377,12 @@ export class TaskSubmissionService {
             absenceReasonCode: absenceSelection.reasonCode,
             absenceReasonCategoryCode: absenceSelection.categoryCode,
             parentalStatusCode: parentalStatus?.code ?? null,
-            guardianTypeCode: guardianType?.code ?? null,
-            // A detail without a guardian type has nothing to qualify, and the
-            // DB CHECK rejects it — drop it instead of failing the submission.
-            guardianTypeDetail: guardianType ? guardianTypeDetail : null,
+            guardianTypeCodes: guardianTypes.map((option) => option.code),
+            // The detail names the `อื่น ๆ` guardian; without that pick it has
+            // nothing to qualify, so it is dropped rather than stored adrift.
+            guardianTypeDetail: guardianTypes.some((option) => option.requiresDetail)
+              ? guardianTypeDetail
+              : null,
             residenceEnvironmentCodes: residenceEnvironments.map((option) => option.code),
             residenceEnvironmentDetail,
             causeDetail,
@@ -390,6 +407,7 @@ export class TaskSubmissionService {
             executionOutcomeDetail,
             contactPersonName,
             contactChannelCode,
+            contactChannelDetail,
             nonFollowUpReasonCode: nonFollowUpReason,
           },
           executor,

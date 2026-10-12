@@ -4,6 +4,7 @@ import { TokenEncryptionService } from '../common/crypto/token-encryption.servic
 import { TaskLifecycleService } from './task-lifecycle.service';
 import { TaskPolicyService } from './task-policy.service';
 import { TaskRepository } from './task.repository';
+import { CaseTrackingOptionsService } from './case-tracking-options.service';
 
 jest.mock('qrcode', () => ({
   toDataURL: jest.fn().mockResolvedValue('data:image/png;base64,unit-test'),
@@ -260,8 +261,6 @@ describe('TaskLifecycleService', () => {
             task_type: 'VISIT',
             assigned_to_name: 'ครูผู้ติดตาม',
             assigned_teacher_id: '7',
-            assigned_teacher_id: '7',
-            assigned_teacher_id: '7',
             existing_case_id: '123',
             student_id: studentUuid,
             student_name: 'นักเรียนทดสอบ',
@@ -290,7 +289,6 @@ describe('TaskLifecycleService', () => {
           task_type: 'VISIT',
           assigned_to_name: 'ครูผู้ติดตาม',
           assigned_teacher_id: '7',
-          assigned_teacher_id: '7',
           existing_case_id: '123',
           student_id: studentUuid,
           student_name: 'นักเรียนทดสอบ',
@@ -302,7 +300,7 @@ describe('TaskLifecycleService', () => {
     expect(taskRepository.createTask).not.toHaveBeenCalled();
   });
 
-  it.each(['OPEN', 'IN_PROGRESS', 'STUDENT_NOT_FOUND'])(
+  it.each(['OPEN', 'IN_PROGRESS', 'STUDENT_NOT_FOUND', 'REFERRAL_NOT_SUCCEEDED'])(
     'allows assignment for a %s case without a live link',
     async (status) => {
       taskRepository.lockCaseForVisitAssignment.mockResolvedValueOnce({
@@ -320,8 +318,6 @@ describe('TaskLifecycleService', () => {
             task_type: 'VISIT',
             assigned_to_name: 'ครูผู้ติดตาม',
             assigned_teacher_id: '7',
-            assigned_teacher_id: '7',
-            assigned_teacher_id: '7',
             existing_case_id: '123',
             student_id: studentUuid,
             student_name: 'นักเรียนทดสอบ',
@@ -337,8 +333,254 @@ describe('TaskLifecycleService', () => {
     },
   );
 
+  describe('follow-up after an unsuccessful referral', () => {
+    const visit = {
+      task_type: 'VISIT',
+      assigned_teacher_id: '7',
+      existing_case_id: '123',
+      student_id: studentUuid,
+      target_school_id: 10010002,
+    };
+
+    it.each(['FOLLOW_UP', 'ASSISTANCE'])(
+      'returns a failed referral from %s to FOLLOW_UP in the assignment transaction',
+      async (phase) => {
+        const executor = { query: jest.fn() };
+        taskRepository.withTransaction.mockImplementation(async (callback) => {
+          await callback(executor);
+        });
+        taskRepository.lockCaseForVisitAssignment.mockResolvedValueOnce({
+          id: 123,
+          school_id: 10010002,
+          student_uuid: studentUuid,
+          status: 'REFERRAL_NOT_SUCCEEDED',
+          workflow_phase_code: phase,
+          has_live_assignment: false,
+        });
+        await service.createTask(buildActor(), visit, 'https://app.example.invalid');
+        expect(taskRepository.updateCaseStatus).toHaveBeenCalledWith(
+          123,
+          'IN_PROGRESS',
+          executor,
+          buildActor(),
+          'FOLLOW_UP',
+        );
+        expect(taskRepository.createTask).toHaveBeenCalledWith(
+          expect.objectContaining({ caseId: 123, taskType: 'VISIT' }),
+          executor,
+        );
+        const auditEvent = auditLog.record.mock.calls[0]?.[0];
+        expect(auditEvent?.action).toBe('TASK_CREATE');
+        expect(auditEvent?.metadata?.previousWorkflowPhaseCode).toBe(phase);
+        expect(auditEvent?.metadata?.nextWorkflowPhaseCode).toBe('FOLLOW_UP');
+      },
+    );
+
+    it.each(['OPEN', 'IN_PROGRESS', 'STUDENT_NOT_FOUND'])(
+      'keeps the phase guard for an assistance case in %s',
+      async (status) => {
+        taskRepository.lockCaseForVisitAssignment.mockResolvedValueOnce({
+          id: 123,
+          school_id: 10010002,
+          student_uuid: studentUuid,
+          status,
+          workflow_phase_code: 'ASSISTANCE',
+          has_live_assignment: false,
+        });
+        await expect(
+          service.createTask(buildActor(), visit, 'https://app.example.invalid'),
+        ).rejects.toThrow('เคสนี้อยู่ในขั้นตอนให้ความช่วยเหลือ');
+        expect(taskRepository.updateCaseStatus).not.toHaveBeenCalled();
+      },
+    );
+
+    it('does not change phase when a live assignment already exists', async () => {
+      taskRepository.lockCaseForVisitAssignment.mockResolvedValueOnce({
+        id: 123,
+        school_id: 10010002,
+        student_uuid: studentUuid,
+        status: 'REFERRAL_NOT_SUCCEEDED',
+        workflow_phase_code: 'ASSISTANCE',
+        has_live_assignment: true,
+      });
+      await expect(
+        service.createTask(buildActor(), visit, 'https://app.example.invalid'),
+      ).rejects.toThrow('เคสนี้มีลิงก์มอบหมายที่ยังใช้งานได้อยู่แล้ว');
+      expect(taskRepository.updateCaseStatus).not.toHaveBeenCalled();
+      expect(taskRepository.createTask).not.toHaveBeenCalled();
+    });
+
+    it('requires case:assign before opening the transaction', async () => {
+      await expect(
+        service.createTask(
+          { ...buildActor(), permissions: ['dashboard'] },
+          visit,
+          'https://app.example.invalid',
+        ),
+      ).rejects.toMatchObject({ status: 403 });
+      expect(taskRepository.withTransaction).not.toHaveBeenCalled();
+    });
+
+    it.each([true, false])(
+      'requires review before ASSIST on a failed assistance referral (explicit=%s)',
+      async (explicit) => {
+        const assistanceService = new TaskLifecycleService(
+          taskRepository as unknown as TaskRepository,
+          new TaskPolicyService(taskRepository as unknown as TaskRepository),
+          auditLog as unknown as AuditLogService,
+          tokenEncryption,
+          {
+            getAssistanceMeasures: jest.fn().mockResolvedValue([]),
+          } as unknown as CaseTrackingOptionsService,
+        );
+        taskRepository.findActiveCaseByStudentUuid.mockResolvedValue({ id: 123 });
+        taskRepository.lockCaseForVisitAssignment.mockResolvedValueOnce({
+          id: 123,
+          school_id: 10010002,
+          student_uuid: studentUuid,
+          status: 'REFERRAL_NOT_SUCCEEDED',
+          workflow_phase_code: 'ASSISTANCE',
+          has_live_assignment: false,
+        });
+        await expect(
+          assistanceService.createTask(
+            buildActor(),
+            {
+              ...visit,
+              task_type: 'ASSIST',
+              existing_case_id: explicit ? visit.existing_case_id : undefined,
+            },
+            'https://app.example.invalid',
+          ),
+        ).rejects.toMatchObject({ status: 400 });
+        expect(taskRepository.updateCaseStatus).not.toHaveBeenCalled();
+        expect(taskRepository.createTask).not.toHaveBeenCalled();
+        expect(auditLog.record).not.toHaveBeenCalled();
+      },
+    );
+
+    it('does not let a failed FOLLOW_UP referral skip the ASSIST phase gate', async () => {
+      const assistanceService = new TaskLifecycleService(
+        taskRepository as unknown as TaskRepository,
+        new TaskPolicyService(taskRepository as unknown as TaskRepository),
+        auditLog as unknown as AuditLogService,
+        tokenEncryption,
+        {
+          getAssistanceMeasures: jest.fn().mockResolvedValue([]),
+        } as unknown as CaseTrackingOptionsService,
+      );
+      taskRepository.lockCaseForVisitAssignment.mockResolvedValueOnce({
+        id: 123,
+        school_id: 10010002,
+        student_uuid: studentUuid,
+        status: 'REFERRAL_NOT_SUCCEEDED',
+        workflow_phase_code: 'FOLLOW_UP',
+        has_live_assignment: false,
+      });
+      await expect(
+        assistanceService.createTask(
+          buildActor(),
+          { ...visit, task_type: 'ASSIST' },
+          'https://app.example.invalid',
+        ),
+      ).rejects.toThrow('กรุณาพิจารณาเคสก่อนมอบหมายการช่วยเหลืออีกครั้ง');
+      expect(taskRepository.updateCaseStatus).not.toHaveBeenCalled();
+    });
+
+    it('does not change a case excluded by the scoped row lock', async () => {
+      taskRepository.lockCaseForVisitAssignment.mockResolvedValueOnce(null);
+      await expect(
+        service.createTask(buildActor(), visit, 'https://app.example.invalid'),
+      ).rejects.toThrow('ไม่พบเคสที่ต้องการมอบหมาย');
+      expect(taskRepository.lockCaseForVisitAssignment).toHaveBeenCalledWith(
+        123,
+        buildActor(),
+        undefined,
+      );
+      expect(taskRepository.updateCaseStatus).not.toHaveBeenCalled();
+    });
+
+    it('uses the same locked phase transition when the caller omits existing_case_id', async () => {
+      taskRepository.findActiveCaseByStudentUuid.mockResolvedValueOnce({ id: 123 });
+      taskRepository.lockCaseForVisitAssignment.mockResolvedValueOnce({
+        id: 123,
+        school_id: 10010002,
+        student_uuid: studentUuid,
+        status: 'REFERRAL_NOT_SUCCEEDED',
+        workflow_phase_code: 'ASSISTANCE',
+        has_live_assignment: false,
+      });
+      await service.createTask(
+        buildActor(),
+        { ...visit, existing_case_id: undefined },
+        'https://app.example.invalid',
+      );
+      expect(taskRepository.lockCaseForVisitAssignment).toHaveBeenCalledWith(
+        123,
+        buildActor(),
+        undefined,
+      );
+      expect(taskRepository.updateCaseStatus).toHaveBeenCalledWith(
+        123,
+        'IN_PROGRESS',
+        undefined,
+        buildActor(),
+        'FOLLOW_UP',
+      );
+      expect(taskRepository.createCase).not.toHaveBeenCalled();
+    });
+
+    it('cannot bypass the live-link guard by omitting existing_case_id', async () => {
+      taskRepository.findActiveCaseByStudentUuid.mockResolvedValueOnce({ id: 123 });
+      taskRepository.lockCaseForVisitAssignment.mockResolvedValueOnce({
+        id: 123,
+        school_id: 10010002,
+        student_uuid: studentUuid,
+        status: 'IN_PROGRESS',
+        workflow_phase_code: 'FOLLOW_UP',
+        has_live_assignment: true,
+      });
+      await expect(
+        service.createTask(
+          buildActor(),
+          { ...visit, existing_case_id: undefined },
+          'https://app.example.invalid',
+        ),
+      ).rejects.toThrow('เคสนี้มีลิงก์มอบหมายที่ยังใช้งานได้อยู่แล้ว');
+      expect(taskRepository.updateCaseStatus).not.toHaveBeenCalled();
+      expect(taskRepository.createTask).not.toHaveBeenCalled();
+    });
+
+    it('returns 409 when another request opens the first case after the automatic lookup', async () => {
+      taskRepository.findStudentTermMetadata.mockResolvedValue({ SchoolID_Onec: 10010002 });
+      taskRepository.createCase.mockRejectedValueOnce({
+        driverError: { code: '23505', constraint: 'uq_cases_active_student_uuid' },
+      });
+      await expect(
+        service.createTask(
+          buildActor(),
+          {
+            ...visit,
+            existing_case_id: undefined,
+            student_name: 'นักเรียนทดสอบ',
+          },
+          'https://app.example.invalid',
+        ),
+      ).rejects.toMatchObject({ status: 409 });
+      expect(taskRepository.createTask).not.toHaveBeenCalled();
+    });
+  });
+
   it('reuses an active student case when creating a visit task', async () => {
     taskRepository.findActiveCaseByStudentUuid.mockResolvedValueOnce({ id: 456 });
+    taskRepository.lockCaseForVisitAssignment.mockResolvedValueOnce({
+      id: 456,
+      school_id: 10010002,
+      student_uuid: studentUuid,
+      status: 'OPEN',
+      workflow_phase_code: 'FOLLOW_UP',
+      has_live_assignment: false,
+    });
 
     await service.createTask(
       buildActor(),
@@ -364,6 +606,7 @@ describe('TaskLifecycleService', () => {
       'IN_PROGRESS',
       undefined,
       buildActor(),
+      undefined,
     );
     expect(taskRepository.createTask).toHaveBeenCalledWith(
       expect.objectContaining({ caseId: 456 }),

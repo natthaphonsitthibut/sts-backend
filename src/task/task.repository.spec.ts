@@ -1,6 +1,61 @@
 import { TaskRepository } from './task.repository';
 
 describe('TaskRepository', () => {
+  it('reads live links with a fresh query after obtaining the scoped case lock', async () => {
+    const executor = {
+      query: jest
+        .fn()
+        .mockResolvedValueOnce({
+          rows: [{ id: 123, status: 'IN_PROGRESS', workflow_phase_code: 'FOLLOW_UP' }],
+        })
+        .mockResolvedValueOnce({ rows: [{ has_live_assignment: true }] }),
+    };
+    const repository = new TaskRepository({} as never, undefined as never, undefined as never);
+    const actor = {
+      id: 7,
+      username: 'reviewer',
+      roles: ['ADMIN'],
+      permissions: ['case:assign'],
+      data_scope: { school_ids: [10010002] },
+    };
+    await expect(
+      repository.lockCaseForVisitAssignment(123, actor, executor),
+    ).resolves.toMatchObject({
+      id: 123,
+      has_live_assignment: true,
+    });
+    expect(executor.query.mock.calls[0]).toEqual([
+      expect.stringMatching(/c\.school_id = ANY\(\$2::int\[\]\)[\s\S]*FOR UPDATE OF c/),
+      [123, [10010002]],
+    ]);
+    expect(executor.query.mock.calls[1]).toEqual([
+      expect.stringMatching(/active_task\.case_id = \$1/),
+      [123],
+    ]);
+  });
+
+  it('changes assignment status and phase together without shifting the school scope incorrectly', async () => {
+    const executor = { query: jest.fn().mockResolvedValue([]) };
+    const repository = new TaskRepository({} as never, undefined as never, undefined as never);
+    await repository.updateCaseStatus(
+      123,
+      'IN_PROGRESS',
+      executor,
+      {
+        id: 7,
+        username: 'reviewer',
+        roles: ['ADMIN'],
+        permissions: ['case:assign'],
+        data_scope: { school_ids: [10010002] },
+      },
+      'FOLLOW_UP',
+    );
+    expect(executor.query).toHaveBeenCalledWith(
+      expect.stringMatching(/workflow_phase_code = \$3[\s\S]*c\.school_id = ANY\(\$4::int\[\]\)/),
+      ['IN_PROGRESS', 123, 'FOLLOW_UP', [10010002]],
+    );
+  });
+
   it('persists task links without legacy OTP columns', async () => {
     const executor = { query: jest.fn().mockResolvedValue({ rows: [] }) };
     const repository = new TaskRepository({} as never, undefined as never, undefined as never);
@@ -165,6 +220,7 @@ describe('TaskRepository', () => {
         'STUDENT_NOT_FOUND',
         'AWAITING_REFERRAL',
         'AWAITING_REFERRAL_OUTCOME',
+        'REFERRAL_NOT_SUCCEEDED',
       ],
       [101],
       [6],
@@ -694,6 +750,8 @@ describe('TaskRepository', () => {
     expect(queries[0].sql).toContain('source_task_id <> $2');
     expect(queries[0].sql).toContain('contact_person_name');
     expect(queries[0].sql).toContain('residence_environment_codes');
+    expect(queries[0].sql).toContain('task_submission_guardian_types');
+    expect(queries[0].sql).toContain('AS guardian_type_codes');
     expect(queries[0].sql).not.toContain('photo_paths');
     expect(queries[0].sql).not.toContain('task_execution_outcome_code');
     expect(queries[0].sql).not.toContain('case_referrals');

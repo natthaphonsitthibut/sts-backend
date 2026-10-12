@@ -18,7 +18,7 @@ describe('CaseTrackingOptionsService', () => {
     findHomeVisitExceptionOption: jest.fn(),
     findFollowUpProblemCategoryOption: jest.fn(),
     findParentalStatusOption: jest.fn(),
-    findGuardianTypeOption: jest.fn(),
+    findGuardianTypeOptions: jest.fn(),
     findResidenceEnvironmentOptions: jest.fn(),
     listAssistanceMeasures: jest.fn(),
     findAssistanceMeasures: jest.fn(),
@@ -122,7 +122,12 @@ describe('CaseTrackingOptionsService', () => {
       { code: 'LIVING_TOGETHER', label_th: 'อยู่ด้วยกัน' },
     ]);
     repository.listGuardianTypeOptions.mockResolvedValue([
-      { code: 'OTHER', label_th: 'อื่น ๆ (ระบุในช่อง)', requires_detail: true },
+      {
+        code: 'OTHER',
+        label_th: 'อื่น ๆ (ระบุในช่อง)',
+        is_exclusive: false,
+        requires_detail: true,
+      },
     ]);
     repository.listResidenceEnvironmentOptions.mockResolvedValue([
       {
@@ -221,7 +226,9 @@ describe('CaseTrackingOptionsService', () => {
         },
       ],
       parentalStatuses: [{ code: 'LIVING_TOGETHER', label: 'อยู่ด้วยกัน' }],
-      guardianTypes: [{ code: 'OTHER', label: 'อื่น ๆ (ระบุในช่อง)', requiresDetail: true }],
+      guardianTypes: [
+        { code: 'OTHER', label: 'อื่น ๆ (ระบุในช่อง)', isExclusive: false, requiresDetail: true },
+      ],
       residenceEnvironments: [
         {
           code: 'NORMAL',
@@ -253,7 +260,7 @@ describe('CaseTrackingOptionsService', () => {
       ],
       disadvantageTypes: [{ code: 'POVERTY', label: 'เด็กยากจน' }],
       disabilityTypes: [{ code: 'VISUAL', label: 'ความพิการทางการมองเห็น' }],
-      contactChannels: [{ code: 'IN_PERSON', label: 'พบด้วยตนเอง' }],
+      contactChannels: [{ code: 'IN_PERSON', label: 'พบด้วยตนเอง', requiresDetail: false }],
     });
   });
 
@@ -271,6 +278,84 @@ describe('CaseTrackingOptionsService', () => {
     await expect(service.getAssistanceMeasures([], null)).rejects.toThrow(
       'กรุณาเลือกมาตรการการช่วยเหลืออย่างน้อยหนึ่งอย่าง',
     );
+  });
+
+  it('accepts several guardians ticked together', async () => {
+    repository.findGuardianTypeOptions.mockResolvedValue([
+      { code: 'MOTHER', label_th: 'มารดา', is_exclusive: false, requires_detail: false },
+      {
+        code: 'MATERNAL_GRANDPARENT',
+        label_th: 'ตา / ยาย',
+        is_exclusive: false,
+        requires_detail: false,
+      },
+    ]);
+
+    await expect(
+      service.getGuardianTypes(['MOTHER', 'MATERNAL_GRANDPARENT', 'MOTHER'], null),
+    ).resolves.toEqual([
+      { code: 'MOTHER', label: 'มารดา', isExclusive: false, requiresDetail: false },
+      {
+        code: 'MATERNAL_GRANDPARENT',
+        label: 'ตา / ยาย',
+        isExclusive: false,
+        requiresDetail: false,
+      },
+    ]);
+    expect(repository.findGuardianTypeOptions).toHaveBeenCalledWith([
+      'MOTHER',
+      'MATERNAL_GRANDPARENT',
+    ]);
+  });
+
+  it('skips the lookup when no guardian is ticked', async () => {
+    await expect(service.getGuardianTypes([], null)).resolves.toEqual([]);
+    expect(repository.findGuardianTypeOptions).not.toHaveBeenCalled();
+  });
+
+  it('rejects a guardian code that is unknown or retired', async () => {
+    repository.findGuardianTypeOptions.mockResolvedValue([
+      { code: 'FATHER', label_th: 'บิดา', is_exclusive: false, requires_detail: false },
+    ]);
+
+    await expect(service.getGuardianTypes(['FATHER', 'FATHER_AND_MOTHER'], null)).rejects.toThrow(
+      'ผู้ปกครองไม่ถูกต้อง',
+    );
+  });
+
+  it('rejects ไม่มีผู้ปกครอง ticked beside a guardian', async () => {
+    repository.findGuardianTypeOptions.mockResolvedValue([
+      { code: 'FATHER', label_th: 'บิดา', is_exclusive: false, requires_detail: false },
+      {
+        code: 'NO_GUARDIAN',
+        label_th: 'ไม่มีผู้ปกครอง',
+        is_exclusive: true,
+        requires_detail: false,
+      },
+    ]);
+
+    await expect(service.getGuardianTypes(['FATHER', 'NO_GUARDIAN'], null)).rejects.toThrow(
+      'เลือกไม่มีผู้ปกครองร่วมกับผู้ปกครองอื่นไม่ได้',
+    );
+  });
+
+  it('requires the guardian named when อื่น ๆ is among the ticked guardians', async () => {
+    repository.findGuardianTypeOptions.mockResolvedValue([
+      { code: 'MOTHER', label_th: 'มารดา', is_exclusive: false, requires_detail: false },
+      {
+        code: 'OTHER',
+        label_th: 'อื่น ๆ (ระบุในช่อง)',
+        is_exclusive: false,
+        requires_detail: true,
+      },
+    ]);
+
+    await expect(service.getGuardianTypes(['MOTHER', 'OTHER'], null)).rejects.toThrow(
+      'กรุณาระบุผู้ปกครอง',
+    );
+    await expect(
+      service.getGuardianTypes(['MOTHER', 'OTHER'], 'ป้าข้างบ้าน'),
+    ).resolves.toHaveLength(2);
   });
 
   it('rejects an exclusive residence environment mixed with risk factors', async () => {
@@ -331,9 +416,28 @@ describe('CaseTrackingOptionsService', () => {
       code: 'PHONE',
       label_th: 'โทรศัพท์',
     });
-    await expect(service.getContactChannel('PHONE')).resolves.toBe('PHONE');
+    await expect(service.getContactChannel('PHONE')).resolves.toEqual({
+      code: 'PHONE',
+      requiresDetail: false,
+    });
     await expect(service.getContactChannel(null)).resolves.toBeNull();
     repository.findContactChannelOption.mockResolvedValue(null);
     await expect(service.getContactChannel('RETIRED')).rejects.toBeInstanceOf(BadRequestException);
+  });
+
+  it('uses the catalog detail flag for any channel code', async () => {
+    repository.findContactChannelOption.mockResolvedValue({ code: 'FAX', requires_detail: true });
+    await expect(service.getContactChannel('FAX')).resolves.toEqual({
+      code: 'FAX',
+      requiresDetail: true,
+    });
+    repository.findContactChannelOption.mockResolvedValue({
+      code: 'OTHER',
+      requires_detail: false,
+    });
+    await expect(service.getContactChannel('OTHER')).resolves.toEqual({
+      code: 'OTHER',
+      requiresDetail: false,
+    });
   });
 });

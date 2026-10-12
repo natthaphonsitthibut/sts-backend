@@ -605,6 +605,8 @@ describe('AuditLogService', () => {
       school_name: 'โรงเรียนตัวอย่าง',
       metadata: {
         taskType: 'VISIT',
+        previousWorkflowPhaseCode: 'ASSISTANCE',
+        nextWorkflowPhaseCode: 'FOLLOW_UP',
         scope: {
           school_ids: [10010003],
           provinces: ['เชียงใหม่'],
@@ -631,6 +633,8 @@ describe('AuditLogService', () => {
     expect(result.data[0]?.details).toEqual([
       { label: 'ประเภท', value: 'VISIT' },
       { label: 'โรงเรียน', value: 'โรงเรียนตัวอย่าง' },
+      { label: 'ขั้นตอนก่อนมอบหมาย', value: 'ASSISTANCE' },
+      { label: 'ขั้นตอนหลังมอบหมาย', value: 'FOLLOW_UP' },
       { label: 'จังหวัดในขอบเขต', value: 'เชียงใหม่' },
       { label: 'อำเภอในขอบเขต', value: 'เมืองเชียงใหม่' },
       { label: 'ตำบลในขอบเขต', value: 'ศรีภูมิ' },

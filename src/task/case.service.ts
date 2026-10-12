@@ -225,12 +225,12 @@ export class CaseService {
       absence_reason_category_label: this.normalizeText(row.absence_reason_category_label) || null,
       parental_status_code: this.normalizeText(row.parental_status_code) || null,
       parental_status_label: this.normalizeText(row.parental_status_label) || null,
-      guardian_type_code: this.normalizeText(row.guardian_type_code) || null,
-      guardian_type_label: this.normalizeText(row.guardian_type_label) || null,
+      guardian_types: this.mapCodeLabelList(row.guardian_types),
       guardian_type_detail: this.normalizeText(row.guardian_type_detail) || null,
       contact_person_name: this.normalizeText(row.contact_person_name) || null,
       contact_channel_code: this.normalizeText(row.contact_channel_code) || null,
       contact_channel_label: this.normalizeText(row.contact_channel_label) || null,
+      contact_channel_detail: this.normalizeText(row.contact_channel_detail) || null,
       residence_environments: this.mapCodeLabelList(row.residence_environments),
       residence_environment_detail: this.normalizeText(row.residence_environment_detail) || null,
       observed_disadvantage_types: this.mapCodeLabelList(row.observed_disadvantage_types),
@@ -654,7 +654,14 @@ export class CaseService {
       // hides the buttons anywhere else; the server must not take the client's
       // word for it, or a direct call could close a case nobody ever visited.
       const currentStatus = this.normalizeText(caseRecord.status).toUpperCase();
-      if (currentStatus !== 'PENDING_REVIEW') {
+      // ส่งต่อไม่สำเร็จ is an agency's report too, with one thing off the table:
+      // a case whose referral did not succeed cannot be closed on it.
+      if (currentStatus === 'REFERRAL_NOT_SUCCEEDED' && nextStatus === 'RESOLVED') {
+        throw new BadRequestException(
+          'ปิดเคสได้เมื่อผลการติดตาม ช่วยเหลือ หรือส่งต่อล่าสุดสำเร็จแล้วเท่านั้น',
+        );
+      }
+      if (currentStatus !== 'PENDING_REVIEW' && currentStatus !== 'REFERRAL_NOT_SUCCEEDED') {
         throw new BadRequestException('พิจารณาได้เฉพาะเคสที่มีรายงานติดตามรอพิจารณา');
       }
       await this.taskRepository.withTransaction(async (executor) => {
@@ -779,16 +786,10 @@ export class CaseService {
   }
 
   /**
-   * บันทึกผลการส่งต่อ: what the agency reported, told to the school by phone,
-   * letter or LINE. Either answer hands the case back to รอพิจารณา, the same
-   * way a follow-up report does, and the reviewer picks the next step — ปิดเคส,
-   * another visit, or another referral — with the usual actions (owner,
-   * 2026-10-08). One result per referral; a second attempt is a conflict.
-   */
-  /**
-   * Files a referral's result and hands the case back to รอพิจารณา, whoever
-   * sends it: the school recording what the agency said, or the agency itself
-   * through its referral link (`scopeActor: null`, `agencyReport` set). One
+   * Files the school's or agency's referral result: สำเร็จ returns the case
+   * to รอพิจารณา, while ยังไม่สำเร็จ moves it to ส่งต่อไม่สำเร็จ for another
+   * follow-up or referral (owner, 2026-10-12). An agency uses its referral link
+   * (`scopeActor: null`, `agencyReport` set). One
    * result per referral, only on the newest referral of a case still waiting
    * on it — anything else is a conflict. Returns the referral as the case page
    * reads it.
@@ -811,8 +812,11 @@ export class CaseService {
     audit: { actorUserId: number | null; actorLabel: string | null };
   }) {
     const { caseId, referralId } = input;
-    const nextStatus = 'PENDING_REVIEW';
     const referralStatusCode = input.resultCode === 'SUCCEEDED' ? 'COMPLETED' : 'NOT_SUCCEEDED';
+    // สำเร็จ waits for the reviewer to close the case; ยังไม่สำเร็จ is the case's
+    // own status, like ไม่พบนักเรียน after a visit (owner, 2026-10-12).
+    const nextStatus =
+      input.resultCode === 'SUCCEEDED' ? 'PENDING_REVIEW' : 'REFERRAL_NOT_SUCCEEDED';
 
     const locked = await this.taskRepository.withTransaction(async (executor) => {
       const referral = await this.taskRepository.lockCaseReferralForResult(

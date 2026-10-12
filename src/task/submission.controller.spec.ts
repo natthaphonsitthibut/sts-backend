@@ -21,6 +21,39 @@ describe('SubmissionController multipart report', () => {
 
   beforeEach(() => jest.clearAllMocks());
 
+  it('rejects a stale singular guardian field instead of losing the answer', async () => {
+    await expect(
+      controller.submitReport(
+        'link-placeholder',
+        { task_execution_outcome_code: 'SUCCEEDED', guardian_type_code: 'MOTHER' },
+        [],
+        request,
+      ),
+    ).rejects.toBeInstanceOf(BadRequestException);
+    expect(save).not.toHaveBeenCalled();
+  });
+
+  it('passes the OTHER channel detail through the multipart contract', async () => {
+    await controller.submitReport(
+      'link-placeholder',
+      {
+        task_execution_outcome_code: 'SUCCEEDED',
+        contact_channel_code: 'OTHER',
+        contact_channel_detail: 'อีเมล',
+      },
+      [],
+      request,
+    );
+    expect(save).toHaveBeenCalledWith(
+      'link-placeholder',
+      expect.objectContaining({
+        contact_channel_code: 'OTHER',
+        contact_channel_detail: 'อีเมล',
+      }),
+      undefined,
+    );
+  });
+
   it('accepts JSON arrays without using one multipart field per selected option', async () => {
     await controller.submitReport(
       'link-placeholder',
@@ -29,6 +62,7 @@ describe('SubmissionController multipart report', () => {
         disadvantage_type_codes: '["POVERTY","ORPHAN"]',
         disability_type_codes: '[]',
         residence_environment_codes: '["CROWDED","REMOTE"]',
+        guardian_type_codes: '["FATHER","MOTHER"]',
       },
       [],
       request,
@@ -40,6 +74,7 @@ describe('SubmissionController multipart report', () => {
         disadvantage_type_codes: ['POVERTY', 'ORPHAN'],
         disability_type_codes: [],
         residence_environment_codes: ['CROWDED', 'REMOTE'],
+        guardian_type_codes: ['FATHER', 'MOTHER'],
       }),
       undefined,
     );
@@ -104,10 +139,25 @@ describe('SubmissionController attachment limits', () => {
   });
   beforeEach(() => jest.clearAllMocks());
 
+  it('rejects the old guardian contract before storing attachments', async () => {
+    const response = await request(app.getHttpServer())
+      .post('/api/tasks/link-placeholder/submit')
+      .field('task_execution_outcome_code', 'SUCCEEDED')
+      .field('guardian_type_code', 'FATHER_AND_MOTHER')
+      .attach('photos', Buffer.from('%PDF-test'), {
+        filename: 'proof.pdf',
+        contentType: 'application/pdf',
+      });
+    expect(response.status).toBe(400);
+    expect(storage.save).not.toHaveBeenCalled();
+    expect(save).not.toHaveBeenCalled();
+  });
+
   it('accepts ten small attachments in a real multipart request', async () => {
     let upload = request(app.getHttpServer())
       .post('/api/tasks/link-placeholder/submit')
-      .field('task_execution_outcome_code', 'SUCCEEDED');
+      .field('task_execution_outcome_code', 'SUCCEEDED')
+      .field('guardian_type_codes', '["FATHER","MOTHER"]');
     for (let index = 0; index < 10; index += 1) {
       upload = upload.attach('photos', Buffer.from('%PDF-test'), {
         filename: `proof-${index}.pdf`,
@@ -118,6 +168,11 @@ describe('SubmissionController attachment limits', () => {
     await upload.expect(201);
     expect(storage.save).toHaveBeenCalledTimes(10);
     expect(save).toHaveBeenCalledTimes(1);
+    expect(save).toHaveBeenCalledWith(
+      'link-placeholder',
+      expect.objectContaining({ guardian_type_codes: ['FATHER', 'MOTHER'] }),
+      undefined,
+    );
   });
 
   it('rejects the eleventh attachment before saving', async () => {

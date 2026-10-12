@@ -1,4 +1,10 @@
-import { BadRequestException, ForbiddenException, Injectable, Logger } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  ForbiddenException,
+  Injectable,
+  Logger,
+} from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
 import { BANGKOK_TIME_ZONE } from '../common/utils/date.util';
 import * as QRCode from 'qrcode';
@@ -296,6 +302,10 @@ export class TaskLifecycleService {
     const tokenEncrypted = this.tokenEncryption.encrypt(token);
     let auditCaseId: number | null = null;
     let auditTargetSchoolId: number | null = null;
+    let auditPhaseTransition: {
+      previousWorkflowPhaseCode: string;
+      nextWorkflowPhaseCode: string;
+    } | null = null;
     let riskProfileStudentUuid: string | null = null;
     const auditTargetGrade = clean(data.target_grade) || null;
     const auditTargetRoom = clean(data.target_room) || null;
@@ -335,7 +345,18 @@ export class TaskLifecycleService {
             };
           }
           const requestedCaseId = this.normalizeNumber(data.existing_case_id);
-          const existingCaseId = requestedCaseId;
+          const studentUuid = clean(data.student_id) || null;
+          const activeCase =
+            !requestedCaseId && studentUuid
+              ? await this.taskRepository.findActiveCaseByStudentUuid(
+                  studentUuid,
+                  currentActor,
+                  executor,
+                )
+              : null;
+          const existingCaseId =
+            requestedCaseId ??
+            this.normalizeNumber(activeCase?.id as string | number | null | undefined);
 
           if (existingCaseId) {
             const existingCase = await this.taskRepository.lockCaseForVisitAssignment(
@@ -347,7 +368,14 @@ export class TaskLifecycleService {
               throw new BadRequestException('ไม่พบเคสที่ต้องการมอบหมาย');
             }
             const existingStatus = clean(existingCase.status)?.toUpperCase();
-            if (!['OPEN', 'IN_PROGRESS', 'STUDENT_NOT_FOUND'].includes(existingStatus || '')) {
+            if (existingStatus === 'REFERRAL_NOT_SUCCEEDED' && taskType === 'ASSIST') {
+              throw new BadRequestException('กรุณาพิจารณาเคสก่อนมอบหมายการช่วยเหลืออีกครั้ง');
+            }
+            if (
+              !['OPEN', 'IN_PROGRESS', 'STUDENT_NOT_FOUND', 'REFERRAL_NOT_SUCCEEDED'].includes(
+                existingStatus || '',
+              )
+            ) {
               throw new BadRequestException('สถานะเคสนี้ไม่อนุญาตให้มอบหมายการติดตาม');
             }
             // A follow-up round and an assistance round are different work; the
@@ -355,7 +383,9 @@ export class TaskLifecycleService {
             const existingPhase =
               clean(existingCase.workflow_phase_code)?.toUpperCase() || 'FOLLOW_UP';
             const requiredPhase = taskType === 'ASSIST' ? 'ASSISTANCE' : 'FOLLOW_UP';
-            if (existingPhase !== requiredPhase) {
+            const restartFollowUp =
+              existingStatus === 'REFERRAL_NOT_SUCCEEDED' && taskType === 'VISIT';
+            if (existingPhase !== requiredPhase && !restartFollowUp) {
               throw new BadRequestException(
                 taskType === 'ASSIST'
                   ? 'เคสนี้ยังไม่อยู่ในขั้นตอนให้ความช่วยเหลือ'
@@ -388,11 +418,18 @@ export class TaskLifecycleService {
               typeof existingCase.student_uuid === 'string'
                 ? clean(existingCase.student_uuid) || null
                 : null;
+            if (restartFollowUp) {
+              auditPhaseTransition = {
+                previousWorkflowPhaseCode: existingPhase,
+                nextWorkflowPhaseCode: 'FOLLOW_UP',
+              };
+            }
             await this.taskRepository.updateCaseStatus(
               caseId,
               'IN_PROGRESS',
               executor,
               currentActor,
+              restartFollowUp ? 'FOLLOW_UP' : undefined,
             );
           } else {
             const studentFirstName = clean(data.student_first_name);
@@ -427,39 +464,27 @@ export class TaskLifecycleService {
             );
             resolvedTargetSchoolId = resolvedTargetSchoolId ?? caseSchoolId;
 
-            const activeCase = studentUuid
-              ? await this.taskRepository.findActiveCaseByStudentUuid(
-                  studentUuid,
-                  currentActor,
-                  executor,
-                )
-              : null;
-            const activeCaseId = this.normalizeNumber(
-              activeCase?.id as string | number | null | undefined,
+            caseId = await this.taskRepository.createCase(
+              {
+                studentName,
+                studentFirstName,
+                studentLastName,
+                studentSchool: clean(data.student_school),
+                studentAddress,
+                addressLine,
+                addressProvince,
+                addressDistrict,
+                addressSubDistrict,
+                postalCode,
+                studentLat: this.normalizeNumber(data.student_lat),
+                studentLng: this.normalizeNumber(data.student_lng),
+                reasonFlagged: clean(data.reason_flagged),
+                studentUuid,
+                schoolId: caseSchoolId,
+                createdBy: resolveAuditActorId(currentActor),
+              },
+              executor,
             );
-            caseId =
-              activeCaseId ??
-              (await this.taskRepository.createCase(
-                {
-                  studentName,
-                  studentFirstName,
-                  studentLastName,
-                  studentSchool: clean(data.student_school),
-                  studentAddress,
-                  addressLine,
-                  addressProvince,
-                  addressDistrict,
-                  addressSubDistrict,
-                  postalCode,
-                  studentLat: this.normalizeNumber(data.student_lat),
-                  studentLng: this.normalizeNumber(data.student_lng),
-                  reasonFlagged: clean(data.reason_flagged),
-                  studentUuid,
-                  schoolId: caseSchoolId,
-                  createdBy: resolveAuditActorId(currentActor),
-                },
-                executor,
-              ));
 
             await this.taskRepository.updateCaseStatus(
               caseId,
@@ -527,6 +552,7 @@ export class TaskLifecycleService {
             grade: auditTargetGrade,
             room: auditTargetRoom,
             caseId: auditCaseId,
+            ...(auditPhaseTransition ?? {}),
           },
           ip: null,
         });
@@ -573,6 +599,19 @@ export class TaskLifecycleService {
         reused: assignmentReused,
       };
     } catch (err) {
+      const databaseError =
+        typeof err === 'object' && err !== null
+          ? (err as {
+              code?: string;
+              constraint?: string;
+              driverError?: { code?: string; constraint?: string };
+            })
+          : null;
+      const violation = databaseError?.driverError ?? databaseError;
+      if (violation?.code === '23505' && violation.constraint === 'uq_cases_active_student_uuid') {
+        this.logger.warn({ event: 'case_assignment_conflict', reason: 'ACTIVE_CASE_EXISTS' });
+        throw new ConflictException('นักเรียนมีเคสที่เปิดอยู่แล้ว กรุณาโหลดข้อมูลล่าสุด');
+      }
       const message = err instanceof Error ? err.message : String(err);
       this.logger.error(`createTask error: ${message}`);
       throw err;

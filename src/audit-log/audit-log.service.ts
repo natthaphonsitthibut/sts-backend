@@ -519,6 +519,8 @@ const ACTION_DEFINITIONS: Record<string, AuditActionDefinition> = {
       { key: 'schoolId', label: 'รหัสโรงเรียน' },
       { key: 'grade', label: 'ชั้นเรียน' },
       { key: 'room', label: 'ห้อง' },
+      { key: 'previousWorkflowPhaseCode', label: 'ขั้นตอนก่อนมอบหมาย' },
+      { key: 'nextWorkflowPhaseCode', label: 'ขั้นตอนหลังมอบหมาย' },
     ],
   },
   CASE_CREATE: {

@@ -534,8 +534,11 @@ export class TaskAccessService {
                 typeof prefill.parental_status_code === 'string'
                   ? prefill.parental_status_code
                   : null,
-              guardian_type_code:
-                typeof prefill.guardian_type_code === 'string' ? prefill.guardian_type_code : null,
+              guardian_type_codes: Array.isArray(prefill.guardian_type_codes)
+                ? prefill.guardian_type_codes.filter(
+                    (code): code is string => typeof code === 'string',
+                  )
+                : [],
               guardian_type_detail:
                 typeof prefill.guardian_type_detail === 'string'
                   ? prefill.guardian_type_detail
@@ -547,6 +550,10 @@ export class TaskAccessService {
               contact_channel_code:
                 typeof prefill.contact_channel_code === 'string'
                   ? prefill.contact_channel_code
+                  : null,
+              contact_channel_detail:
+                typeof prefill.contact_channel_detail === 'string'
+                  ? prefill.contact_channel_detail
                   : null,
               residence_environment_codes: Array.isArray(prefill.residence_environment_codes)
                 ? prefill.residence_environment_codes.filter(
