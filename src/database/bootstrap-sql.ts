@@ -1319,6 +1319,7 @@ export const HOME_VISIT_HOUSEHOLD_CONTEXT_SQL = `
     code VARCHAR(40) PRIMARY KEY,
     label_th VARCHAR(120) NOT NULL,
     sort_order SMALLINT NOT NULL,
+    is_exclusive BOOLEAN NOT NULL DEFAULT FALSE,
     requires_detail BOOLEAN NOT NULL DEFAULT FALSE,
     is_active BOOLEAN NOT NULL DEFAULT TRUE,
     ${AUDIT_COLUMNS_SQL},
@@ -1326,17 +1327,17 @@ export const HOME_VISIT_HOUSEHOLD_CONTEXT_SQL = `
     CONSTRAINT chk_guardian_type_sort_order CHECK (sort_order >= 0)
   );
   ${auditUpdatedAtTriggerSql('guardian_type_options')}
-  INSERT INTO guardian_type_options (code, label_th, sort_order, requires_detail)
+  INSERT INTO guardian_type_options
+    (code, label_th, sort_order, is_exclusive, requires_detail)
   VALUES
-    ('FATHER', 'บิดา', 10, FALSE),
-    ('MOTHER', 'มารดา', 20, FALSE),
-    ('FATHER_AND_MOTHER', 'บิดาและมารดา', 30, FALSE),
-    ('PATERNAL_GRANDPARENT', 'ปู่ / ย่า', 40, FALSE),
-    ('MATERNAL_GRANDPARENT', 'ตา / ยาย', 50, FALSE),
-    ('SIBLING', 'พี่ / น้อง', 60, FALSE),
-    ('RELATIVE', 'ญาติ', 70, FALSE),
-    ('OTHER', 'อื่น ๆ (ระบุในช่อง)', 80, TRUE),
-    ('NO_GUARDIAN', 'ไม่มีผู้ปกครอง', 90, FALSE)
+    ('FATHER', 'บิดา', 10, FALSE, FALSE),
+    ('MOTHER', 'มารดา', 20, FALSE, FALSE),
+    ('PATERNAL_GRANDPARENT', 'ปู่ / ย่า', 40, FALSE, FALSE),
+    ('MATERNAL_GRANDPARENT', 'ตา / ยาย', 50, FALSE, FALSE),
+    ('SIBLING', 'พี่ / น้อง', 60, FALSE, FALSE),
+    ('RELATIVE', 'ญาติ', 70, FALSE, FALSE),
+    ('OTHER', 'อื่น ๆ (ระบุในช่อง)', 80, FALSE, TRUE),
+    ('NO_GUARDIAN', 'ไม่มีผู้ปกครอง', 90, TRUE, FALSE)
   ON CONFLICT (code) DO NOTHING;
 
   CREATE TABLE IF NOT EXISTS residence_environment_options (
@@ -1364,7 +1365,6 @@ export const HOME_VISIT_HOUSEHOLD_CONTEXT_SQL = `
 
   ALTER TABLE task_submissions
     ADD COLUMN IF NOT EXISTS parental_status_code VARCHAR(40),
-    ADD COLUMN IF NOT EXISTS guardian_type_code VARCHAR(40),
     ADD COLUMN IF NOT EXISTS guardian_type_detail VARCHAR(200),
     ADD COLUMN IF NOT EXISTS residence_environment_detail TEXT;
   DO $home_visit_household_fks$
@@ -1379,23 +1379,12 @@ export const HOME_VISIT_HOUSEHOLD_CONTEXT_SQL = `
         REFERENCES parental_status_options(code)
         ON DELETE RESTRICT ON UPDATE CASCADE;
     END IF;
-    IF NOT EXISTS (
-      SELECT 1 FROM pg_constraint
-      WHERE conname = 'fk_task_submissions_guardian_type'
-    ) THEN
-      ALTER TABLE task_submissions
-        ADD CONSTRAINT fk_task_submissions_guardian_type
-        FOREIGN KEY (guardian_type_code)
-        REFERENCES guardian_type_options(code)
-        ON DELETE RESTRICT ON UPDATE CASCADE;
-    END IF;
   END $home_visit_household_fks$;
   ALTER TABLE task_submissions
     DROP CONSTRAINT IF EXISTS chk_task_submissions_guardian_type_detail;
   ALTER TABLE task_submissions
     ADD CONSTRAINT chk_task_submissions_guardian_type_detail CHECK (
-      guardian_type_detail IS NULL
-      OR (guardian_type_code IS NOT NULL AND length(btrim(guardian_type_detail)) > 0)
+      guardian_type_detail IS NULL OR length(btrim(guardian_type_detail)) > 0
     );
   ALTER TABLE task_submissions
     DROP CONSTRAINT IF EXISTS chk_task_submissions_residence_environment_detail;
@@ -1419,6 +1408,18 @@ export const HOME_VISIT_HOUSEHOLD_CONTEXT_SQL = `
   );
   CREATE INDEX IF NOT EXISTS idx_task_submission_residence_environments_code
     ON task_submission_residence_environments (residence_environment_code);
+
+  CREATE TABLE IF NOT EXISTS task_submission_guardian_types (
+    task_submission_id INTEGER NOT NULL
+      REFERENCES task_submissions(id) ON DELETE CASCADE ON UPDATE CASCADE,
+    guardian_type_code VARCHAR(40) NOT NULL
+      REFERENCES guardian_type_options(code) ON DELETE RESTRICT ON UPDATE CASCADE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    created_by INTEGER REFERENCES users(id) ON DELETE SET NULL ON UPDATE CASCADE,
+    PRIMARY KEY (task_submission_id, guardian_type_code)
+  );
+  CREATE INDEX IF NOT EXISTS idx_task_submission_guardian_types_code
+    ON task_submission_guardian_types (guardian_type_code);
 `;
 
 export const OPERATIONAL_STATUS_CATALOG_TABLES_SQL = `
