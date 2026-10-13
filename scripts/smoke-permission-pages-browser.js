@@ -13,7 +13,9 @@
  *
  * Fixtures: one AUTOMATED_TEST account per scope, disabled at the end.
  * SMOKE_SCOPE=school|province|global runs one scope; SMOKE_PERMISSIONS=a,b
- * narrows the permissions.
+ * narrows the permissions. SMOKE_SCOPE=grade is an extra, opt-in scope: the
+ * school narrowed to one grade level, for the pages a teacher's own group holds
+ * (run it with SMOKE_PERMISSIONS=attendance).
  */
 const fs = require('fs');
 const os = require('os');
@@ -173,6 +175,26 @@ async function main() {
           ? JSON.parse(province.data_scope)
           : province.data_scope;
       scopes.splice(1, 0, { key: 'province', role: province.role, scope });
+    }
+    if (ONLY_SCOPE === 'grade') {
+      const [grade] = await ds.query(
+        `SELECT classroom.grade_level_id
+         FROM school_classrooms classroom
+         JOIN school_terms term ON term.id = classroom.school_term_id AND term.status = 'ACTIVE'
+         WHERE classroom.school_id = $1 AND classroom.classroom_status = 'ACTIVE'
+           AND classroom.deleted_at IS NULL
+         GROUP BY classroom.grade_level_id ORDER BY count(*) DESC, classroom.grade_level_id LIMIT 1`,
+        [school.school_id],
+      );
+      assert(grade, 'the school has no active classroom to narrow the scope to');
+      scopes.push({
+        key: 'grade',
+        role: school.role,
+        scope: {
+          school_ids: [Number(school.school_id)],
+          grade_levels: [Number(grade.grade_level_id)],
+        },
+      });
     }
     if (ONLY_SCOPE) scopes.splice(0, scopes.length, ...scopes.filter((x) => x.key === ONLY_SCOPE));
     console.log('scopes', JSON.stringify(scopes));
