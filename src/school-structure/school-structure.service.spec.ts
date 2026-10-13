@@ -193,6 +193,69 @@ describe('SchoolStructureService', () => {
     }
   });
 
+  it('answers the pickers inside a scope narrowed to grades or rooms', async () => {
+    // เช็กชื่อ reads both pickers; a teacher kept to one room used to meet a 403.
+    const { service, repository } = setup();
+    const narrowed = {
+      ...SCHOOL_ACTOR,
+      roles: [],
+      permissions: ['attendance'],
+      data_scope: { school_ids: [1001], grade_levels: [7], room_ids: ['2'] },
+    };
+
+    await expect(service.listSchools(narrowed)).resolves.toEqual({
+      data: [expect.objectContaining({ id: 1001 })],
+    });
+    // Grades and rooms are not columns of a school.
+    expect(repository.listScopedSchools).toHaveBeenLastCalledWith({ school_ids: [1001] });
+
+    await service.listClassroomOptions({ schoolId: 1001 }, narrowed);
+    expect(repository.isSchoolInScope).toHaveBeenLastCalledWith(1001, { school_ids: [1001] });
+    expect(repository.listClassroomOptions).toHaveBeenLastCalledWith(1001, undefined, undefined, {
+      gradeLevelIds: [7],
+      roomNumbers: [2],
+    });
+  });
+
+  it('keeps the narrowed pickers behind the permission and the school scope', async () => {
+    const { service, repository } = setup();
+    const narrowedScope = { school_ids: [1001], grade_levels: [7] };
+
+    // No page that reads the pickers: still refused.
+    await expect(
+      service.listSchools({
+        ...SCHOOL_ACTOR,
+        roles: [],
+        permissions: ['home'],
+        data_scope: narrowedScope,
+      }),
+    ).rejects.toThrow(ForbiddenException);
+
+    // Another school's classrooms: not found, and never queried.
+    const narrowed = {
+      ...SCHOOL_ACTOR,
+      roles: [],
+      permissions: ['attendance'],
+      data_scope: narrowedScope,
+    };
+    repository.isSchoolInScope.mockResolvedValueOnce(false);
+    await expect(service.listClassroomOptions({ schoolId: 2002 }, narrowed)).rejects.toThrow(
+      NotFoundException,
+    );
+    expect(repository.listClassroomOptions).not.toHaveBeenCalled();
+
+    // A self-only account holds no school and no classroom.
+    const selfOnly = { ...narrowed, data_scope: { school_ids: [1001], own_only: true } };
+    await expect(service.listSchools(selfOnly)).resolves.toEqual({ data: [] });
+    await expect(service.listClassroomOptions({ schoolId: 1001 }, selfOnly)).resolves.toEqual({
+      data: [],
+    });
+    expect(repository.listScopedSchools).not.toHaveBeenCalled();
+
+    // Writes and every other read keep refusing a narrowed scope.
+    await expect(service.getClassroom(1, narrowed)).rejects.toThrow(ForbiddenException);
+  });
+
   it('deactivates a legacy school without revalidating unchanged administrative data', async () => {
     const { service, repository } = setup();
 

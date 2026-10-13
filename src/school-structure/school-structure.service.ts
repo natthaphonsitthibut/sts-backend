@@ -76,6 +76,18 @@ export const CLASSROOM_ATTENDANCE_HISTORY_READ_PERMISSIONS = [
   'attendance',
 ] as const;
 
+/** The school dimensions of a scope; grades and rooms are not columns of a school. */
+function areaScopeOf(scope: DataScope): DataScope {
+  const { grade_levels: _gradeLevels, room_ids: _roomIds, ...area } = scope;
+  void _gradeLevels;
+  void _roomIds;
+  return area;
+}
+
+function numericScopeValues(values: readonly unknown[]): number[] {
+  return values.map((value) => Number(value)).filter((value) => Number.isInteger(value));
+}
+
 function roomNumberFromCode(roomCode: string): number {
   const normalized = roomCode.trim();
   const roomNumber = Number(normalized);
@@ -111,7 +123,7 @@ export class SchoolStructureService {
     private readonly notificationsService: NotificationsService,
   ) {}
 
-  private resolveScope(actor: AuthenticatedRequestUser, allowRelatedRead = false): DataScope {
+  private assertStructureAccess(actor: AuthenticatedRequestUser, allowRelatedRead: boolean): void {
     const canManageStructure = hasPermission(
       actor.roles,
       actor.permissions,
@@ -137,6 +149,10 @@ export class SchoolStructureService {
     if (!canManageStructure && !canUseRelatedRead) {
       throw new ForbiddenException('ไม่มีสิทธิ์จัดการโครงสร้างโรงเรียน');
     }
+  }
+
+  private resolveScope(actor: AuthenticatedRequestUser, allowRelatedRead = false): DataScope {
+    this.assertStructureAccess(actor, allowRelatedRead);
     const scope = normalizeDataScope(actor.data_scope) ?? {};
     if (
       scope.own_only === true ||
@@ -147,6 +163,30 @@ export class SchoolStructureService {
       throw new ForbiddenException('ขอบเขตบัญชีไม่อนุญาตให้จัดการโครงสร้างระดับโรงเรียน');
     }
     if (scope.global !== true && !hasAreaDataScope(scope)) {
+      throw new ForbiddenException('ไม่พบขอบเขตโรงเรียนที่ใช้งานได้');
+    }
+    return scope;
+  }
+
+  /**
+   * Scope for the school and classroom pickers. Unlike `resolveScope`, an
+   * account narrowed to grades or rooms is answered, with only what its scope
+   * holds: เช็กชื่อ reads both pickers, and a teacher kept to one room met a 403
+   * behind a page the account holds. `null` means nothing is in scope (a
+   * self-only account), which the pickers answer with an empty list.
+   */
+  private resolvePickerScope(actor: AuthenticatedRequestUser): DataScope | null {
+    const scope = normalizeDataScope(actor.data_scope) ?? {};
+    const narrowed =
+      scope.own_only === true ||
+      (scope.grade_levels?.length ?? 0) > 0 ||
+      (scope.room_ids?.length ?? 0) > 0;
+    if (!narrowed) return this.resolveScope(actor, true);
+
+    // Same permission door as every other related read; only the scope differs.
+    this.assertStructureAccess(actor, true);
+    if (scope.own_only === true) return null;
+    if (!hasAreaDataScope(scope)) {
       throw new ForbiddenException('ไม่พบขอบเขตโรงเรียนที่ใช้งานได้');
     }
     return scope;
@@ -257,7 +297,8 @@ export class SchoolStructureService {
   }
 
   async listSchools(actor: AuthenticatedRequestUser) {
-    const rows = await this.repository.listScopedSchools(this.resolveScope(actor, true));
+    const scope = this.resolvePickerScope(actor);
+    const rows = scope ? await this.repository.listScopedSchools(areaScopeOf(scope)) : [];
     return {
       data: rows.map((row) => ({
         id: row.id,
@@ -676,11 +717,19 @@ export class SchoolStructureService {
     query: ListSchoolClassroomOptionsDto,
     actor: AuthenticatedRequestUser,
   ) {
-    await this.assertSchoolAccess(query.schoolId, actor, true);
+    const scope = this.resolvePickerScope(actor);
+    if (!scope) return { data: [] };
+    if (!(await this.repository.isSchoolInScope(query.schoolId, areaScopeOf(scope)))) {
+      throw new NotFoundException('ไม่พบโรงเรียนในขอบเขตของคุณ');
+    }
     const rows = await this.repository.listClassroomOptions(
       query.schoolId,
       query.termId,
       query.gradeLevelId,
+      {
+        gradeLevelIds: scope.grade_levels?.length ? numericScopeValues(scope.grade_levels) : null,
+        roomNumbers: scope.room_ids?.length ? numericScopeValues(scope.room_ids) : null,
+      },
     );
     return {
       data: rows.map((row) => ({
