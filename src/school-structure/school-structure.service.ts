@@ -127,6 +127,12 @@ export class SchoolStructureService {
         'teachers',
         // the view-only ห้องเรียน page (directors): lists, cover, roster and pins, never edits
         'classrooms',
+        // Their pages read the school picker, the classroom options and the
+        // teacher options through routes whose decorators already name them;
+        // leaving them out here answered 403 behind a page the account holds.
+        'manage-teachers',
+        'manage-subjects',
+        'attendance',
       ].some((permission) => hasPermission(actor.roles, actor.permissions, permission));
     if (!canManageStructure && !canUseRelatedRead) {
       throw new ForbiddenException('ไม่มีสิทธิ์จัดการโครงสร้างโรงเรียน');

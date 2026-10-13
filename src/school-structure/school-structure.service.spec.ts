@@ -1,4 +1,6 @@
 import { BadRequestException, ForbiddenException, NotFoundException } from '@nestjs/common';
+import { ANY_PERMISSIONS_KEY } from '../auth/permissions.decorator';
+import { SchoolStructureController } from './school-structure.controller';
 import { SchoolStructureService } from './school-structure.service';
 
 const SCHOOL_ACTOR = {
@@ -171,6 +173,24 @@ describe('SchoolStructureService', () => {
       data: [{ id: 1001, name: 'โรงเรียนทดสอบ', subDistrict: 'สุเทพ' }],
     });
     expect(repository.listScopedSchools).toHaveBeenCalledWith({ school_ids: [1001] });
+  });
+
+  it('answers the school picker for every permission its route names', async () => {
+    // The route's decorator and the service keep separate lists. They drifted
+    // once, and a page whose permission the route named opened onto a 403.
+    const routePermissions = Reflect.getMetadata(
+      ANY_PERMISSIONS_KEY,
+      Object.getOwnPropertyDescriptor(SchoolStructureController.prototype, 'listSchools')
+        ?.value as () => unknown,
+    ) as string[];
+
+    expect(routePermissions.length).toBeGreaterThan(0);
+    for (const permission of routePermissions) {
+      const { service } = setup();
+      await expect(
+        service.listSchools({ ...SCHOOL_ACTOR, roles: [], permissions: [permission] }),
+      ).resolves.toEqual({ data: [expect.objectContaining({ id: 1001 })] });
+    }
   });
 
   it('deactivates a legacy school without revalidating unchanged administrative data', async () => {
