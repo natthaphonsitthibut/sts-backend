@@ -387,6 +387,30 @@ describe('UsersPolicyService functional roles and data scope', () => {
     expect(service.canManageUser(director, scopedTeacher, roleMap)).toBe(true);
   });
 
+  it('lets fellow admins open each other read-only, inside the actor scope only', () => {
+    const director: ActorContext = {
+      ...scopedAdmin,
+      id: 3,
+      username: 'director',
+      roles: ['DIRECTOR'],
+      permissions: ['home', 'manage-users-list'],
+    };
+    const peer = { id: 4, role: 'DIRECTOR', roles: ['DIRECTOR'], data_scope: director.data_scope };
+
+    expect(service.canManageUser(director, peer, roleMap)).toBe(false);
+    expect(service.canViewUser(director, peer, roleMap)).toBe(true);
+    // The same group in someone else's scope stays closed.
+    expect(service.canViewUser(director, { ...peer, data_scope: { global: true } }, roleMap)).toBe(
+      false,
+    );
+    // A different group the actor cannot manage is not opened by this rule.
+    expect(
+      service.canViewUser(director, { ...peer, role: 'ADMIN', roles: ['ADMIN'] }, roleMap),
+    ).toBe(false);
+    // What it manages, it also views.
+    expect(service.canViewUser(director, scopedTeacher, roleMap)).toBe(true);
+  });
+
   it('always allows an actor to manage its own account without widening other users', () => {
     const student: ActorContext = {
       id: 7,

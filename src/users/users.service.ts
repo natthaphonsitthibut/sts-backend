@@ -133,7 +133,7 @@ export class UsersService {
     if (!user?.photo_storage_key) {
       throw new NotFoundException('ไม่พบรูปประจำตัวผู้ใช้งาน');
     }
-    if (!(await this.getUserById(id, actor))) {
+    if (!(await this.getUserById(id, actor, 'view'))) {
       throw new NotFoundException('ไม่พบผู้ใช้งาน');
     }
     const result = await this.storage.resolve(user.photo_storage_key);
@@ -339,7 +339,7 @@ export class UsersService {
       await this.usersRepository.listUsersPaginated({
         actorId: currentActor.id,
         actorRole,
-        // The role's defaults, not the account's own list: `canManageUser`
+        // The role's defaults, not the account's own list: `canViewUser`
         // compares the same ceiling, so the list and the detail page agree.
         actorRolePages: (actorRole ? roleMap.get(actorRole)?.default_permissions : null) ?? [],
         actorScope: currentActor.data_scope,
@@ -372,6 +372,9 @@ export class UsersService {
         photo_url: photoStorageKey
           ? `/api/users/${user.id}/photo?v=${encodeMediaVersion(user.updated_at)}`
           : null,
+        // A fellow admin is listed to be read, not managed: the page offers
+        // its edit and deactivate actions only where this is true.
+        can_manage: this.usersPolicyService.canManageUser(currentActor, hydrated, roleMap),
       };
     });
 
@@ -385,7 +388,12 @@ export class UsersService {
     };
   }
 
-  async getUserById(id: number, actor?: ActorContext) {
+  /**
+   * `access` is what the caller is about to do with the record: `manage` for
+   * anything that edits it or reveals what it masks, `view` for the read-only
+   * record and its photo, which fellow admins may open too.
+   */
+  async getUserById(id: number, actor?: ActorContext, access: 'manage' | 'view' = 'manage') {
     const roleMap = await this.usersPolicyService.getRoleMap();
     const row = await this.usersRepository.findUserById(id);
     if (!row) {
@@ -393,7 +401,11 @@ export class UsersService {
     }
 
     const user = this.usersPolicyService.hydrateUserPermissions(row, roleMap);
-    if (actor && !this.usersPolicyService.canManageUser(actor, user, roleMap)) {
+    const canManage = !actor || this.usersPolicyService.canManageUser(actor, user, roleMap);
+    const allowed =
+      canManage ||
+      (access === 'view' && actor && this.usersPolicyService.canViewUser(actor, user, roleMap));
+    if (!allowed) {
       throw new ForbiddenException('ไม่มีสิทธิ์เข้าถึงข้อมูลผู้ใช้งานนี้');
     }
 
@@ -409,12 +421,13 @@ export class UsersService {
         ? `/api/users/${user.id}/photo?v=${encodeMediaVersion(user.updated_at)}`
         : null,
       PersonID_Onec: normalizeNationalIdValue(user.PersonID_Onec ?? null) || null,
+      can_manage: canManage,
     };
     return resolvedUser;
   }
 
   async getUserDetailById(id: number, actor?: ActorContext) {
-    const user = await this.getUserById(id, actor);
+    const user = await this.getUserById(id, actor, 'view');
     if (!user) {
       return null;
     }
@@ -472,6 +485,7 @@ export class UsersService {
       deactivation_note: user.deactivation_note ?? null,
       created_at: user.created_at ?? null,
       has_profile_location: hasProfileLocation,
+      can_manage: user.can_manage,
       data_scope_labels: {
         schools: schoolLabels,
         gradeLevels: gradeLevelLabels,

@@ -74,10 +74,10 @@ describe('UsersRepository user list queries', () => {
     expect(grantable).not.toContain('settings');
     expect(listCall.params).toContain('ผู้อำนวยการ');
     expect(listCall.sql).toMatch(/r\.label = \$\d+/);
-    // Its fellow admins are not its to manage, so listing them only led to a
-    // detail page that answered 403.
-    expect(listCall.sql).toContain('r.name IS DISTINCT FROM $2');
-    expect(listCall.sql).not.toContain('OR r.name = $2');
+    // Its fellow admins are listed to be read (owner, 2026-10-13); the detail
+    // opens them read-only and `can_manage` keeps the write actions off.
+    expect(listCall.sql).toContain('OR r.name = $2');
+    expect(listCall.sql).not.toContain('r.name IS DISTINCT FROM');
   });
 
   it('filters rows by lifecycle status without narrowing summary counts', async () => {

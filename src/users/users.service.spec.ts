@@ -52,6 +52,7 @@ describe('UsersService', () => {
       | 'getRoleMap'
       | 'hydrateUserPermissions'
       | 'canManageUser'
+      | 'canViewUser'
       | 'assertAssignablePayload'
       | 'normalizePermissionList'
       | 'normalizeRole'
@@ -134,6 +135,7 @@ describe('UsersService', () => {
         data_scope: { school_ids: [10010002], own_only: true },
       }),
       canManageUser: jest.fn().mockReturnValue(true),
+      canViewUser: jest.fn().mockReturnValue(true),
       assertAssignablePayload: jest.fn().mockResolvedValue(undefined),
       normalizePermissionList: jest
         .fn()
@@ -616,6 +618,33 @@ describe('UsersService', () => {
         targetId: '77',
       }),
     );
+  });
+
+  it('opens a fellow admin read-only: the record answers, its reveals do not', async () => {
+    const peerActor = { ...actor, permissions: ['manage-users-list'] };
+    usersPolicyService.canManageUser.mockReturnValue(false);
+    usersPolicyService.canViewUser.mockReturnValue(true);
+
+    await expect(service.getUserDetailById(77, peerActor)).resolves.toEqual(
+      expect.objectContaining({ id: 77, can_manage: false }),
+    );
+    // The edit form's read and both reveals still ask for management.
+    await expect(service.getUserById(77, peerActor)).rejects.toThrow(ForbiddenException);
+    await expect(
+      service.revealUserNationalId(
+        77,
+        peerActor,
+        { reason_code: 'VERIFY_DATA' },
+        { ip: null, userAgent: null, requestId: 'request-1' },
+      ),
+    ).rejects.toThrow(ForbiddenException);
+    expect(piiAccessLog.record).not.toHaveBeenCalled();
+
+    usersPolicyService.canViewUser.mockReturnValue(false);
+    await expect(service.getUserDetailById(77, peerActor)).rejects.toThrow(ForbiddenException);
+
+    usersPolicyService.canManageUser.mockReturnValue(true);
+    usersPolicyService.canViewUser.mockReturnValue(true);
   });
 
   it('denies national-id reveal outside the actor management scope', async () => {
