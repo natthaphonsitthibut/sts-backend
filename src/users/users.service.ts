@@ -339,7 +339,9 @@ export class UsersService {
       await this.usersRepository.listUsersPaginated({
         actorId: currentActor.id,
         actorRole,
-        actorPermissions: currentActor.permissions || [],
+        // The role's defaults, not the account's own list: `canManageUser`
+        // compares the same ceiling, so the list and the detail page agree.
+        actorRolePages: (actorRole ? roleMap.get(actorRole)?.default_permissions : null) ?? [],
         actorScope: currentActor.data_scope,
         excludeRole: filters.excludeRole,
         roleLabel: filters.roleLabel,

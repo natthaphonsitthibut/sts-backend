@@ -37,7 +37,7 @@ describe('UsersRepository user list queries', () => {
     await repository.listUsersPaginated({
       actorId: 1,
       actorRole: 'ADMIN',
-      actorPermissions: ['home', 'manage-users-list'],
+      actorRolePages: ['home', 'manage-users-list'],
       sortBy: 'affiliation',
       sortOrder: 'asc',
     });
@@ -63,7 +63,7 @@ describe('UsersRepository user list queries', () => {
     await repository.listUsersPaginated({
       actorId: 1,
       actorRole: 'S1_BASE_ADMIN',
-      actorPermissions: ['home', 'manage-users-list'],
+      actorRolePages: ['home', 'manage-users-list'],
       roleLabel: 'ผู้อำนวยการ',
     });
 
@@ -74,6 +74,10 @@ describe('UsersRepository user list queries', () => {
     expect(grantable).not.toContain('settings');
     expect(listCall.params).toContain('ผู้อำนวยการ');
     expect(listCall.sql).toMatch(/r\.label = \$\d+/);
+    // Its fellow admins are not its to manage, so listing them only led to a
+    // detail page that answered 403.
+    expect(listCall.sql).toContain('r.name IS DISTINCT FROM $2');
+    expect(listCall.sql).not.toContain('OR r.name = $2');
   });
 
   it('filters rows by lifecycle status without narrowing summary counts', async () => {
@@ -98,7 +102,7 @@ describe('UsersRepository user list queries', () => {
     await repository.listUsersPaginated({
       actorId: 1,
       actorRole: 'ADMIN',
-      actorPermissions: ['home', 'manage-users-list'],
+      actorRolePages: ['home', 'manage-users-list'],
       accountStatus: 'ACTIVE',
     });
 
@@ -131,7 +135,7 @@ describe('UsersRepository user list queries', () => {
     await repository.listUsersPaginated({
       actorId: 1,
       actorRole: 'ADMIN',
-      actorPermissions: ['*'],
+      actorRolePages: ['*'],
       realm: 'school',
     });
 
