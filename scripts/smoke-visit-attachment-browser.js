@@ -512,7 +512,7 @@ async function main() {
          SELECT 1 FROM cases current_case
          WHERE current_case.student_uuid = enrollment.student_uuid
            AND current_case.deleted_at IS NULL
-           AND current_case.status IN ('OPEN','IN_PROGRESS','PENDING_REVIEW','STUDENT_NOT_FOUND')
+           AND current_case.status IN ('OPEN','IN_PROGRESS','PENDING_REVIEW','STUDENT_NOT_FOUND','AWAITING_REFERRAL','AWAITING_REFERRAL_OUTCOME','REFERRAL_NOT_SUCCEEDED')
        )
        ORDER BY enrollment.student_uuid LIMIT 1`,
     );
@@ -531,7 +531,7 @@ async function main() {
            SELECT 1 FROM cases current_case
            WHERE current_case.student_uuid = enrollment.student_uuid
              AND current_case.deleted_at IS NULL
-             AND current_case.status IN ('OPEN','IN_PROGRESS','PENDING_REVIEW','STUDENT_NOT_FOUND')
+             AND current_case.status IN ('OPEN','IN_PROGRESS','PENDING_REVIEW','STUDENT_NOT_FOUND','AWAITING_REFERRAL','AWAITING_REFERRAL_OUTCOME','REFERRAL_NOT_SUCCEEDED')
          )
        ORDER BY enrollment."SchoolID_Onec", enrollment.student_uuid LIMIT 1`,
       [scopedEnrollment.school_id],
@@ -545,7 +545,7 @@ async function main() {
     // page-bound, so holding `dashboard` — which opens /tasks/:id — has to be
     // enough to open the attachments that page renders. `students` is left out
     // so the check fails if the file route is ever tightened past its page.
-    const permissions = ['home', 'dashboard'];
+    const permissions = ['home', 'dashboard', 'case:assign', 'case:review'];
     const [actor] = await dataSource.query(
       `INSERT INTO users (username, password, "FirstName", "LastName", status, permissions,
          role, data_scope, must_change_password, data_origin_code)

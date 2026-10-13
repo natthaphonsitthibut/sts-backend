@@ -150,8 +150,8 @@ const ROLE_OWNER_AREA_JOIN_SQL = `
 export interface UserListFilters {
   actorId: number;
   actorRole: string | null;
-  /** Pages the actor holds — a role is manageable only if it reaches no further. */
-  actorPermissions: string[];
+  /** The actor role's default pages — the ceiling `canViewUser` compares. */
+  actorRolePages: string[];
   actorScope?: DataScope;
   excludeRole?: string;
   roleLabel?: string;
@@ -624,22 +624,20 @@ export class UsersRepository {
     params.push(filters.actorRole);
     const actorRolePlaceholder = params.length;
 
-    // A row is manageable when its role reaches no page the actor could not
-    // grant — the same rule as `canManageRole`, so an account admin sees the
-    // accounts it may manage even where they open pages it does not. A
-    // wildcard holder manages everyone, which is what '*' has always meant.
-    const hasWildcard = filters.actorPermissions.some(
+    // A row is listed when the actor may open it: its role reaches no page the
+    // actor's role could not grant, or it is the actor's own role, which fellow
+    // admins read but do not manage (owner, 2026-10-13) — `canViewUser` clause
+    // for clause, because a row listed here that the detail then refuses opens
+    // onto a 403. A wildcard holder reaches every role, which is what '*' has
+    // always meant.
+    const hasWildcard = filters.actorRolePages.some(
       (permission) => permission === '*' || permission === 'ALL',
     );
     const manageConditions: string[] = [];
     if (!hasWildcard) {
-      params.push(JSON.stringify([...grantablePages(filters.actorPermissions)]));
-      manageConditions.push(
-        `(
-          COALESCE(r.default_permissions, '[]'::jsonb) <@ $${params.length}::jsonb
-          OR r.name = $${actorRolePlaceholder}
-        )`,
-      );
+      params.push(JSON.stringify([...grantablePages(filters.actorRolePages)]));
+      const grantable = `COALESCE(r.default_permissions, '[]'::jsonb) <@ $${params.length}::jsonb`;
+      manageConditions.push(`(${grantable} OR r.name = $${actorRolePlaceholder})`);
     }
     const scopeQuery = this.buildJsonScopeSubsetQuery(
       scopeSql,
@@ -654,7 +652,7 @@ export class UsersRepository {
     conditions.push(`
       (
         u.id = $${actorIdPlaceholder}
-        OR (${manageConditions.join(' AND ')})
+        OR (${manageConditions.join(' AND ') || 'TRUE'})
       )
     `);
 

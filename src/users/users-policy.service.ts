@@ -412,6 +412,34 @@ export class UsersPolicyService {
     return this.isScopeSubsetOfActor(target.data_scope, actor.data_scope);
   }
 
+  /**
+   * Whether the actor may open the account's record. Everything it manages, plus
+   * the accounts of its own group inside its scope: fellow admins see each other
+   * read-only (owner, 2026-10-13), and every write still asks `canManageUser`.
+   */
+  canViewUser(
+    actor: ActorContext,
+    target: {
+      id?: number | null;
+      role?: string | null;
+      roles?: string[] | null;
+      data_scope?: unknown;
+    },
+    roleMap?: Map<string, RoleDefinition>,
+  ): boolean {
+    if (this.canManageUser(actor, target, roleMap)) {
+      return true;
+    }
+
+    const actorRole = this.getPrimaryRole({ roles: actor.roles });
+    const targetRole = this.getPrimaryRole(target);
+    if (!actorRole || targetRole !== actorRole) {
+      return false;
+    }
+
+    return this.isScopeSubsetOfActor(target.data_scope, actor.data_scope);
+  }
+
   async assertAssignablePayload(
     actor: ActorContext,
     data: Pick<CreateUserDto | UpdateUserDto, 'role' | 'roles' | 'permissions' | 'data_scope'>,

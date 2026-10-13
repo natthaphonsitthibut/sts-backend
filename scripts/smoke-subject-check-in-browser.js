@@ -22,6 +22,7 @@ const {
 } = require('../dist/classroom-attendance-links/classroom-link-session.store');
 const { RiskProfileService } = require('../dist/risk-profile/risk-profile.service');
 const { FILE_STORAGE_ADAPTER } = require('../dist/files/storage/file-storage.types');
+const { assertActionColumnsFit } = require('./smoke-table-action-columns-browser');
 
 if (process.env.NODE_ENV === 'production') {
   throw new Error('Refusing to run browser smoke in production');
@@ -1612,6 +1613,12 @@ async function main() {
       ),
       'Link management tab did not offer the usage detail action',
     );
+    // Four tools to a row: the column has to hold them all at every desktop
+    // width. The last width is the one the rest of this smoke runs at.
+    await assertActionColumnsFit(client, 'วันหมดอายุ', 'ลิงก์ที่มอบหมาย', {
+      widths: [1024, 1280, 1366],
+      evaluate: (expression) => evaluate(client, expression),
+    });
     // A page of its own, not a dialog: one link can collect a fortnight of
     // openings and a register per lesson, which is more than a box should hold.
     const linkTabUrl = String(

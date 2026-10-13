@@ -561,13 +561,28 @@ export class SchoolStructureRepository {
     };
   }
 
+  /**
+   * `narrowedTo` keeps an account scoped to grades or rooms to its own
+   * classrooms. `room_ids` in a data scope is the legacy per-grade room number,
+   * never a classroom id, so it is matched against `legacy_room_number`. An
+   * empty list is a scope that holds nothing, not one that holds everything.
+   */
   async listClassroomOptions(
     schoolId: number,
     termId?: number,
     gradeLevelId?: number,
+    narrowedTo?: { gradeLevelIds: number[] | null; roomNumbers: number[] | null },
   ): Promise<SchoolClassroomOptionRow[]> {
     const params: unknown[] = [schoolId];
     const conditions = ['school_id = $1', `classroom_status = 'ACTIVE'`, 'deleted_at IS NULL'];
+    if (narrowedTo?.gradeLevelIds) {
+      params.push(narrowedTo.gradeLevelIds);
+      conditions.push(`grade_level_id = ANY($${params.length}::int[])`);
+    }
+    if (narrowedTo?.roomNumbers) {
+      params.push(narrowedTo.roomNumbers);
+      conditions.push(`legacy_room_number = ANY($${params.length}::int[])`);
+    }
     if (termId) {
       params.push(termId);
       conditions.push(`school_term_id = $${params.length}`);
