@@ -4,8 +4,9 @@
  * - on งานส่งต่อ, กลุ่มเสี่ยง, จัดการครู and จัดการกลุ่มเมนู every row's buttons
  *   sit inside their cell at three desktop widths (a percentage-wide column
  *   used to go narrower than the buttons and cut the last one off);
- * - จัดการผู้ใช้งาน lists only accounts whose detail the same actor can open —
- *   a fellow ผู้ดูแลระบบ is not listed, and opening it directly is still a 403.
+ * - จัดการผู้ใช้งาน lists only accounts whose detail the same actor can open; a
+ *   fellow ผู้ดูแลระบบ is listed and opens read-only — no edit, no deactivate, no
+ *   reveal on screen, and the routes behind those buttons still answer 403.
  *
  * The fifth table, ลิงก์ที่มอบหมาย, needs a teacher's issued assignment and is
  * measured inside smoke-subject-check-in-browser.js with `assertActionColumnsFit`.
@@ -174,6 +175,10 @@ async function main() {
     };
     const actorId = await upsert(USERNAME, 'คอลัมน์เครื่องมือ');
     const peerId = await upsert(PEER_USERNAME, 'ผู้ดูแลร่วมโรงเรียน');
+    // The list leaves AUTOMATED_TEST accounts out, and this database holds no
+    // two real admins of one group, so the peer wears a listed origin for the
+    // run. The cleanup below tags it back and disables it.
+    await dataSource.query(`UPDATE users SET data_origin_code = 'DEMO' WHERE id = $1`, [peerId]);
 
     let cookie = null;
     sessionCookieService.setSession(
@@ -216,19 +221,116 @@ async function main() {
 
     // ---- the list shows only accounts the actor can open
     console.log('จัดการผู้ใช้งาน: list agrees with detail');
-    const list = await api('/api/users?page=1&limit=50');
-    assert(list.status === 200, `user list answered ${list.status}: ${JSON.stringify(list.body)}`);
-    const listedIds = list.body.data.map((user) => Number(user.id));
+    const list = await api(
+      '/api/users?page=1&limit=50&searchTerm=' + encodeURIComponent(PEER_USERNAME),
+    );
+    const everyone = await api('/api/users?page=1&limit=50');
+    assert(
+      everyone.status === 200,
+      `user list answered ${everyone.status}: ${JSON.stringify(everyone.body)}`,
+    );
+    const listedIds = everyone.body.data.map((user) => Number(user.id));
     assert(listedIds.includes(actorId), 'the actor is missing from its own list');
-    assert(!listedIds.includes(peerId), 'a fellow ผู้ดูแลระบบ is still listed');
     assert(listedIds.length > 1, 'the list holds nobody but the actor');
     for (const id of listedIds) {
       const detail = await api(`/api/users/${id}/detail`);
       assert(detail.status === 200, `listed user ${id} opened onto ${detail.status}`);
     }
+    // A fellow admin is the actor's to read, not to manage (owner, 2026-10-13).
+    const peerRow = (list.body?.data ?? []).find((user) => Number(user.id) === peerId);
+    assert(
+      peerRow,
+      `a fellow ผู้ดูแลระบบ is not listed: ${list.status} ${JSON.stringify(list.body).slice(0, 300)}`,
+    );
+    assert(peerRow.can_manage === false, 'the list calls a fellow ผู้ดูแลระบบ manageable');
     const peerDetail = await api(`/api/users/${peerId}/detail`);
-    assert(peerDetail.status === 403, `peer detail answered ${peerDetail.status}, expected 403`);
-    console.log(`  ${listedIds.length} listed, each opens; fellow admin hidden and 403`);
+    assert(peerDetail.status === 200, `peer detail answered ${peerDetail.status}, expected 200`);
+    assert(peerDetail.body.can_manage === false, 'peer detail calls itself manageable');
+    const peerEdit = await api(`/api/users/${peerId}`);
+    assert(peerEdit.status === 403, `peer edit read answered ${peerEdit.status}, expected 403`);
+    const managed = everyone.body.data.find(
+      (user) => Number(user.id) !== actorId && user.can_manage === true,
+    );
+    assert(managed, 'the list holds nobody the actor manages');
+
+    // On screen: the peer's row and record offer nothing the server refuses.
+    const searchFor = async (text) => {
+      await client.evaluate(`(() => {
+        const input = document.querySelector('input[placeholder^="ค้นหาชื่อผู้ใช้งาน"]');
+        Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(input, ${JSON.stringify(text)});
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+        return true;
+      })()`);
+    };
+    // The row shows the person's name, so it is recognised by its record link.
+    const rowButtons = (id) =>
+      client.evaluate(`(() => {
+        const rows = [...document.querySelectorAll('[data-slot="data-table"] tbody tr')];
+        if (rows.length !== 1 || !rows[0].querySelector('a[href$="/manage-users/${id}"]')) return null;
+        return {
+          buttons: [...rows[0].querySelectorAll('td:last-child button')].map((b) => b.getAttribute('aria-label')),
+        };
+      })()`);
+    await navigate(client, '/manage-users');
+    await waitFor(
+      async () =>
+        Boolean(
+          await client.evaluate(
+            `Boolean(document.querySelector('input[placeholder^="ค้นหาชื่อผู้ใช้งาน"]'))`,
+          ),
+        ),
+      'จัดการผู้ใช้งาน did not render its search',
+    );
+    await searchFor(managed.username);
+    let row = null;
+    await waitFor(
+      async () => Boolean((row = await rowButtons(managed.id))),
+      'the managed account did not come up in the search',
+    );
+    assert(row.buttons.length >= 2, `a managed row lost its tools: ${JSON.stringify(row.buttons)}`);
+    await searchFor(PEER_USERNAME);
+    await waitFor(
+      async () => Boolean((row = await rowButtons(peerId))),
+      'the fellow ผู้ดูแลระบบ did not come up in the search',
+    );
+    assert(row.buttons.length === 0, `a read-only row still offers ${JSON.stringify(row.buttons)}`);
+
+    const recordControls = () =>
+      client.evaluate(`(() => {
+        const main = document.querySelector('main') || document.body;
+        if (!main.innerText.includes('ชื่อผู้ใช้งาน')) return null;
+        return {
+          path: location.pathname,
+          text: main.innerText,
+          edit: [...main.querySelectorAll('a, button')].some((el) => el.innerText.trim() === 'แก้ไขผู้ใช้งาน'),
+          username: main.querySelector('#user-detail-username')?.value ?? '',
+          reveal: Boolean(main.querySelector('#user-detail-national-id')?.parentElement?.querySelector('button')),
+        };
+      })()`);
+    let record = null;
+    await navigate(client, '/login');
+    await navigate(client, `/manage-users/${managed.id}`);
+    await waitFor(
+      async () => Boolean((record = await recordControls()) && record.edit),
+      'a managed record never offered แก้ไขผู้ใช้งาน',
+    );
+    assert(record.reveal, 'a managed record lost its national-id reveal');
+    await navigate(client, '/login');
+    await navigate(client, `/manage-users/${peerId}`);
+    await waitFor(
+      async () => Boolean((record = await recordControls()) && record.username === PEER_USERNAME),
+      'the fellow ผู้ดูแลระบบ record did not open',
+    );
+    assert(!record.text.includes('ไม่สามารถโหลดข้อมูลได้'), 'the read-only record failed to load');
+    assert(!record.edit, 'the read-only record still offers แก้ไขผู้ใช้งาน');
+    assert(!record.reveal, 'the read-only record still offers the national-id reveal');
+    assert(
+      !record.text.includes('ดูที่อยู่และแผนที่'),
+      'the read-only record still offers the address reveal',
+    );
+    console.log(
+      `  ${listedIds.length} listed, each opens; fellow admin listed read-only, no tools on its row or record, edit read 403`,
+    );
 
     // ---- the four tables this actor reaches
     console.log('เครื่องมือ column');
@@ -246,9 +348,10 @@ async function main() {
     chrome?.close();
     if (fixtureIds.length > 0) {
       // Disable rather than delete: the audit log is append-only.
-      await dataSource.query(`UPDATE users SET status = 'DISABLED' WHERE id = ANY($1::int[])`, [
-        fixtureIds,
-      ]);
+      await dataSource.query(
+        `UPDATE users SET status = 'DISABLED', data_origin_code = 'AUTOMATED_TEST' WHERE id = ANY($1::int[])`,
+        [fixtureIds],
+      );
     }
     await app.close();
   }
