@@ -234,7 +234,8 @@ async function main() {
       'the reveal request dialog did not open',
     );
     // The reason picker is the shared Combobox: a readonly input that opens a
-    // list of plain buttons on focus. Its options come from the API, and it
+    // list of plain buttons on focus. The list floats in a portal above the
+    // dialog, so it is not under the input. Its options come from the API, and it
     // stays disabled until they arrive.
     await waitFor(
       async () =>
@@ -257,7 +258,7 @@ async function main() {
       async () =>
         Boolean(
           await chrome.evaluate(
-            `Boolean(document.querySelector('#pii-reveal-reason')?.parentElement?.querySelector('ul li button'))`,
+            `Boolean(document.querySelector('ul.fixed li button'))`,
           ),
         ),
       async () =>
@@ -270,7 +271,7 @@ async function main() {
     const reasonLabel = String(
       await chrome.evaluate(
         `(() => {
-          const button = document.querySelector('#pii-reveal-reason').parentElement.querySelector('ul li button');
+          const button = document.querySelector('ul.fixed li button');
           const label = button.textContent.trim();
           button.click();
           return label;

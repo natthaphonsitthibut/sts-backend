@@ -289,7 +289,8 @@ async function main() {
       const [referral]=await db.query('SELECT id FROM case_referrals WHERE case_id=$1 ORDER BY referred_at DESC,id DESC LIMIT 1',[caseId]);
       await app.get(CaseService).applyReferralResult({caseId,referralId:referral.id,resultCode:outcome,note:'ผลการช่วยเหลือทดสอบ',recordedByUserId:actorId,scopeActor:scopedActor,audit:{actorUserId:actorId,actorLabel:'smoke reviewer'}});
       await send('Page.navigate',{url:`http://127.0.0.1:5174/cases/${caseId}`});
-      await waitFor(()=>evaluate(`(()=>{const button=[...document.querySelectorAll('button')].find(button=>button.innerText.trim()==='ปิดเคส');return button && button.disabled===${outcome!=='SUCCEEDED'};})()`),'Referral CLOSE UI disagrees with outcome');
+      // A failed referral is its own case status and offers no ปิดเคส at all (owner, 2026-10-12).
+      await waitFor(()=>evaluate(`(()=>{const button=[...document.querySelectorAll('button')].find(button=>button.innerText.trim()==='ปิดเคส');return ${outcome==='SUCCEEDED'}?Boolean(button)&&!button.disabled:!button&&document.body.innerText.includes('ส่งต่อไม่สำเร็จ');})()`),'Referral CLOSE UI disagrees with outcome');
       if(outcome==='NOT_SUCCEEDED')assert((await close()).status===400,'Older referral success allowed closing a newer failure');
     }
     assert([200,201].includes((await close()).status),'Latest successful referral could not close');

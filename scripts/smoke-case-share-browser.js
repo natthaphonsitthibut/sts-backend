@@ -23,7 +23,7 @@ if (!(process.env.DB_NAME || '').endsWith('_smoke')) {
 const BACKEND_URL = process.env.SMOKE_BACKEND_URL || 'http://localhost:3001';
 const FRONTEND_URL = process.env.SMOKE_FRONTEND_URL || 'http://localhost:5175';
 const USERNAME = 'case_share_browser_smoke';
-const PERMISSIONS = ['home', 'dashboard', 'students'];
+const PERMISSIONS = ['home', 'dashboard', 'students', 'case:assign', 'case:review'];
 
 async function main() {
   const app = await NestFactory.createApplicationContext(AppModule, {
@@ -56,7 +56,9 @@ async function main() {
          SELECT 1 FROM cases existing
          WHERE existing.student_uuid = enrollment.student_uuid
            AND existing.deleted_at IS NULL
-           AND existing.status IN ('OPEN', 'IN_PROGRESS', 'PENDING_REVIEW', 'STUDENT_NOT_FOUND')
+           AND existing.status IN (
+             'OPEN', 'IN_PROGRESS', 'PENDING_REVIEW', 'STUDENT_NOT_FOUND', 'AWAITING_REFERRAL', 'AWAITING_REFERRAL_OUTCOME', 'REFERRAL_NOT_SUCCEEDED'
+           )
        )
        ORDER BY enrollment.student_uuid
        LIMIT 1`,

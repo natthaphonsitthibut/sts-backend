@@ -6,6 +6,7 @@ const { NestFactory } = require('@nestjs/core');
 const { DataSource } = require('typeorm');
 const { AppModule } = require('../dist/app.module');
 const { SessionCookieService } = require('../dist/auth/session-cookie.service');
+const { TeacherLineService } = require('../dist/teacher-line/teacher-line.service');
 
 if (process.env.NODE_ENV === 'production') throw new Error('Refusing to run browser smoke in production');
 if (!(process.env.DB_NAME || '').endsWith('_smoke')) {
@@ -199,6 +200,8 @@ async function main() {
   const context = await NestFactory.createApplicationContext(AppModule, { logger: false });
   const dataSource = context.get(DataSource);
   const cookieService = context.get(SessionCookieService);
+  // The page offers the LINE invitation only where LINE is configured.
+  const lineEnabled = context.get(TeacherLineService).isEnabled();
   let backend;
   let frontend;
   let chrome;
@@ -391,18 +394,36 @@ async function main() {
       'Teacher profile back action did not return to classroom links',
     );
 
-    await clickButton(client, 'สร้างลิงก์ยืนยัน LINE');
-    await waitFor(
-      async () =>
-        String(await evaluate(client, 'document.body.innerText')).includes(
-          'กำหนดอายุลิงก์ยืนยัน LINE',
-        ),
-      'Shared LINE invitation action did not open its schedule dialog',
-    );
-    await evaluate(
-      client,
-      `document.querySelector('[role="dialog"] button[aria-label="Close dialog"]').click()`,
-    );
+    if (lineEnabled) {
+      // The button enables once the page has its school and the LINE setting
+      // back, which lands after the route change that brought us here.
+      await waitFor(
+        async () =>
+          await evaluate(
+            client,
+            `[...document.querySelectorAll('button')].some((item) => item.innerText.trim() === 'สร้างลิงก์ยืนยัน LINE' && !item.disabled)`,
+          ),
+        'LINE is on but the page never offered a usable LINE invitation button',
+      );
+      await clickButton(client, 'สร้างลิงก์ยืนยัน LINE');
+      await waitFor(
+        async () =>
+          String(await evaluate(client, 'document.body.innerText')).includes(
+            'กำหนดอายุลิงก์ยืนยัน LINE',
+          ),
+        'Shared LINE invitation action did not open its schedule dialog',
+      );
+      await evaluate(
+        client,
+        `document.querySelector('[role="dialog"] button[aria-label="Close dialog"]').click()`,
+      );
+    } else {
+      assert(
+        !String(await evaluate(client, 'document.body.innerText')).includes('สร้างลิงก์ยืนยัน LINE'),
+        'LINE is off but the page still offers a LINE invitation',
+      );
+      console.error('[smoke] LINE is not configured here: the invitation dialog step was skipped');
+    }
 
     await evaluate(
       client,
@@ -480,7 +501,7 @@ async function main() {
     assert(
       await evaluate(
         client,
-        `location.hash === '' && document.body.innerText.includes('ระบบติดตามผู้เรียน')`,
+        `location.hash === '' && Boolean(document.querySelector('[role="img"][aria-label="ระบบติดตามผู้เรียน"]'))`,
       ),
       'Public identity page did not use the established guest shell or strip the token fragment',
     );
