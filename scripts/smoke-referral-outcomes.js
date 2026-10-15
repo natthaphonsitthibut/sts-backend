@@ -227,7 +227,7 @@ async function main() {
         recordedByUserId: null,
         agencyReport: {
           linkId: link.id,
-          actionDate: new Date().toISOString().slice(0, 10),
+          actionAt: new Date().toISOString(),
           identityProviderCode: 'ARAID',
           providerSubject: 'smoke-referral-outcome-subject',
           reporterName: 'เจ้าหน้าที่ หน่วยงานทดสอบ',

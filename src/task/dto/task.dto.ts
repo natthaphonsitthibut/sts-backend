@@ -599,9 +599,9 @@ export class SubmitReferralReportDto {
   @IsIn(REFERRAL_RESULT_CODES)
   result_code!: ReferralResultCode;
 
-  @IsDateString({ strict: true }, { message: 'วันที่ดำเนินการไม่ถูกต้อง' })
-  @Matches(/^\d{4}-\d{2}-\d{2}$/, { message: 'วันที่ดำเนินการไม่ถูกต้อง' })
-  action_date!: string;
+  /** When the agency acted, to the minute (ISO 8601 with offset). */
+  @IsDateString({ strict: true }, { message: 'วันและเวลาที่ดำเนินการไม่ถูกต้อง' })
+  action_at!: string;
 
   @IsString()
   @IsNotEmpty()

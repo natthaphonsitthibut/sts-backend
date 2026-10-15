@@ -1113,6 +1113,120 @@ async function cleanupFollowUpFixtures(dataSource, fixtures) {
   }
 }
 
+// Change only the browser's aggregate response to exercise schools with very
+// different amounts of data. The authenticated HTTP requests and DB fixtures
+// remain real; no school/student rows are added for layout-only scenarios.
+async function assertStableSchoolCards(client) {
+  for (const width of [1366, 768, 390, 320]) {
+    await client.call('Emulation.setDeviceMetricsOverride', {
+      width, height: 900, deviceScaleFactor: 1, mobile: width < 768,
+    });
+    let previousHeights;
+    for (const count of [1, 40, 0]) {
+      const { identifier } = await client.call('Page.addScriptToEvaluateOnNewDocument', {
+        source: `(() => {
+          const send = XMLHttpRequest.prototype.send;
+          XMLHttpRequest.prototype.send = function (...args) {
+            this.addEventListener('readystatechange', () => {
+              if (this.readyState !== 4 || this.status !== 200 ||
+                  !this.responseURL.includes('/api/home-dashboard/')) return;
+              const payload = JSON.parse(this.responseText);
+              const count = ${count};
+              if (this.responseURL.includes('/trends')) {
+                payload.data.gradeRiskDistribution = { dimension: 'GRADE',
+                  points: Array.from({ length: count }, (_, index) => ({
+                    key: 'ชั้นทดสอบ ' + (index + 1), label: 'ชั้นทดสอบ ' + (index + 1),
+                    HIGH: 1, WATCH: 2, NORMAL: 7, total: 10,
+                  })) };
+                payload.data.attendanceTrend = count ? [{
+                  key: '2026-10-15', label: '2026-10-15', present: 7,
+                  absent: 1, late: 2, total: 10, attendanceRate: 70,
+                }] : [];
+              } else if (this.responseURL.includes('/summary')) {
+                payload.data.riskAreaRanking.items = Array.from({ length: Math.min(count, 5) }, (_, index) => ({
+                  key: 'ชั้นทดสอบ ' + (index + 1), label: 'ชั้นทดสอบ ' + (index + 1),
+                  count: 1, targetFilter: { grade: 'ชั้นทดสอบ ' + (index + 1) },
+                }));
+              } else return;
+              const body = JSON.stringify(payload);
+              Object.defineProperty(this, 'responseText', { configurable: true, get: () => body });
+              Object.defineProperty(this, 'response', { configurable: true,
+                get: () => this.responseType === 'json' ? payload : body });
+            });
+            return send.apply(this, args);
+          };
+        })();`,
+      });
+      try {
+        await navigate(client, FRONTEND_URL);
+        await waitFor(async () => await evaluate(client,
+          `document.querySelectorAll('[data-grade-risk-item]').length === ${count} &&
+           document.querySelectorAll('[data-risk-area-item]').length === ${Math.min(count, 5)} &&
+           Boolean(document.querySelector('[data-home-insights-body]')) &&
+           ${count ? `document.querySelector('[data-attendance-trend]')?.innerText.includes('ขาดเรียนรวม 1')` :
+             `document.querySelector('[data-attendance-trend]')?.innerText.includes('ไม่มีข้อมูลการเช็กชื่อ')`}`,
+        ), `layout fixture ${width}px/${count} rows did not render`);
+        await new Promise((resolve) => setTimeout(resolve, 200));
+        const geometry = await evaluate(client, `(() => {
+          const cards = [...document.querySelectorAll('[data-home-chart-card]')];
+          const grade = document.querySelector('[data-grade-risk]');
+          const body = grade.querySelector('[data-home-chart-body]');
+          body.scrollTop = 0;
+          return {
+            heights: cards.map(card => card.getBoundingClientRect().height),
+            tops: cards.map(card => card.getBoundingClientRect().top),
+            insightsHeight: document.querySelector('[data-risk-insights-panel]').getBoundingClientRect().height,
+            overflow: document.documentElement.scrollWidth - document.documentElement.clientWidth,
+            gradeScrolls: body.scrollHeight > body.clientHeight,
+            keyboardScrollable: body.tabIndex === 0 && body.getAttribute('role') === 'region' &&
+              Boolean(body.getAttribute('aria-label')),
+          };
+        })()`);
+        assert(geometry.heights.length === 4 && geometry.heights.every(h => Math.abs(h - geometry.heights[0]) < 1),
+          `home cards differ in height at ${width}px: ${JSON.stringify(geometry.heights)}`);
+        assert(geometry.overflow <= 1, `home layout overflows horizontally at ${width}px`);
+        assert(geometry.keyboardScrollable, 'grade list has no named keyboard-scrollable region');
+        const heights = [...geometry.heights, geometry.insightsHeight];
+        if (previousHeights) assert(heights.every((h, index) => Math.abs(h - previousHeights[index]) < 1),
+          `school data count changes card size at ${width}px`);
+        previousHeights = heights;
+        if (width >= 1280) {
+          assert(Math.abs(geometry.tops[0] - geometry.tops[2]) < 1 &&
+            Math.abs(geometry.tops[1] - geometry.tops[3]) < 1, 'desktop card rows are misaligned');
+        }
+        if (count === 40) {
+          assert(geometry.gradeScrolls, 'long grade list grows the page instead of scrolling');
+          await evaluate(client, `document.querySelector('[data-grade-risk] [data-home-chart-body]').focus()`);
+          await client.call('Input.dispatchKeyEvent', { type: 'keyDown', key: 'PageDown', code: 'PageDown', windowsVirtualKeyCode: 34 });
+          await client.call('Input.dispatchKeyEvent', { type: 'keyUp', key: 'PageDown', code: 'PageDown', windowsVirtualKeyCode: 34 });
+          await waitFor(async () => await evaluate(client,
+            `document.querySelector('[data-grade-risk] [data-home-chart-body]').scrollTop > 0`),
+          'PageDown did not scroll the grade list');
+          await evaluate(client, `document.querySelector('[data-grade-risk]').scrollIntoView({ block: 'start' })`);
+          if (width === 1366 || width === 390) await capture(client, `/tmp/sts-home-layout-${width}.png`);
+          const textSizes = await evaluate(client, `(() => {
+            const root = document.querySelector('[data-problem-categories]');
+            const labels = [...root.querySelectorAll('.recharts-yAxis .recharts-cartesian-axis-tick-value')]
+              .filter(node => node.getBoundingClientRect().width > 0);
+            const fallback = [...root.querySelectorAll('li > span:first-child')]
+              .filter(node => node.getBoundingClientRect().width > 0);
+            return [...labels, ...fallback].map(node => parseFloat(getComputedStyle(node).fontSize));
+          })()`);
+          assert(textSizes.length > 0 && textSizes.every(size => size >= 16),
+            `problem labels are too small at ${width}px: ${JSON.stringify(textSizes)}`);
+          if (width === 1366 || width === 390) {
+            await evaluate(client, `document.querySelector('[data-risk-insights-panel]').scrollIntoView({ block: 'start' })`);
+            await capture(client, `/tmp/sts-home-fonts-${width}.png`);
+          }
+        }
+      } finally {
+        await client.call('Page.removeScriptToEvaluateOnNewDocument', { identifier });
+      }
+    }
+  }
+  console.log('home layout stable with 0/1/40 rows at 1366/768/390/320px; desktop alignment and keyboard scrolling passed');
+}
+
 async function main() {
   const app = await NestFactory.createApplicationContext(AppModule, {
     logger: false,
@@ -1403,6 +1517,7 @@ async function main() {
         createSessionCookie(sessionCookieService, actorIds.get(actor.label)),
       );
       await assertOverview(client, expectedActiveCases, actor.label, actor.expectations);
+      if (actor.expectations.schoolScope) await assertStableSchoolCards(client);
     }
     const outOfScopeStatus = await evaluate(
       client,

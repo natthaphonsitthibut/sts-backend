@@ -4,23 +4,26 @@ import { plainToInstance } from 'class-transformer';
 import { SubmitReferralReportDto } from './task.dto';
 
 describe('SubmitReferralReportDto', () => {
-  const validateDate = (action_date: string) =>
+  const validateActionAt = (action_at: string) =>
     validate(
       plainToInstance(SubmitReferralReportDto, {
         result_code: 'SUCCEEDED',
         result_note: 'นักเรียนกลับมาเรียนแล้ว',
-        action_date,
+        action_at,
       }),
     );
-  it.each(['2026-02-31', '2026-13-01', '2026-00-10', '2026-10-08T00:00:00Z'])(
-    'refuses invalid or non-date-only action date %s',
-    async (date) => {
-      expect(await validateDate(date)).toEqual(
-        expect.arrayContaining([expect.objectContaining({ property: 'action_date' })]),
+  it.each(['2026-02-31T10:00:00+07:00', '2026-13-01T10:00:00+07:00', 'yesterday', ''])(
+    'refuses an invalid action time %s',
+    async (value) => {
+      expect(await validateActionAt(value)).toEqual(
+        expect.arrayContaining([expect.objectContaining({ property: 'action_at' })]),
       );
     },
   );
-  it.each(['2026-10-08', '2024-02-29'])('accepts valid date %s', async (date) => {
-    expect(await validateDate(date)).toEqual([]);
-  });
+  it.each(['2026-10-08T14:30:00+07:00', '2026-10-08T07:30:00.000Z'])(
+    'accepts a valid action time %s',
+    async (value) => {
+      expect(await validateActionAt(value)).toEqual([]);
+    },
+  );
 });

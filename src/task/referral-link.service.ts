@@ -40,6 +40,9 @@ import { mapFollowUpHistoryRow } from './follow-up-history.mapper';
 import { TaskPolicyService } from './task-policy.service';
 import { TaskRepository } from './task.repository';
 
+// The same clock-skew allowance the database check gives an action time.
+const ACTION_AT_FUTURE_GRACE_MS = 5 * 60 * 1000;
+
 const ARAID_SCOPE: AraIdChallengeScope = 'referral-link';
 /** Wrong codes allowed before the link locks and the school has to issue another. */
 const MAX_ACCESS_CODE_ATTEMPTS = 5;
@@ -600,9 +603,18 @@ export class ReferralLinkService {
     if (!reporter) throw new UnauthorizedException('กรุณายืนยันตัวตนก่อนส่งรายงาน');
     const note = clean(body.result_note) || null;
     if (!note) throw new BadRequestException('กรุณาสรุปผลการดำเนินการ');
-    const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Bangkok' }).format(new Date());
-    if (body.action_date > today) {
-      throw new BadRequestException('วันที่ดำเนินการต้องไม่เกินวันนี้');
+    const actionAt = new Date(body.action_at);
+    if (Number.isNaN(actionAt.getTime())) {
+      throw new BadRequestException('วันและเวลาที่ดำเนินการไม่ถูกต้อง');
+    }
+    if (actionAt.getTime() > Date.now() + ACTION_AT_FUTURE_GRACE_MS) {
+      throw new BadRequestException('วันและเวลาที่ดำเนินการต้องไม่อยู่ในอนาคต');
+    }
+    const referredAt = link.referred_at ? new Date(link.referred_at as string | Date) : null;
+    // The report picker records minutes. A report in the referral's own minute
+    // must not be rejected just because referred_at retains seconds.
+    if (referredAt && actionAt.getTime() < Math.floor(referredAt.getTime() / 60_000) * 60_000) {
+      throw new BadRequestException('วันและเวลาที่ดำเนินการต้องไม่อยู่ก่อนเวลาที่ส่งต่อ');
     }
     await this.caseService.applyReferralResult({
       caseId: Number(link.case_id),
@@ -614,7 +626,7 @@ export class ReferralLinkService {
       agencyReport: {
         linkId: String(link.id),
         accessCodeRevision: Number(link.access_code_revision ?? 0),
-        actionDate: body.action_date,
+        actionAt: actionAt.toISOString(),
         identityProviderCode: reporter.provider,
         providerSubject: reporter.subject,
         reporterName: reporter.name,
@@ -783,7 +795,8 @@ export class ReferralLinkService {
   private async resolveReporter(araIdProfileId: string): Promise<ReporterClaims> {
     const claim = await this.araIdService.getVerifiedIdentityClaim(araIdProfileId);
     const profile = await this.araIdService.getSessionProfile(araIdProfileId);
-    const name = [profile.titleTh, profile.givenNameTh, profile.familyNameTh]
+    // ชื่อ นามสกุล only (owner, 2026-10-15): the title is not part of the name.
+    const name = [profile.givenNameTh, profile.familyNameTh]
       .filter((part) => typeof part === 'string' && part.trim())
       .join(' ')
       .trim();

@@ -477,6 +477,35 @@ async function main() {
     );
     console.log('ok code + AraID open the agency page with the student card and steps 1–2');
 
+    const defaults = await chrome.evaluate(`(() => {
+      const form = document.querySelector('[data-referral-report-form]');
+      const date = form.querySelector('#referral-report-date').innerText.trim();
+      const time = form.querySelector('#referral-report-time').innerText.trim();
+      const now = new Date();
+      const expectedDate = new Intl.DateTimeFormat('th-TH', {
+        timeZone: 'Asia/Bangkok', day: 'numeric', month: 'long', year: 'numeric',
+      }).format(now);
+      const currentTime = new Intl.DateTimeFormat('en-GB', {
+        timeZone: 'Asia/Bangkok', hour: '2-digit', minute: '2-digit', hour12: false,
+      }).format(now);
+      const dateKey = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Bangkok' }).format(now);
+      const toMinutes = (value) => value.split(':').reduce((h, m) => Number(h) * 60 + Number(m));
+      return {
+        succeeded: form.querySelector('input[value="SUCCEEDED"]').checked,
+        dateIsToday: date === expectedDate,
+        timeIsCurrent: /^\\d{2}:\\d{2}$/.test(time) &&
+          Math.abs(toMinutes(time) - toMinutes(currentTime)) <= 1,
+        actionAt: new Date(dateKey + 'T' + time + ':00+07:00').toISOString(),
+      };
+    })()`);
+    assert(defaults.succeeded && defaults.dateIsToday && defaults.timeIsCurrent,
+      `report defaults are incorrect: ${JSON.stringify(defaults)}`);
+    await chrome.evaluate(`document.querySelector('[data-referral-report-form]').scrollIntoView({ block: 'center' })`);
+    await wait(300);
+    fs.writeFileSync('/tmp/sts-referral-form-desktop.png', Buffer.from(
+      (await chrome.call('Page.captureScreenshot', { format: 'png' })).result.data, 'base64',
+    ));
+
     // 3. Phone width, then file the report.
     await chrome.call('Emulation.setDeviceMetricsOverride', {
       width: 390,
@@ -489,14 +518,28 @@ async function main() {
       'document.documentElement.scrollWidth - document.documentElement.clientWidth',
     );
     assert(overflow <= 0, `agency page scrolls sideways on a phone by ${overflow}px`);
+    await chrome.evaluate(`document.getElementById('referral-report-time').scrollIntoView({ block: 'center' })`);
+    await wait(300);
+    await chrome.evaluate(`document.getElementById('referral-report-time').click()`);
+    await waitFor(async () => await chrome.evaluate(
+      `Boolean(document.querySelector('[role="dialog"][aria-label="เลือกเวลา"] select[aria-label="ชั่วโมง"]'))`,
+    ), 'the action time picker did not open on a phone');
+    const pickerFits = await chrome.evaluate(`(() => {
+      const box = document.querySelector('[role="dialog"][aria-label="เลือกเวลา"]').getBoundingClientRect();
+      return box.left >= 0 && box.right <= document.documentElement.clientWidth;
+    })()`);
+    assert(pickerFits, 'the action time picker extends outside the phone viewport');
+    fs.writeFileSync('/tmp/sts-referral-form-mobile.png', Buffer.from(
+      (await chrome.call('Page.captureScreenshot', { format: 'png' })).result.data, 'base64',
+    ));
+    await chrome.evaluate(`${visibleButton('เสร็จสิ้น', 'document.querySelector(\'[role="dialog"][aria-label="เลือกเวลา"]\')')}.click()`);
     await chrome.call('Emulation.setDeviceMetricsOverride', {
       width: 1440,
       height: 900,
       deviceScaleFactor: 1,
       mobile: false,
     });
-    await chrome.evaluate(`[...document.querySelectorAll('label')]
-      .find((label) => label.innerText.trim() === 'สำเร็จ').click()`);
+    console.log('ok defaults are สำเร็จ/today/current time; the time picker fits a phone');
     await chrome.evaluate(`(() => {
       const field = document.getElementById('referral-report-note');
       const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set;
@@ -514,13 +557,24 @@ async function main() {
     await chrome.evaluate(`${visibleButton('ส่งรายงาน')}.click()`);
     await waitFor(
       async () => (await chrome.evaluate('document.body.innerText')).includes('ส่งรายงานเรียบร้อย'),
-      'the report did not reach the thank-you page',
+      async () => `the report did not reach the thank-you page: ${await chrome.evaluate(
+        `JSON.stringify([...document.querySelectorAll('[role="alert"]')].map((alert) => alert.innerText))`,
+      )}`,
     );
     const [caseRow] = await dataSource.query(`SELECT status FROM cases WHERE id = $1`, [caseId]);
     assert(
       caseRow.status === 'PENDING_REVIEW',
       `case after the agency report is ${caseRow.status}`,
     );
+    const [filedReport] = await dataSource.query(
+      `SELECT referral.status_code, result.action_at
+       FROM case_referral_results result
+       JOIN case_referrals referral ON referral.id = result.case_referral_id
+       WHERE referral.case_id = $1`, [caseId],
+    );
+    assert(filedReport?.status_code === 'COMPLETED' &&
+      new Date(filedReport.action_at).toISOString() === defaults.actionAt,
+      'the default successful result and action time were not saved');
     console.log(
       'ok no horizontal overflow at 390px; the agency report returns the case to รอพิจารณา',
     );
