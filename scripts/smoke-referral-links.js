@@ -35,7 +35,7 @@ const USERNAME = 'referral_link_smoke_director';
 const READER_USERNAME = 'referral_link_smoke_reader';
 const REASON = 'Automated referral link smoke';
 const REPORTER = { title: 'นาง', given: 'สมใจ', family: 'หน่วยงานทดสอบ' };
-const REPORTER_NAME = `${REPORTER.title} ${REPORTER.given} ${REPORTER.family}`;
+const REPORTER_NAME = `${REPORTER.given} ${REPORTER.family}`;
 
 function assert(condition, message) {
   if (!condition) throw new Error(message);
@@ -688,7 +688,7 @@ async function main() {
       fetch(`${baseUrl}${linkPath(raceRound.token)}/report`, {
         method: 'POST',
         headers: { 'content-type': 'application/json', 'x-referral-session': raceSession },
-        body: JSON.stringify(report),
+        body: JSON.stringify({ ...report, action_at: new Date().toISOString() }),
       }),
       fetch(`${baseUrl}${cancelPath(raceRound.referralId)}`, {
         method: 'POST',

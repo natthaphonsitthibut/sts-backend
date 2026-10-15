@@ -72,7 +72,7 @@ describe('ReferralLinkService report action time', () => {
         has_result: false,
         access_code_revision: 0,
         agency_name: 'Fixture agency',
-        referred_at: '2026-10-15T03:00:00.000Z',
+        referred_at: '2026-10-15T03:00:30.456Z',
         starts_at: '2000-01-01T00:00:00Z',
         expires_at: '2099-01-01T00:00:00Z',
       }),
@@ -117,9 +117,18 @@ describe('ReferralLinkService report action time', () => {
   it('refuses an action time before the referral was sent', async () => {
     const { service, caseService } = setup();
     await expect(
-      service.submitReport(TOKEN, report('2026-10-15T09:59:00+07:00'), 'session'),
+      service.submitReport(TOKEN, report('2026-10-15T09:59:59.999+07:00'), 'session'),
     ).rejects.toThrow('วันและเวลาที่ดำเนินการต้องไม่อยู่ก่อนเวลาที่ส่งต่อ');
     expect(caseService.applyReferralResult).not.toHaveBeenCalled();
+  });
+
+  it('accepts the minute selected immediately after the referral was sent', async () => {
+    const { service, caseService } = setup();
+    await service.submitReport(TOKEN, report('2026-10-15T10:00:00+07:00'), 'session');
+    const [input] = caseService.applyReferralResult.mock.calls[0] as [
+      { agencyReport: { actionAt: string } },
+    ];
+    expect(input.agencyReport.actionAt).toBe('2026-10-15T03:00:00.000Z');
   });
 
   it('files a valid action time as an ISO instant', async () => {

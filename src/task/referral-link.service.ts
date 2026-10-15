@@ -611,7 +611,9 @@ export class ReferralLinkService {
       throw new BadRequestException('วันและเวลาที่ดำเนินการต้องไม่อยู่ในอนาคต');
     }
     const referredAt = link.referred_at ? new Date(link.referred_at as string | Date) : null;
-    if (referredAt && actionAt < referredAt) {
+    // The report picker records minutes. A report in the referral's own minute
+    // must not be rejected just because referred_at retains seconds.
+    if (referredAt && actionAt.getTime() < Math.floor(referredAt.getTime() / 60_000) * 60_000) {
       throw new BadRequestException('วันและเวลาที่ดำเนินการต้องไม่อยู่ก่อนเวลาที่ส่งต่อ');
     }
     await this.caseService.applyReferralResult({
