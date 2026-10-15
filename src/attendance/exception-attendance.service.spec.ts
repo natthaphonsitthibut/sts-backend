@@ -1,3 +1,4 @@
+import { AttendanceTrendCache } from '../home-dashboard/attendance-trend-cache.service';
 import { BadRequestException, ConflictException, ForbiddenException } from '@nestjs/common';
 import { AutomationService } from '../automation/automation.service';
 import { AuditLogService } from '../audit-log/audit-log.service';
@@ -13,6 +14,8 @@ import type {
 } from './exception-attendance.types';
 
 describe('ExceptionAttendanceService', () => {
+  let trendCache: AttendanceTrendCache;
+  let invalidateTrendCache: jest.SpyInstance;
   const actor: ExceptionAttendanceActor = {
     source: 'CLASSROOM_LINK',
     schoolId: 1001,
@@ -120,6 +123,8 @@ describe('ExceptionAttendanceService', () => {
     };
     storage = { resolve: jest.fn() };
     automation = { checkConsecutiveAbsences: jest.fn().mockResolvedValue([]) };
+    trendCache = new AttendanceTrendCache();
+    invalidateTrendCache = jest.spyOn(trendCache, 'invalidate');
     service = new ExceptionAttendanceService(
       repository,
       attendanceOperations as AttendanceOperationsService,
@@ -127,6 +132,7 @@ describe('ExceptionAttendanceService', () => {
       riskProfiles as RiskProfileService,
       storage as FileStorageAdapter,
       automation as AutomationService,
+      trendCache,
     );
   });
 
@@ -298,6 +304,7 @@ describe('ExceptionAttendanceService', () => {
     expect(repository.replaceExceptions.mock.calls[0]?.[1][0]).not.toHaveProperty(
       'absenceReasonCode',
     );
+    expect(invalidateTrendCache).toHaveBeenCalledTimes(1);
   });
 
   it('waits for committed attendance before checking absences and returns only after alerts', async () => {
@@ -345,6 +352,7 @@ describe('ExceptionAttendanceService', () => {
       }),
     ).rejects.toBeInstanceOf(BadRequestException);
     expect(automation.checkConsecutiveAbsences).not.toHaveBeenCalled();
+    expect(invalidateTrendCache).not.toHaveBeenCalled();
   });
 
   it('returns an identical duplicate submit without writing or auditing again', async () => {

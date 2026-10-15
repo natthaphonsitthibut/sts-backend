@@ -1,3 +1,4 @@
+import { AttendanceTrendCache } from './attendance-trend-cache.service';
 import { HomeDashboardRepository } from './home-dashboard.repository';
 
 function createRepositoryWithQueryCapture() {
@@ -16,7 +17,8 @@ function createRepositoryWithQueryCapture() {
 
   return {
     queries,
-    repository: new HomeDashboardRepository(dataSource as never),
+    queryRunner,
+    repository: new HomeDashboardRepository(dataSource as never, new AttendanceTrendCache()),
   };
 }
 
@@ -86,8 +88,37 @@ describe('HomeDashboardRepository', () => {
     );
 
     expect(queries).toHaveLength(1);
-    expectCurrentEnrollmentPolicy(queries[0].sql);
-    expect(queries[0].sql).toContain('a."AttendanceDate" BETWEEN');
+    expect(queries[0].sql).toContain('current_enrollment_snapshot AS MATERIALIZED');
+    expect(queries[0].sql).toContain('student_current_enrollment_resolution');
+    expect(queries[0].sql).toContain("current_enrollment.resolution_state = 'ACTIVE'");
+    expect(queries[0].sql).toContain('mark."AttendanceDate" BETWEEN');
+    expect(queries[0].params).toEqual(['2026-07-01', '2026-07-07', [10010002]]);
+    expect(queries[0].sql).toContain('scoped_students AS NOT MATERIALIZED');
+    expect(queries[0].sql).toContain('attendance_by_day AS MATERIALIZED');
+    expect(queries[0].sql).toContain('FROM attendance_effective_records mark');
+  });
+
+  it('caches only identical server scopes and date ranges', async () => {
+    const { repository, queries } = createRepositoryWithQueryCapture();
+    const actor = {
+      id: 1,
+      roles: ['DIRECTOR'],
+      permissions: ['home'],
+      data_scope: { school_ids: [1] },
+    };
+    await Promise.all([
+      repository.getAttendanceTrend(actor, { period: '7_DAYS' }, '2026-07-01', '2026-07-07'),
+      repository.getAttendanceTrend(actor, { period: '7_DAYS' }, '2026-07-01', '2026-07-07'),
+    ]);
+    expect(queries).toHaveLength(1);
+    await repository.getAttendanceTrend(
+      { ...actor, data_scope: { school_ids: [2] } },
+      { period: '7_DAYS' },
+      '2026-07-01',
+      '2026-07-07',
+    );
+    await repository.getAttendanceTrend(actor, { period: '7_DAYS' }, '2026-07-02', '2026-07-08');
+    expect(queries).toHaveLength(3);
   });
 
   it('applies grade and room scope to cases through current enrollment', async () => {
