@@ -1210,9 +1210,10 @@ async function assertStableSchoolCards(client) {
               .filter(node => node.getBoundingClientRect().width > 0);
             const fallback = [...root.querySelectorAll('li > span:first-child')]
               .filter(node => node.getBoundingClientRect().width > 0);
-            return [...labels, ...fallback].map(node => parseFloat(getComputedStyle(node).fontSize));
+            const expected = getComputedStyle(root.closest('section').querySelector('p')).fontSize;
+            return [...labels, ...fallback].map(node => ({ actual: getComputedStyle(node).fontSize, expected }));
           })()`);
-          assert(textSizes.length > 0 && textSizes.every(size => size >= 16),
+          assert(textSizes.length > 0 && textSizes.every(size => size.actual === size.expected),
             `problem labels are too small at ${width}px: ${JSON.stringify(textSizes)}`);
           if (width === 1366 || width === 390) {
             await evaluate(client, `document.querySelector('[data-risk-insights-panel]').scrollIntoView({ block: 'start' })`);
@@ -1225,6 +1226,50 @@ async function assertStableSchoolCards(client) {
     }
   }
   console.log('home layout stable with 0/1/40 rows at 1366/768/390/320px; desktop alignment and keyboard scrolling passed');
+}
+
+async function assertTrendsRecovery(client) {
+  const { identifier } = await client.call('Page.addScriptToEvaluateOnNewDocument', {
+    source: `(() => {
+      const send = XMLHttpRequest.prototype.send;
+      XMLHttpRequest.prototype.send = function (...args) {
+        this.addEventListener('readystatechange', () => {
+          if (this.readyState === 4 && this.responseURL.includes('/api/home-dashboard/trends') &&
+              !window.__allowTrends) {
+            Object.defineProperty(this, 'status', { configurable: true, value: 500 });
+            const body = JSON.stringify({ success: false, message: 'Automated failure fixture' });
+            Object.defineProperty(this, 'responseText', { configurable: true, value: body });
+            Object.defineProperty(this, 'response', { configurable: true,
+              value: this.responseType === 'json' ? JSON.parse(body) : body });
+          }
+        });
+        return send.apply(this, args);
+      };
+    })();`,
+  });
+  try {
+    await navigate(client, FRONTEND_URL);
+    await waitFor(async () => evaluate(client, `(() => {
+      const cards = [document.querySelector('[data-grade-risk]'), document.querySelector('[data-attendance-trend]')];
+      return cards.every(card => card?.querySelector('[role="alert"]')) &&
+        Boolean(document.querySelector('[data-risk-area-dimension]'));
+    })()`), 'trends errors were not surfaced separately from summary');
+    assert(await evaluate(client, `(() => {
+      const cards = [document.querySelector('[data-grade-risk]'), document.querySelector('[data-attendance-trend]')];
+      return cards.every(card => !card.innerText.includes('ไม่มีข้อมูล') && !card.innerText.includes('ยังไม่มี'));
+    })()`), 'failed trends falsely reported empty data');
+    await evaluate(client, `(() => {
+      window.__allowTrends = true;
+      document.querySelector('[data-attendance-trend] [role="alert"] button').click();
+    })()`);
+    await waitFor(async () => evaluate(client, `(() => {
+      const cards = [document.querySelector('[data-grade-risk]'), document.querySelector('[data-attendance-trend]')];
+      return cards.every(card => card && !card.querySelector('[role="alert"]') && !card.querySelector('[role="status"]'));
+    })()`), 'retry did not recover both trends cards');
+    console.log('trends failure/retry passed; summary remains visible and failed charts do not claim no data');
+  } finally {
+    await client.call('Page.removeScriptToEvaluateOnNewDocument', { identifier });
+  }
 }
 
 async function main() {
@@ -1517,7 +1562,10 @@ async function main() {
         createSessionCookie(sessionCookieService, actorIds.get(actor.label)),
       );
       await assertOverview(client, expectedActiveCases, actor.label, actor.expectations);
-      if (actor.expectations.schoolScope) await assertStableSchoolCards(client);
+      if (actor.expectations.schoolScope) {
+        await assertStableSchoolCards(client);
+        await assertTrendsRecovery(client);
+      }
     }
     const outOfScopeStatus = await evaluate(
       client,

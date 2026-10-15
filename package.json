@@ -75,6 +75,8 @@
     "smoke:visit-attachment-browser": "DB_NAME=sts_smoke SMOKE_BACKEND_URL=http://127.0.0.1:3001 SMOKE_FRONTEND_URL=http://127.0.0.1:5174 SMOKE_CHROME_DEBUG_PORT=9262 node scripts/smoke-visit-attachment-browser.js",
     "smoke:settings-browser": "DB_NAME=sts_smoke SMOKE_BACKEND_URL=http://127.0.0.1:3001 SMOKE_FRONTEND_URL=http://127.0.0.1:5174 node scripts/smoke-settings-browser.js",
     "smoke:home-overview-browser": "DB_NAME=sts_smoke SMOKE_BACKEND_URL=http://127.0.0.1:3001 SMOKE_FRONTEND_URL=http://127.0.0.1:5174 node scripts/smoke-home-overview-browser.js",
+    "smoke:home-trends-performance": "DB_NAME=sts_smoke node scripts/smoke-home-trends-performance.js",
+    "smoke:home-trends-expanded": "DB_NAME=sts_smoke node scripts/smoke-home-trends-performance.js --expanded",
     "smoke:home-dashboard": "DB_NAME=sts_smoke node scripts/smoke-home-dashboard.js",
     "smoke:report-tabs-and-roles": "DB_NAME=sts_smoke node scripts/smoke-report-tabs-and-roles.js",
     "smoke:permission-pages-browser": "DB_NAME=sts_smoke REDIS_URL= SMOKE_BACKEND_URL=http://localhost:3001 SMOKE_FRONTEND_URL=http://localhost:5175 node scripts/smoke-permission-pages-browser.js",
