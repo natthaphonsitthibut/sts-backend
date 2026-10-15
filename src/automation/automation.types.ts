@@ -27,7 +27,7 @@ export interface CaseAutoCancelAuditEvent {
 }
 
 /**
- * Cases are opened by one rule now (cumulative absence), so every automated
+ * Cases are opened by one rule now (consecutive absence), so every automated
  * case is เสี่ยง; tiers below it no longer open or escalate a case.
  */
 export type CaseRiskTier = 'HIGH';
@@ -37,9 +37,10 @@ export interface ActiveCaseRow extends Record<string, unknown> {
   risk_tier: string | null;
 }
 
-export interface CumulativeAbsentStudentRow extends Record<string, unknown> {
+export interface ConsecutiveAbsentStudentRow extends Record<string, unknown> {
   student_uuid: string;
-  absent_days_since_case_reset: number;
+  /** Longest run of consecutive absent days after the latest closed case. */
+  consecutive_absent_days: number;
   first_name_onec: string | null;
   last_name_onec: string | null;
   school_id_onec: number | null;

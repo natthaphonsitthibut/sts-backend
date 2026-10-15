@@ -57,7 +57,10 @@ describe('RiskProfileRepository', () => {
     );
     expect(queries[0].sql).toContain('term_absent_days');
     expect(queries[0].sql).toContain('absence_reset_after_date');
-    expect(queries[0].sql).toContain('absent_days_since_case_reset >= $1');
+    expect(queries[0].sql).toContain('consecutive_absent_days >= $1');
+    // ขาดติดต่อกัน: runs over measured days only, so a ลา-only day is skipped.
+    expect(queries[0].sql).toContain('WHERE is_measured_day');
+    expect(queries[0].sql).toContain('MAX(run_length)::int AS consecutive_absent_days');
     expect(queries[0].sql).toContain('(day."AttendanceStatus" <> 4) AS is_measured_day');
     expect(queries[0].sql).toContain('(day."AttendanceStatus" IN (1, 3)) AS is_attended_day');
     expect(queries[0].sql.replace(/\s+/g, ' ')).toContain(
@@ -138,7 +141,7 @@ describe('RiskProfileRepository', () => {
     await repository.recalculateAll(THRESHOLDS);
 
     const sql = queries[0].sql.replace(/\s+/g, ' ');
-    expect(sql).toContain("WHEN metrics.absent_days_since_case_reset >= $1::int THEN 'HIGH'");
+    expect(sql).toContain("WHEN metrics.consecutive_absent_days >= $1::int THEN 'HIGH'");
     expect(sql).toContain("WHEN metrics.teacher_signal_count > 0 THEN 'WATCH'");
     expect(sql).toContain("ELSE 'NORMAL'");
     expect(sql).not.toContain("'MEDIUM'");

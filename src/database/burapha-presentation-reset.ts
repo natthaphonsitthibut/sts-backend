@@ -534,3 +534,77 @@ ALTER TABLE attendance_exceptions ENABLE TRIGGER trg_attendance_exceptions_set_u
 -- rebuilds every active enrollment that has no profile row.
 DELETE FROM student_risk_profiles WHERE school_id = (SELECT school_id FROM ctx);
 `;
+
+/**
+ * Absence data for the consecutive rule (owner, 2026-10-15): every current
+ * Burapha student is absent on 14 and 15 Oct — two school days in a row, so
+ * one more absent day makes three — and has no other absence after their
+ * latest closed case. Skipped and logged the same way as the reset.
+ */
+export async function runBuraphaConsecutiveAbsences(
+  queryRunner: QueryRunner,
+  label: string,
+): Promise<void> {
+  const ready = (await queryRunner.query(`
+    SELECT 1 FROM school_terms
+    WHERE school_id = 10010004 AND status = 'ACTIVE' AND deleted_at IS NULL
+  `)) as unknown[];
+  if (ready.length !== 1) return;
+  await queryRunner.query('SAVEPOINT burapha_consecutive_absences');
+  try {
+    await queryRunner.query(CONSECUTIVE_ABSENCES_SQL);
+    await queryRunner.query('RELEASE SAVEPOINT burapha_consecutive_absences');
+  } catch (error) {
+    await queryRunner.query('ROLLBACK TO SAVEPOINT burapha_consecutive_absences');
+    console.error(`${label} skipped: ${error instanceof Error ? error.message : String(error)}`);
+  }
+}
+
+const CONSECUTIVE_ABSENCES_SQL = `
+CREATE TEMP TABLE abs_ctx ON COMMIT DROP AS
+SELECT 10010004::int AS school_id,
+       (SELECT id FROM school_terms WHERE school_id = 10010004 AND status = 'ACTIVE' AND deleted_at IS NULL) AS term_id;
+
+CREATE TEMP TABLE abs_students ON COMMIT DROP AS
+SELECT s.student_uuid, s.classroom_id,
+  (SELECT max(coalesce((SELECT max(r.reviewed_at) FROM case_reviews r WHERE r.case_id = c.id), c.updated_at))
+   FROM cases c WHERE c.person_uuid = s.person_uuid AND c.status = 'RESOLVED' AND c.deleted_at IS NULL) AS reset_at
+FROM student_term s
+JOIN student_current_enrollment_resolution r
+  ON r.person_uuid = s.person_uuid AND r.selected_student_uuid = s.student_uuid AND r.resolution_state = 'ACTIVE'
+WHERE s."SchoolID_Onec" = (SELECT school_id FROM abs_ctx) AND s.deleted_at IS NULL;
+
+CREATE TEMP TABLE abs_sessions ON COMMIT DROP AS
+SELECT s.* FROM attendance_sessions s
+WHERE s.school_id = (SELECT school_id FROM abs_ctx) AND s.school_term_id = (SELECT term_id FROM abs_ctx)
+  AND s.deleted_at IS NULL AND s.status IN ('SUBMITTED','REOPENED')
+  AND s.record_storage_mode = 'EXCEPTIONS' AND s.session_kind = 'SUBJECT';
+
+-- No other absence after the latest closed case.
+UPDATE attendance_exceptions e SET deleted_at = now()
+FROM abs_sessions s, abs_students b
+WHERE e.session_id = s.id AND e.student_uuid = b.student_uuid
+  AND e.deleted_at IS NULL AND e.attendance_status_code = 2
+  AND s.attendance_date > coalesce((b.reset_at AT TIME ZONE 'Asia/Bangkok')::date, DATE '1900-01-01')
+  AND s.attendance_date NOT IN (DATE '2026-10-14', DATE '2026-10-15');
+
+-- Absent in every round of 14 and 15 Oct, marked by the round's teacher.
+INSERT INTO attendance_exceptions (session_id, student_uuid, attendance_status_code, marked_at,
+  marked_by_teacher_membership_id, created_at, updated_at, school_id)
+SELECT s.id, b.student_uuid, 2, s.checking_started_at + interval '5 minutes', s.submitted_by_teacher_membership_id,
+       s.checking_started_at + interval '5 minutes', s.checking_started_at + interval '5 minutes', s.school_id
+FROM abs_sessions s
+JOIN attendance_session_roster roster ON roster.session_id = s.id
+JOIN abs_students b ON b.student_uuid = roster.student_uuid
+WHERE s.attendance_date IN (DATE '2026-10-14', DATE '2026-10-15')
+ON CONFLICT (session_id, student_uuid) DO UPDATE
+SET attendance_status_code = 2, deleted_at = NULL, deleted_by = NULL, marked_at = EXCLUDED.marked_at,
+    marked_by_teacher_membership_id = EXCLUDED.marked_by_teacher_membership_id;
+
+UPDATE attendance_sessions s
+SET exception_count = (SELECT count(*) FROM attendance_exceptions e WHERE e.session_id = s.id AND e.deleted_at IS NULL)
+WHERE s.id IN (SELECT id FROM abs_sessions);
+
+-- The backend's startup repair rebuilds the profiles under the new rule.
+DELETE FROM student_risk_profiles WHERE school_id = (SELECT school_id FROM abs_ctx);
+`;

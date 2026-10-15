@@ -16,7 +16,7 @@ describe('AutomationRepository', () => {
     expect(query.mock.calls).toHaveLength(1);
   });
 
-  it('counts cumulative absent days with the ประวัติการเข้าเรียน day verdict', async () => {
+  it('finds consecutive absent days with the ประวัติการเข้าเรียน day verdict', async () => {
     const queries: Array<{ sql: string; params?: unknown[] }> = [];
     const queryRunner = {
       connect: jest.fn().mockResolvedValue(undefined),
@@ -31,7 +31,7 @@ describe('AutomationRepository', () => {
     };
     const repository = new AutomationRepository(dataSource as never);
 
-    await repository.listCumulativeAbsentStudents(3, '2026-06-27');
+    await repository.listConsecutiveAbsentStudents(3, '2026-06-27');
 
     expect(queries).toHaveLength(1);
     // No student list = sweep everyone, which the query reads as a NULL scope.
@@ -45,12 +45,18 @@ describe('AutomationRepository', () => {
     expect(queries[0].sql).toContain("a.session_kind = 'SUBJECT'");
     expect(queries[0].sql).toContain('WITH current_enrollments AS');
     expect(queries[0].sql).toContain('student_current_enrollment_resolution');
-    expect(queries[0].sql).toContain('HAVING COUNT(*) >= $1');
+    // A ลา-only day is dropped before the runs are numbered.
+    expect(queries[0].sql).toContain(
+      'HAVING COUNT(*) FILTER (WHERE a."AttendanceStatus" <> 4) > 0',
+    );
+    expect(queries[0].sql).toContain('HAVING MAX(run_length) >= $1');
     expect(queries[0].sql).toContain(
       `demo_distribution."RecordedBy" = 'SYSTEM:DEMO_RISK_DISTRIBUTION'`,
     );
-    // Days no longer have to be consecutive.
-    expect(queries[0].sql).not.toContain('streak');
+    // Days must be consecutive (owner, 2026-10-15); the longest run counts.
+    expect(queries[0].sql).toContain(
+      'PARTITION BY student_uuid, is_absent_day ORDER BY attendance_date',
+    );
   });
 
   it('narrows the sweep to the students a caller passes', async () => {
@@ -66,7 +72,7 @@ describe('AutomationRepository', () => {
     const dataSource = { createQueryRunner: jest.fn(() => queryRunner) };
     const repository = new AutomationRepository(dataSource as never);
 
-    await repository.listCumulativeAbsentStudents(3, '2026-06-27', undefined, [
+    await repository.listConsecutiveAbsentStudents(3, '2026-06-27', undefined, [
       '11111111-1111-4111-8111-111111111111',
     ]);
 
@@ -200,7 +206,7 @@ describe('AutomationRepository', () => {
       createQueryRunner: jest.fn(() => queryRunner),
     } as never);
 
-    await repository.listCumulativeAbsentStudents(3, '2026-08-13');
+    await repository.listConsecutiveAbsentStudents(3, '2026-08-13');
 
     expect(queries[0].sql).toContain('resolved_case_baselines');
     expect(queries[0].sql).toContain("tracked_case.status = 'RESOLVED'");

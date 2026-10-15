@@ -5,7 +5,7 @@ import { RiskProfileService } from '../risk-profile/risk-profile.service';
 import { AutomationRepository } from './automation.repository';
 import type {
   CaseAutoCancelAuditEvent,
-  CumulativeAbsentStudentRow,
+  ConsecutiveAbsentStudentRow,
   NewCase,
 } from './automation.types';
 import { getBangkokDateString } from '../common/utils/date.util';
@@ -31,7 +31,7 @@ export class AbsenceMonitorService {
     return '';
   }
 
-  private buildStudentName(student: CumulativeAbsentStudentRow): string {
+  private buildStudentName(student: ConsecutiveAbsentStudentRow): string {
     const firstName = this.normalizeText(student.first_name_onec);
     const lastName = this.normalizeText(student.last_name_onec);
     return [firstName, lastName].filter((part) => part.length > 0).join(' ');
@@ -48,7 +48,7 @@ export class AbsenceMonitorService {
     return null;
   }
 
-  private buildStudentTermAddress(student: CumulativeAbsentStudentRow): string {
+  private buildStudentTermAddress(student: ConsecutiveAbsentStudentRow): string {
     const parts: string[] = [];
 
     const villageNumber = this.normalizeText(student.village_number_onec);
@@ -80,9 +80,9 @@ export class AbsenceMonitorService {
    */
   async checkConsecutiveAbsences(studentUuids?: readonly string[]): Promise<NewCase[]> {
     if (studentUuids?.length === 0) return [];
-    this.logger.log('Checking cumulative absences after attendance submission');
+    this.logger.log('Checking consecutive absences after attendance submission');
 
-    // One rule opens a case: cumulative absent days reaching the เสี่ยง
+    // One rule opens a case: consecutive absent days reaching the เสี่ยง
     // threshold. The tier ladder (ต่ำ/ปานกลาง) is gone.
     const thresholdDays = this.parsePositiveIntegerSetting(
       await this.automationRepository.getSystemSettingValue('CASE_RISK_HIGH_ABSENCE_DAYS'),
@@ -98,7 +98,7 @@ export class AbsenceMonitorService {
           await this.automationRepository.lockStudentAbsenceChecks(studentUuids, executor);
         }
         const asOfDate = getBangkokDateString();
-        const absentStudents = await this.automationRepository.listCumulativeAbsentStudents(
+        const absentStudents = await this.automationRepository.listConsecutiveAbsentStudents(
           thresholdDays,
           asOfDate,
           executor,
@@ -163,7 +163,7 @@ export class AbsenceMonitorService {
         }
 
         if (absentStudents.length === 0) {
-          this.logger.log('No students found meeting the cumulative absence threshold.');
+          this.logger.log('No students found meeting the consecutive absence threshold.');
           return;
         }
 
@@ -187,7 +187,7 @@ export class AbsenceMonitorService {
             executor,
           );
 
-          const reason = `ขาดเรียนหลังปิดเคสล่าสุด ${student.absent_days_since_case_reset} วัน`;
+          const reason = `ขาดเรียนติดต่อกัน ${student.consecutive_absent_days} วัน`;
 
           if (existingCase) {
             // An active case already covers this student; there is no tier to
@@ -270,7 +270,7 @@ export class AbsenceMonitorService {
       throw error;
     }
 
-    this.logger.log('Finished checking cumulative absences.');
+    this.logger.log('Finished checking consecutive absences.');
     return newCases;
   }
 }

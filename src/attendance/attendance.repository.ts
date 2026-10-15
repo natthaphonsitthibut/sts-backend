@@ -197,6 +197,7 @@ export class AttendanceRepository {
         person.updated_at AS photo_updated_at,
         COALESCE(risk.term_absent_days, 0)::int AS term_absent_days,
         COALESCE(risk.absent_days_since_case_reset, 0)::int AS absent_days_since_case_reset,
+        COALESCE(risk.consecutive_absent_days, 0)::int AS consecutive_absent_days,
         risk.absence_reset_after_date
       FROM student_term s
       ${CURRENT_ENROLLMENT_JOIN}
