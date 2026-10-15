@@ -79,6 +79,8 @@ export interface AttendanceStudentRow extends Record<string, unknown> {
   photo_updated_at: string | Date | null;
   term_absent_days: number | string;
   absent_days_since_case_reset: number | string;
+  /** Longest run of consecutive absent days after the latest closed case. */
+  consecutive_absent_days: number | string;
   absence_reset_after_date: string | Date | null;
 }
 
