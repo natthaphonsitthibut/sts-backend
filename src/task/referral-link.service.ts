@@ -783,7 +783,8 @@ export class ReferralLinkService {
   private async resolveReporter(araIdProfileId: string): Promise<ReporterClaims> {
     const claim = await this.araIdService.getVerifiedIdentityClaim(araIdProfileId);
     const profile = await this.araIdService.getSessionProfile(araIdProfileId);
-    const name = [profile.titleTh, profile.givenNameTh, profile.familyNameTh]
+    // ชื่อ นามสกุล only (owner, 2026-10-15): the title is not part of the name.
+    const name = [profile.givenNameTh, profile.familyNameTh]
       .filter((part) => typeof part === 'string' && part.trim())
       .join(' ')
       .trim();
