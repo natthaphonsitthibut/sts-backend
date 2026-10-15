@@ -3,7 +3,7 @@ import { DataSource } from 'typeorm';
 import { queryDataSource, withDataSourceTransaction } from '../database/sql-query';
 import type {
   ActiveCaseRow,
-  CumulativeAbsentStudentRow,
+  ConsecutiveAbsentStudentRow,
   CreateAutomatedCaseInput,
   CreatedCaseRow,
   OpenAbsenceCaseRow,
@@ -79,10 +79,13 @@ export class AutomationRepository {
   }
 
   /**
-   * Students whose cumulative absent days reached the threshold, using the same
-   * day verdict as ประวัติการเข้าเรียน: ลา (status 4) is not measured, มา/สาย
-   * count as attended, and a day is ขาด only when every measured record that day
-   * is unattended. Days need not be consecutive.
+   * Students with a run of consecutive absent days reaching the threshold after
+   * their latest closed case (owner, 2026-10-15: ขาดติดต่อกัน, no longer
+   * cumulative). Same day verdict as ประวัติการเข้าเรียน: มา/สาย count as
+   * attended and a day is ขาด only when every measured record that day is
+   * unattended. A day with only ลา (status 4) is skipped — it neither counts
+   * nor breaks the run. The longest run counts, so coming back the next day
+   * does not undo a case already opened.
    */
   /**
    * `studentUuids` narrows the sweep to the students a caller just touched. A
@@ -90,15 +93,15 @@ export class AutomationRepository {
    * and skips scanning every enrolment in the country; the nightly job passes
    * nothing and still sweeps everyone.
    */
-  async listCumulativeAbsentStudents(
+  async listConsecutiveAbsentStudents(
     thresholdDays: number,
     asOfDate: string,
     executor?: QueryExecutor,
     studentUuids?: readonly string[],
-  ): Promise<CumulativeAbsentStudentRow[]> {
+  ): Promise<ConsecutiveAbsentStudentRow[]> {
     const queryExecutor = this.getExecutor(executor);
     const scopedUuids = studentUuids && studentUuids.length > 0 ? [...studentUuids] : null;
-    const result = await queryExecutor.query<CumulativeAbsentStudentRow>(
+    const result = await queryExecutor.query<ConsecutiveAbsentStudentRow>(
       `
         WITH current_enrollments AS (
           SELECT enrollment.student_uuid
@@ -150,23 +153,39 @@ export class AutomationRepository {
             AND a."AttendanceDate"::date <= $2::date
             AND a."AttendanceDate"::date > COALESCE(baseline.reset_after_date, '-infinity'::date)
           GROUP BY a.student_uuid, a."AttendanceDate"
+          -- ลา-only days drop out here so they neither count nor break a run.
+          HAVING COUNT(*) FILTER (WHERE a."AttendanceStatus" <> 4) > 0
+        ), numbered_days AS (
+          SELECT
+            student_uuid,
+            attendance_date,
+            is_absent_day,
+            ROW_NUMBER() OVER (PARTITION BY student_uuid ORDER BY attendance_date)
+              - ROW_NUMBER() OVER (
+                PARTITION BY student_uuid, is_absent_day ORDER BY attendance_date
+              ) AS run_key
+          FROM classified_days
+        ), absence_runs AS (
+          SELECT student_uuid, COUNT(*)::int AS run_length
+          FROM numbered_days
+          WHERE is_absent_day
+          GROUP BY student_uuid, run_key
         ),
         candidates AS (
-          SELECT student_uuid, COUNT(*)::int AS absent_days_since_case_reset
-          FROM classified_days
-          WHERE is_absent_day
-            AND NOT EXISTS (
+          SELECT student_uuid, MAX(run_length)::int AS consecutive_absent_days
+          FROM absence_runs runs
+          WHERE NOT EXISTS (
               SELECT 1
               FROM attendance_effective_records demo_distribution
-              WHERE demo_distribution.student_uuid = classified_days.student_uuid
+              WHERE demo_distribution.student_uuid = runs.student_uuid
                 AND demo_distribution."RecordedBy" = 'SYSTEM:DEMO_RISK_DISTRIBUTION'
             )
           GROUP BY student_uuid
-          HAVING COUNT(*) >= $1
+          HAVING MAX(run_length) >= $1
         )
         SELECT
           r.student_uuid,
-          r.absent_days_since_case_reset,
+          r.consecutive_absent_days,
           s."FirstName_Onec" AS first_name_onec,
           s."LastName_Onec" AS last_name_onec,
           s."SchoolID_Onec" AS school_id_onec,

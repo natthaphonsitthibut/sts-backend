@@ -10,7 +10,7 @@ function buildAbsentStudent(
 ): CumulativeAbsentStudentRow {
   return {
     student_uuid: 'student-uuid-1',
-    absent_days_since_case_reset: 3,
+    consecutive_absent_days: 3,
     first_name_onec: 'สมชาย',
     last_name_onec: 'ใจดี',
     school_id_onec: 10010002,
@@ -33,7 +33,7 @@ describe('AbsenceMonitorService', () => {
       | 'getSystemSettingValue'
       | 'withTransaction'
       | 'lockStudentAbsenceChecks'
-      | 'listCumulativeAbsentStudents'
+      | 'listConsecutiveAbsentStudents'
       | 'listEvaluableStudentUuids'
       | 'listOpenAbsenceCases'
       | 'deleteOpenCaseById'
@@ -57,7 +57,7 @@ describe('AbsenceMonitorService', () => {
         await callback(undefined);
       }),
       lockStudentAbsenceChecks: jest.fn().mockResolvedValue(undefined),
-      listCumulativeAbsentStudents: jest.fn().mockResolvedValue([]),
+      listConsecutiveAbsentStudents: jest.fn().mockResolvedValue([]),
       listEvaluableStudentUuids: jest.fn().mockResolvedValue([]),
       listOpenAbsenceCases: jest.fn().mockResolvedValue([]),
       deleteOpenCaseById: jest.fn().mockResolvedValue(true),
@@ -91,7 +91,7 @@ describe('AbsenceMonitorService', () => {
     const roster = ['student-uuid-1'];
     await service.checkConsecutiveAbsences(roster);
     expect(automationRepository.lockStudentAbsenceChecks).toHaveBeenCalledWith(roster, undefined);
-    expect(automationRepository.listCumulativeAbsentStudents).toHaveBeenCalledWith(
+    expect(automationRepository.listConsecutiveAbsentStudents).toHaveBeenCalledWith(
       3,
       expect.any(String),
       undefined,
@@ -99,12 +99,12 @@ describe('AbsenceMonitorService', () => {
     );
     expect(automationRepository.listOpenAbsenceCases).toHaveBeenCalledWith(undefined, roster);
     expect(automationRepository.lockStudentAbsenceChecks.mock.invocationCallOrder[0]).toBeLessThan(
-      automationRepository.listCumulativeAbsentStudents.mock.invocationCallOrder[0],
+      automationRepository.listConsecutiveAbsentStudents.mock.invocationCallOrder[0],
     );
   });
 
   it('does not duplicate a case or alert on repeated checks', async () => {
-    automationRepository.listCumulativeAbsentStudents.mockResolvedValue([buildAbsentStudent()]);
+    automationRepository.listConsecutiveAbsentStudents.mockResolvedValue([buildAbsentStudent()]);
     automationRepository.findActiveCaseByStudent
       .mockResolvedValueOnce(null)
       .mockResolvedValue({ id: 77, status: 'OPEN', risk_tier: 'HIGH' });
@@ -156,7 +156,7 @@ describe('AbsenceMonitorService', () => {
   });
 
   it('does not create a duplicate when an active absence case already exists', async () => {
-    automationRepository.listCumulativeAbsentStudents.mockResolvedValue([buildAbsentStudent()]);
+    automationRepository.listConsecutiveAbsentStudents.mockResolvedValue([buildAbsentStudent()]);
     automationRepository.findActiveCaseByStudent.mockResolvedValue({
       id: 20,
       risk_tier: 'LOW',
@@ -185,7 +185,7 @@ describe('AbsenceMonitorService', () => {
   ])(
     'does not replace a manually opened %s case when absence reaches the threshold',
     async (status) => {
-      automationRepository.listCumulativeAbsentStudents.mockResolvedValue([buildAbsentStudent()]);
+      automationRepository.listConsecutiveAbsentStudents.mockResolvedValue([buildAbsentStudent()]);
       automationRepository.findActiveCaseByStudent.mockResolvedValue({
         id: 31,
         risk_tier: null,
@@ -206,8 +206,8 @@ describe('AbsenceMonitorService', () => {
       };
       return Promise.resolve(values[key] ?? null);
     });
-    automationRepository.listCumulativeAbsentStudents.mockResolvedValue([
-      buildAbsentStudent({ absent_days_since_case_reset: 7 }),
+    automationRepository.listConsecutiveAbsentStudents.mockResolvedValue([
+      buildAbsentStudent({ consecutive_absent_days: 7 }),
     ]);
 
     const result = await service.checkConsecutiveAbsences();
@@ -217,7 +217,7 @@ describe('AbsenceMonitorService', () => {
         case_id: 77,
         student_name: 'สมชาย ใจดี',
         student_school: 'โรงเรียนทดสอบ',
-        reason_flagged: 'ขาดเรียนหลังปิดเคสล่าสุด 7 วัน',
+        reason_flagged: 'ขาดเรียนติดต่อกัน 7 วัน',
         school_id: 10010002,
       },
     ]);
@@ -244,7 +244,7 @@ describe('AbsenceMonitorService', () => {
   });
 
   it('does not auto-cancel a legacy case without a stable student uuid', async () => {
-    automationRepository.listCumulativeAbsentStudents.mockResolvedValue([
+    automationRepository.listConsecutiveAbsentStudents.mockResolvedValue([
       buildAbsentStudent({
         student_uuid: 'student-uuid-1',
         school_id_onec: 10010002,

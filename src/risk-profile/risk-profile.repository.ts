@@ -198,28 +198,29 @@ export class RiskProfileRepository {
             ON baseline.student_uuid = term_days.student_uuid
           WHERE term_days.attendance_date > COALESCE(baseline.reset_after_date, '-infinity'::date)
         ),
-        ranked_attendance_days AS (
+        -- ขาดติดต่อกัน (owner, 2026-10-15): the longest run of absent days after
+        -- the last closed case. A ลา-only day is skipped — it neither counts nor
+        -- breaks the run — and coming back does not shorten a run already made.
+        numbered_measured_days AS (
           SELECT
             student_uuid,
-            attendance_date,
             is_absent_day,
-            ROW_NUMBER() OVER (PARTITION BY student_uuid ORDER BY attendance_date DESC) AS rn
+            ROW_NUMBER() OVER (PARTITION BY student_uuid ORDER BY attendance_date)
+              - ROW_NUMBER() OVER (
+                PARTITION BY student_uuid, is_absent_day ORDER BY attendance_date
+              ) AS run_key
           FROM classified_days
+          WHERE is_measured_day
         ),
-        streak_boundaries AS (
-          SELECT
-            student_uuid,
-            rn,
-            is_absent_day,
-            MIN(CASE WHEN NOT is_absent_day THEN rn END) OVER (PARTITION BY student_uuid)
-              AS first_non_absent_rn
-          FROM ranked_attendance_days
+        absence_runs AS (
+          SELECT student_uuid, COUNT(*)::int AS run_length
+          FROM numbered_measured_days
+          WHERE is_absent_day
+          GROUP BY student_uuid, run_key
         ),
         absence_streak AS (
-          SELECT student_uuid, COUNT(*)::int AS consecutive_absent_days
-          FROM streak_boundaries
-          WHERE is_absent_day
-            AND (first_non_absent_rn IS NULL OR rn < first_non_absent_rn)
+          SELECT student_uuid, MAX(run_length)::int AS consecutive_absent_days
+          FROM absence_runs
           GROUP BY student_uuid
         ),
         attendance_summary AS (
@@ -352,22 +353,22 @@ export class RiskProfileRepository {
             ON teacher_signal.student_uuid = s.student_uuid
           LEFT JOIN case_summary cases ON cases.student_uuid = s.student_uuid
         ),
-        -- Three tiers only: ขาดสะสมถึงเกณฑ์ หรือมีเคสที่ยังไม่ปิด = เสี่ยง,
-        -- มีความคิดเห็นจากครู = เฝ้าระวัง, นอกนั้นปกติ. Absent days are cumulative,
-        -- not a streak. An open case keeps เสี่ยง into the next term, whose
-        -- absences start from zero, until the case is closed (owner, 2026-10-15).
+        -- Three tiers only: ขาดติดต่อกันถึงเกณฑ์ หรือมีเคสที่ยังไม่ปิด = เสี่ยง,
+        -- มีความคิดเห็นจากครู = เฝ้าระวัง, นอกนั้นปกติ. Absence is a consecutive
+        -- run, no longer cumulative (owner, 2026-10-15). An open case keeps เสี่ยง
+        -- into the next term, whose absences start from zero, until it is closed.
         -- Which tiers exist and how they order is data in student_risk_tiers;
         -- only the rule that picks one stays here.
         tiered AS (
           SELECT
             metrics.*,
             CASE
-              WHEN metrics.absent_days_since_case_reset >= $1::int THEN 'HIGH'
+              WHEN metrics.consecutive_absent_days >= $1::int THEN 'HIGH'
               WHEN metrics.open_case_count > 0 THEN 'HIGH'
               WHEN metrics.teacher_signal_count > 0 THEN 'WATCH'
               ELSE 'NORMAL'
             END AS risk_tier,
-            metrics.absent_days_since_case_reset::numeric / NULLIF($1::numeric, 0) AS risk_score
+            metrics.consecutive_absent_days::numeric / NULLIF($1::numeric, 0) AS risk_score
           FROM metrics
         ),
         -- risk_severity is the tier's own sort_order, read from the catalogue
