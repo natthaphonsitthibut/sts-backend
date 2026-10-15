@@ -47,7 +47,7 @@ export class ResetBuraphaPresentationData20261015130000 implements MigrationInte
   }
 }
 
-const RESET_SQL = `
+export const RESET_SQL = `
 CREATE OR REPLACE FUNCTION pg_temp.bkk(d date, hh int, mm int) RETURNS timestamptz
 LANGUAGE sql IMMUTABLE AS $$ SELECT ((d + make_time(hh, mm, 0)) AT TIME ZONE 'Asia/Bangkok') $$;
 CREATE OR REPLACE FUNCTION pg_temp.h(t text) RETURNS int
@@ -92,6 +92,32 @@ SELECT c.id, c.status, c.workflow_phase_code, c.student_uuid, c.person_uuid, c.s
 FROM cases c
 WHERE c.school_id = (SELECT school_id FROM ctx) AND c.deleted_at IS NULL AND c.status <> 'RESOLVED';
 
+-- Assignments made to a test account go to the student's homeroom teacher.
+CREATE TEMP TABLE test_links ON COMMIT DROP AS
+WITH homeroom AS (
+  SELECT DISTINCT ON (s.student_uuid) s.student_uuid, te.id AS teacher_id,
+         trim(te.first_name || ' ' || te.last_name) AS name, te.email
+  FROM student_term s
+  JOIN classroom_homeroom_teacher_assignments a ON a.classroom_id = s.classroom_id
+  JOIN school_teacher_memberships m ON m.id = a.teacher_membership_id
+  JOIN teachers te ON te.id = m.teacher_id
+  WHERE s."SchoolID_Onec" = (SELECT school_id FROM ctx)
+  ORDER BY s.student_uuid, a.is_primary DESC
+)
+SELECT l.id AS link_id, c.id AS case_id, trim(old.first_name || ' ' || old.last_name) AS old_name,
+       h.teacher_id, h.name, h.email
+FROM task_links l
+JOIN tasks t ON t.id = l.task_id
+JOIN cases c ON c.id = t.case_id
+JOIN teachers old ON old.id = l.assigned_teacher_id
+JOIN homeroom h ON h.student_uuid = c.student_uuid
+WHERE c.school_id = (SELECT school_id FROM ctx)
+  AND (old.first_name ILIKE 'test%' OR old.last_name ILIKE 'test%');
+UPDATE task_links l SET assigned_teacher_id = x.teacher_id, assigned_to_name = x.name, assigned_to_email = x.email
+FROM test_links x WHERE l.id = x.link_id;
+UPDATE notifications n SET reason_text = replace(n.reason_text, x.old_name, x.name)
+FROM test_links x WHERE n.case_id = x.case_id AND n.reason_text LIKE '%' || x.old_name || '%';
+
 -- Work recorded today on a case that is about to be closed in the past moves
 -- back two weeks so the story stays in order (assignment -> visit -> close).
 CREATE TEMP TABLE moved_tasks ON COMMIT DROP AS
@@ -102,8 +128,6 @@ UPDATE task_links l SET created_at = l.created_at - interval '14 days', updated_
 WHERE l.task_id IN (SELECT id FROM moved_tasks);
 UPDATE tasks t SET created_at = t.created_at - interval '14 days', updated_at = t.updated_at - interval '14 days'
 WHERE t.id IN (SELECT id FROM moved_tasks);
-UPDATE audit_log a SET created_at = a.created_at - interval '14 days'
-WHERE a.action = 'TASK_CREATE' AND a.target_type = 'task' AND a.target_id IN (SELECT id::text FROM moved_tasks);
 UPDATE notifications n SET created_at = n.created_at - interval '14 days'
 WHERE n.case_id IN (SELECT id FROM target_cases) AND n.case_status_code = 'IN_PROGRESS'
   AND n.created_at >= pg_temp.bkk(DATE '2026-10-13', 0, 0);
@@ -486,6 +510,23 @@ UPDATE attendance_sessions s SET
   recorded_count = (SELECT count(*) FROM attendance_session_roster r WHERE r.session_id = s.id AND r.deleted_at IS NULL),
   exception_count = (SELECT count(*) FROM attendance_exceptions e WHERE e.session_id = s.id AND e.deleted_at IS NULL)
 WHERE s.id IN (SELECT id FROM all_sessions);
+
+-- Each classroom's rounds are checked by its homeroom teacher.
+WITH room_homeroom AS (
+  SELECT DISTINCT ON (a.classroom_id) a.classroom_id, a.teacher_membership_id
+  FROM classroom_homeroom_teacher_assignments a
+  ORDER BY a.classroom_id, a.is_primary DESC
+)
+UPDATE attendance_sessions s
+SET started_by_teacher_membership_id = h.teacher_membership_id,
+    submitted_by_teacher_membership_id = h.teacher_membership_id
+FROM room_homeroom h
+WHERE s.classroom_id = h.classroom_id AND s.school_id = (SELECT school_id FROM ctx)
+  AND s.school_term_id = (SELECT term_id FROM ctx) AND s.deleted_at IS NULL;
+UPDATE attendance_exceptions e SET marked_by_teacher_membership_id = s.submitted_by_teacher_membership_id
+FROM attendance_sessions s
+WHERE e.session_id = s.id AND s.school_id = (SELECT school_id FROM ctx) AND s.school_term_id = (SELECT term_id FROM ctx)
+  AND e.marked_by_teacher_membership_id IS DISTINCT FROM s.submitted_by_teacher_membership_id;
 
 INSERT INTO attendance_submission_history (session_id, school_id, submission_number, actor_user_id, actor_teacher_membership_id, source,
   classroom_attendance_link_id, submitted_at, expected_roster_count, exception_count, created_at)
