@@ -92,8 +92,8 @@ const OPT_IN_PAGE_IDS: ReadonlySet<string> = new Set(
 // Council ผู้ดูแลระบบ holds every page — "แอดมินสภาก็คงทำได้ทุกอย่าง" (owner,
 // 2026-09-25) — so it can build any school's accounts and menu groups. Opt-in
 // pages (เช็กชื่อ) are the exception: no default group has them (owner, 2026-09-26).
-// Neither are the case actions: an admin reads cases, the school's ผอ. assigns
-// and reviews them (owner, 2026-09-28).
+// Neither is managing cases: an admin reads them, the school's ผอ. acts on them
+// (owner, 2026-09-28; reaffirmed 2026-10-15).
 const COUNCIL_EXCLUDED_DEFAULTS: ReadonlySet<string> = new Set(CASE_ACTION_PERMISSIONS);
 const ADMIN_DEFAULT_PERMISSIONS = VALID_PERMISSION_IDS.filter(
   (id) => !OPT_IN_PAGE_IDS.has(id) && !COUNCIL_EXCLUDED_DEFAULTS.has(id),
@@ -135,9 +135,9 @@ export const DIRECTOR_DEFAULT_PERMISSIONS = [
   // ส่งออกข้อมูล only — not นำเข้า (owner, 2026-09-25).
   'export-data',
   'audit-log',
-  // The case workflow is the ผอ.'s: assign and review (owner, 2026-09-28).
-  'case:assign',
-  'case:review',
+  // The case workflow is the ผอ.'s: open, assign, review (owner, 2026-09-28;
+  // one permission since 2026-10-15). Admins and executives read only by default.
+  'case:manage',
 ];
 
 // แชตบอท is ผู้บริหาร's alone — not ผอ. (owner, 2026-09-25).

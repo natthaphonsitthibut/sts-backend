@@ -303,7 +303,7 @@ async function main() {
       [observedStudentUuid, observedDisadvantageCode],
     );
     observedDisadvantageWasPresent = existingDisadvantage.present === true;
-    const permissions = ['home', 'dashboard', 'students', 'case:assign', 'case:review'];
+    const permissions = ['home', 'dashboard', 'students', 'case:manage'];
     const [actor] = await dataSource.query(
       `INSERT INTO users (username, password, "FirstName", "LastName", status, permissions,
          role, data_scope, must_change_password, data_origin_code)

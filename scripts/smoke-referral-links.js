@@ -153,7 +153,7 @@ async function main() {
       userIds.push(Number(row.id));
       return Number(row.id);
     };
-    const directorPermissions = ['dashboard', 'case:assign', 'case:review'];
+    const directorPermissions = ['dashboard', 'case:manage'];
     const directorId = await fixtureUser(USERNAME, directorPermissions);
     const readerId = await fixtureUser(READER_USERNAME, ['dashboard']);
     const foreignId = await fixtureUser(
@@ -296,7 +296,7 @@ async function main() {
       body: { ...sendBody('ส่งต่อ'), referral_agency_id: 999999999 },
     });
     console.log(
-      'ok ส่งต่อหน่วยงาน parks the case in รอส่งต่อ; sending needs case:review, an agency and a window',
+      'ok ส่งต่อหน่วยงาน parks the case in รอส่งต่อ; sending needs case:manage, an agency and a window',
     );
 
     // 2. Wrong codes count down and the fifth locks the link; a locked round

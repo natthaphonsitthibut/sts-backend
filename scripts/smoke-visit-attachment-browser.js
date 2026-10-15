@@ -545,7 +545,7 @@ async function main() {
     // page-bound, so holding `dashboard` — which opens /tasks/:id — has to be
     // enough to open the attachments that page renders. `students` is left out
     // so the check fails if the file route is ever tightened past its page.
-    const permissions = ['home', 'dashboard', 'case:assign', 'case:review'];
+    const permissions = ['home', 'dashboard', 'case:manage'];
     const [actor] = await dataSource.query(
       `INSERT INTO users (username, password, "FirstName", "LastName", status, permissions,
          role, data_scope, must_change_password, data_origin_code)

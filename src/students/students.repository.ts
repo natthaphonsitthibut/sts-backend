@@ -382,7 +382,7 @@ export class StudentsRepository {
       LEFT JOIN LATERAL (
         SELECT c.student_lat, c.student_lng
         FROM cases c
-        WHERE c.student_uuid = s.student_uuid
+        WHERE c.person_uuid = s.person_uuid
           AND c.student_lat IS NOT NULL
           AND c.student_lng IS NOT NULL
           AND c.deleted_at IS NULL

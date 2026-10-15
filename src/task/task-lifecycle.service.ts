@@ -608,7 +608,7 @@ export class TaskLifecycleService {
             })
           : null;
       const violation = databaseError?.driverError ?? databaseError;
-      if (violation?.code === '23505' && violation.constraint === 'uq_cases_active_student_uuid') {
+      if (violation?.code === '23505' && violation.constraint === 'uq_cases_active_person_uuid') {
         this.logger.warn({ event: 'case_assignment_conflict', reason: 'ACTIVE_CASE_EXISTS' });
         throw new ConflictException('นักเรียนมีเคสที่เปิดอยู่แล้ว กรุณาโหลดข้อมูลล่าสุด');
       }

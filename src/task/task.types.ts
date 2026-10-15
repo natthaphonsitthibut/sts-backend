@@ -42,7 +42,8 @@ export type RiskDashboardSortBy =
   | 'attendance'
   | 'openCases'
   | 'updatedAt'
-  | 'problemCategory';
+  | 'problemCategory'
+  | 'priority';
 export type RiskDashboardSortDirection = 'asc' | 'desc';
 
 /** The global school/area filter a follow-up aggregate is narrowed to. */
@@ -63,6 +64,8 @@ export interface ReferralDrilldownFilters extends FollowUpAreaFilters {
   /** Where the referral stands in the flow; see `REFERRAL_STAGE_SQL`. */
   stageCode?: string;
   searchTerm?: string;
+  sortBy?: 'name' | 'grade' | 'room' | 'agency' | 'referredAt';
+  sortDirection?: 'asc' | 'desc';
 }
 
 export interface RiskDashboardFilters {
@@ -83,7 +86,8 @@ export interface RiskDashboardFilters {
     | 'AWAITING_REFERRAL'
     | 'AWAITING_REFERRAL_OUTCOME'
     | 'REFERRAL_NOT_SUCCEEDED'
-    | 'RESOLVED';
+    | 'RESOLVED'
+    | 'NOT_OPENED';
   /**
    * Narrows the watchlist to one concern level. Unset lists every level, so the
    * three level counts always add up to the number of rows.
@@ -164,6 +168,7 @@ export interface RiskDashboardRow extends QueryResultRow {
   latest_case_id: number | string | null;
   latest_case_status: string | null;
   latest_case_at: string | null;
+  latest_activity_at: string | null;
   latest_case_link_token_encrypted?: string | null;
   latest_case_magic_link?: string | null;
   latest_case_had_assignment: boolean;
@@ -175,6 +180,10 @@ export interface RiskDashboardRow extends QueryResultRow {
   pending_comment_count?: number | string;
   /** When the latest case was closed; observations after it start a new round. */
   last_case_resolved_at?: Date | string | null;
+  /** When the watch was last closed without a case (ปิดการเฝ้าระวัง). */
+  last_watch_closed_at?: Date | string | null;
+  /** An undecided observation from an earlier term, with no case following it. */
+  pending_from_previous_term?: boolean | null;
   teacher_comment: string | null;
 }
 

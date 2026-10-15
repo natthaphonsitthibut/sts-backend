@@ -60,7 +60,7 @@ async function main() {
       admin.id,
     );
     const actor = await app.get(AuthActorService).loadRequiredUser({ headers: { cookie } });
-    if (!actor || !['case:assign', 'case:review'].every((p) => actor.permissions.includes(p)))
+    if (!actor || !actor.permissions.includes('case:manage'))
       throw new Error('Administrator lacks case permissions');
     const agencies = await db.query(
       `SELECT id,agency_name FROM referral_agencies WHERE is_active ORDER BY id LIMIT 3`,

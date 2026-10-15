@@ -65,7 +65,7 @@ async function main() {
     );
     assert(enrollment, 'need one canonical student whose classroom has a teacher');
 
-    const permissions = ['dashboard', 'students', 'case:assign', 'case:review'];
+    const permissions = ['dashboard', 'students', 'case:manage'];
     const [actor] = await dataSource.query(
       `INSERT INTO users (username, password, "FirstName", "LastName", status, permissions,
          role, data_scope, must_change_password, data_origin_code)
@@ -148,7 +148,7 @@ async function main() {
       'assistance measures catalogue is not seeded',
     );
 
-    // A fixture gets real permissions; an actor without case:review still fails.
+    // A fixture gets real permissions; an actor without case:manage still fails.
     let reviewDenied = false;
     try {
       await caseService.reviewCase(
@@ -156,14 +156,14 @@ async function main() {
         { review_action: 'ASSIST', assistance_measure_codes: ['SCHOLARSHIP'] },
         {
           ...reviewer,
-          permissions: permissions.filter((permission) => permission !== 'case:review'),
+          permissions: permissions.filter((permission) => permission !== 'case:manage'),
         },
       );
     } catch (error) {
       reviewDenied = error.getStatus?.() === 403;
       if (!reviewDenied) throw error;
     }
-    assert(reviewDenied, 'review without case:review was not denied');
+    assert(reviewDenied, 'review without case:manage was not denied');
 
     // 2. ASSIST moves the case back to OPEN inside the assistance phase.
     const assisted = await caseService.reviewCase(

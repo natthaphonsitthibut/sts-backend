@@ -187,6 +187,33 @@ async function main() {
     );
     assert(searchPlaceholder, 'referral search placeholder changed');
 
+    // ---- referral headers sort like the other tabs (owner, 2026-10-15):
+    // unsorted by default, วันที่ส่งต่อ toggles asc → desc → back to default.
+    const referralSortHeader = (label) => `[...document.querySelectorAll('th')]
+      .find((th) => th.innerText.trim().startsWith(${JSON.stringify('LABEL')}))`.replace('LABEL', label);
+    for (const label of ['ชื่อนักเรียน', 'ชั้น', 'ห้อง', 'หน่วยงานที่ส่งต่อ', 'วันที่ส่งต่อ']) {
+      assert(
+        await client.evaluate(`Boolean((${referralSortHeader(label)})?.querySelector('button'))`),
+        `referral header ${label} is not sortable`,
+      );
+    }
+    const dateHeader = referralSortHeader('วันที่ส่งต่อ');
+    assert(
+      await client.evaluate(`!(${dateHeader}).hasAttribute('aria-sort')`),
+      'referral table starts sorted by a column instead of the default',
+    );
+    for (const expected of ['ascending', 'descending', null]) {
+      await client.evaluate(`(${dateHeader}).querySelector('button').click()`);
+      await waitFor(
+        () => client.evaluate(`(${dateHeader}).getAttribute('aria-sort') === ${JSON.stringify(expected)}`),
+        `referral วันที่ส่งต่อ header did not move to ${expected ?? 'default'}`,
+      );
+      await waitFor(
+        async () => (await bodyText(client)).includes(referral.student_name),
+        `referral rows did not reload after sorting ${expected ?? 'default'}`,
+      );
+    }
+
     // ---- another school: the referral table follows the header filter
     if (otherSchool) {
       await setSchoolFilter(otherSchool);
@@ -226,7 +253,8 @@ async function main() {
 
     // Hidden statuses must never reach RISK, even on the first request from an
     // old bookmark or when moving from the watchlist without remounting.
-    for (const status of ['AWAITING_REFERRAL', 'AWAITING_REFERRAL_OUTCOME']) {
+    // NOT_OPENED is the เฝ้าระวัง "ยังไม่เปิดเคส" badge — never a risk filter.
+    for (const status of ['AWAITING_REFERRAL', 'AWAITING_REFERRAL_OUTCOME', 'NOT_OPENED']) {
       await navigate(client, `/student-risk-report/risk?caseStatus=${status}`);
       const riskIsNormalized = `(() => {
         const requests = window.__reportFilterRequests ?? [];

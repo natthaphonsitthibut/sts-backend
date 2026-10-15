@@ -84,6 +84,15 @@ export const REFERRAL_STAGE_CODES = [
   'RESOLVED',
 ] as const;
 export type ReferralStageCode = (typeof REFERRAL_STAGE_CODES)[number];
+/** Sortable งานส่งต่อ columns; unset = newest วันที่ส่งต่อ first. */
+export const REFERRAL_DRILLDOWN_SORT_FIELDS = [
+  'name',
+  'grade',
+  'room',
+  'agency',
+  'referredAt',
+] as const;
+export const REFERRAL_DRILLDOWN_SORT_DIRECTIONS = ['asc', 'desc'] as const;
 
 export class GetReferralDrilldownQueryDto extends PaginatedSearchQueryDto {
   @IsOptional()
@@ -136,6 +145,14 @@ export class GetReferralDrilldownQueryDto extends PaginatedSearchQueryDto {
   @IsOptional()
   @IsIn(REFERRAL_STAGE_CODES)
   stageCode?: ReferralStageCode;
+
+  @IsOptional()
+  @IsIn(REFERRAL_DRILLDOWN_SORT_FIELDS)
+  sortBy?: (typeof REFERRAL_DRILLDOWN_SORT_FIELDS)[number];
+
+  @IsOptional()
+  @IsIn(REFERRAL_DRILLDOWN_SORT_DIRECTIONS)
+  sortDirection?: (typeof REFERRAL_DRILLDOWN_SORT_DIRECTIONS)[number];
 }
 
 export class TaskGoogleCallbackDto extends ExternalOAuthCallbackDto {
@@ -608,6 +625,17 @@ export class OpenCaseDto {
   reason!: string;
 }
 
+/** ปิดการเฝ้าระวัง: the student returns to ปกติ without a case. */
+export class CloseWatchDto {
+  @IsUUID()
+  student_id!: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(1000)
+  note?: string;
+}
+
 export class GetCasesQueryDto extends PaginationQueryDto {
   @IsOptional()
   @IsString()
@@ -654,6 +682,7 @@ export const RISK_DASHBOARD_SORT_FIELDS = [
   'openCases',
   'updatedAt',
   'problemCategory',
+  'priority',
 ] as const;
 export const RISK_DASHBOARD_SORT_DIRECTIONS = ['asc', 'desc'] as const;
 export const RISK_DASHBOARD_CASE_STATUSES = [
@@ -665,6 +694,8 @@ export const RISK_DASHBOARD_CASE_STATUSES = [
   'AWAITING_REFERRAL_OUTCOME',
   'REFERRAL_NOT_SUCCEEDED',
   'RESOLVED',
+  /** เฝ้าระวัง only: no case yet, or a closed one with new observations. */
+  'NOT_OPENED',
 ] as const;
 export const RISK_DASHBOARD_STUDENT_GROUPS = ['RISK', 'WATCHLIST'] as const;
 /** Mirrors the classroom_student_comment_concern_levels catalog. */

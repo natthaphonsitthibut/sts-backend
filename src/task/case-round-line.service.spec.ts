@@ -122,17 +122,17 @@ describe('CaseRoundLineService', () => {
     ).rejects.toBeInstanceOf(GoneException);
   });
 
-  // `case:assign` gates this action at the controller; the service itself
+  // `case:manage` gates this action at the controller; the service itself
   // only enforces the case scope, exactly like every other case action, so an
   // EXECUTIVE holding that permission sends the round's link like anyone else.
-  it('lets an EXECUTIVE with case:assign send the round link within scope', async () => {
+  it('lets an EXECUTIVE with case:manage send the round link within scope', async () => {
     const { service, repository, messaging } = setup();
 
     await expect(
       service.send(5, LINK.task_id, REQUEST_ID, {
         ...ACTOR,
         roles: ['EXECUTIVE'],
-        permissions: ['dashboard', 'case:assign'],
+        permissions: ['dashboard', 'case:manage'],
       }),
     ).resolves.toMatchObject({ data: { status: 'SENT' } });
     expect(repository.findCaseById).toHaveBeenCalledWith(

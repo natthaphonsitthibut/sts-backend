@@ -11,3 +11,21 @@ export const CASE_COMMENT_COMPLETION_BASELINE_SQL = `
   WHERE closed_student.person_uuid = s.person_uuid
     AND closed_case.status = 'RESOLVED' AND closed_case.deleted_at IS NULL
 `;
+
+/**
+ * When a student's เฝ้าระวัง was last decided — a case closed, or the watch
+ * itself closed without a case (owner, 2026-10-15). Comments after it are the
+ * ones still waiting for a decision. Correlated on student alias s, across
+ * every enrollment of the same person.
+ */
+export const WATCH_RESET_BASELINE_SQL = `
+  SELECT GREATEST(
+    (${CASE_COMMENT_COMPLETION_BASELINE_SQL}),
+    (
+      SELECT MAX(closure.closed_at)
+      FROM student_watch_closures closure
+      JOIN student_term closed_student ON closed_student.student_uuid = closure.student_uuid
+      WHERE closed_student.person_uuid = s.person_uuid
+    )
+  ) AS reset_at
+`;

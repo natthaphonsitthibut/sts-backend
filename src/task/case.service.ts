@@ -18,7 +18,7 @@ import { buildStudentTermAddress } from '../common/utils/student-address.util';
 import { encodeMediaVersion } from '../common/utils/media-version.util';
 import { RiskProfileService } from '../risk-profile/risk-profile.service';
 import { StudentGeocodeCacheService } from '../student-geocode/student-geocode-cache.service';
-import { CancelCaseAssignmentDto, OpenCaseDto, ReviewCaseDto } from './dto/task.dto';
+import { CancelCaseAssignmentDto, CloseWatchDto, OpenCaseDto, ReviewCaseDto } from './dto/task.dto';
 import { CaseTrackingOptionsService } from './case-tracking-options.service';
 import { TaskPolicyService } from './task-policy.service';
 import { TaskRepository, type CaseScopeContext } from './task.repository';
@@ -83,7 +83,7 @@ export class CaseService {
     actor: AuthenticatedRequestUser,
     requiredPermission: string,
   ): void {
-    if (!this.taskPolicyService.hasPermission(actor, 'case:review')) {
+    if (!this.taskPolicyService.hasPermission(actor, 'case:manage')) {
       throw new ForbiddenException('ไม่มีสิทธิ์ดำเนินการกับเคสนี้');
     }
 
@@ -329,7 +329,7 @@ export class CaseService {
 
   async openCase(body: OpenCaseDto, actor?: AuthenticatedRequestUser) {
     const currentActor = this.taskPolicyService.ensureActor(actor);
-    if (!this.taskPolicyService.hasPermission(currentActor, 'case:assign')) {
+    if (!this.taskPolicyService.hasPermission(currentActor, 'case:manage')) {
       throw new ForbiddenException('ไม่มีสิทธิ์เปิดเคสนักเรียน');
     }
 
@@ -340,6 +340,79 @@ export class CaseService {
       label: this.actorLabel(currentActor),
       canReadStudentIdentity: this.taskPolicyService.hasPermission(currentActor, 'students'),
     });
+  }
+
+  /**
+   * ปิดการเฝ้าระวัง: decide a เฝ้าระวัง student without a case (owner,
+   * 2026-10-15). The other decision, ติดตาม, is opening a case. Refused while a
+   * case is active (that case is the decision) or when nothing is waiting.
+   */
+  async closeWatch(body: CloseWatchDto, actor?: AuthenticatedRequestUser) {
+    const currentActor = this.taskPolicyService.ensureActor(actor);
+    if (!this.taskPolicyService.hasPermission(currentActor, 'case:manage')) {
+      throw new ForbiddenException('ไม่มีสิทธิ์ปิดการเฝ้าระวัง');
+    }
+    const studentUuid = this.normalizeText(body.student_id);
+    const note = clean(this.normalizeText(body.note)) || null;
+    const actorId = this.normalizeNumber(currentActor.id);
+    if (!studentUuid) {
+      throw new BadRequestException('student_id is required');
+    }
+    if (actorId === null) {
+      throw new ForbiddenException('ไม่มีสิทธิ์ปิดการเฝ้าระวัง');
+    }
+
+    const closure = await this.taskRepository.withTransaction(async (executor) => {
+      const student = await this.taskRepository.findStudentForCaseCreation(
+        studentUuid,
+        currentActor,
+        executor,
+      );
+      if (!student) {
+        throw new NotFoundException('Student not found');
+      }
+      const activeCase = await this.taskRepository.findActiveCaseByStudentUuid(
+        studentUuid,
+        currentActor,
+        executor,
+      );
+      if (activeCase) {
+        throw new ConflictException('นักเรียนมีเคสที่กำลังติดตามอยู่ จึงปิดการเฝ้าระวังไม่ได้');
+      }
+      const undecided = await this.taskRepository.countUndecidedWatchComments(
+        studentUuid,
+        executor,
+      );
+      if (undecided === 0) {
+        throw new ConflictException('ไม่มีข้อสังเกตที่รอพิจารณา');
+      }
+      const created = await this.taskRepository.createWatchClosure(
+        { studentUuid, note, closedByUserId: actorId },
+        executor,
+      );
+      return { ...created, schoolId: this.normalizeNumber(student.school_id) };
+    });
+
+    await this.auditLog.record({
+      actorUserId: resolveAuditActorId(currentActor),
+      actorLabel: this.actorLabel(currentActor),
+      action: 'WATCH_CLOSE',
+      targetType: 'student',
+      targetId: studentUuid,
+      metadata: { schoolId: closure.schoolId, closureId: closure.id },
+      ip: null,
+    });
+    await this.riskProfileService
+      ?.requestStudentRecalculation([studentUuid], 'watch-close')
+      .catch((error) => {
+        const message = error instanceof Error ? error.message : String(error);
+        this.logger.error(`Failed to recalculate closed watch risk profile: ${message}`);
+      });
+
+    return {
+      success: true,
+      data: { id: closure.id, student_id: studentUuid, closed_at: closure.closed_at },
+    };
   }
 
   /**
@@ -558,7 +631,7 @@ export class CaseService {
     actor?: AuthenticatedRequestUser,
   ) {
     const currentActor = this.taskPolicyService.ensureActor(actor);
-    if (!this.taskPolicyService.hasPermission(currentActor, 'case:assign')) {
+    if (!this.taskPolicyService.hasPermission(currentActor, 'case:manage')) {
       throw new ForbiddenException('บัญชีนี้ไม่มีสิทธิ์ยกเลิกการมอบหมาย');
     }
     const reason = clean(this.normalizeText(body.cancel_reason)) || null;

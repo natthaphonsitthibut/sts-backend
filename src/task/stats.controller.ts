@@ -91,6 +91,8 @@ export class StatsController {
         statusCode: query.statusCode?.trim() || undefined,
         stageCode: query.stageCode,
         searchTerm: query.searchTerm?.trim() || undefined,
+        sortBy: query.sortBy,
+        sortDirection: query.sortDirection,
       },
       query.page,
       query.limit,

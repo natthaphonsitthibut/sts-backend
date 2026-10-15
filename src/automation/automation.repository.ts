@@ -279,7 +279,9 @@ export class AutomationRepository {
           AND deleted_at IS NULL
           AND ($4::int IS NULL OR school_id = $4)
           AND (
-            (student_uuid IS NOT NULL AND student_uuid = $2)
+            (student_uuid IS NOT NULL AND person_uuid = (
+              SELECT st.person_uuid FROM student_term st WHERE st.student_uuid = $2::uuid
+            ))
             OR ($4::int IS NOT NULL AND student_uuid IS NULL AND student_name = $3)
           )
       `,

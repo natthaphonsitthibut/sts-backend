@@ -1,7 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { DataSource } from 'typeorm';
 import { queryDataSource } from '../database/sql-query';
-import { CASE_COMMENT_COMPLETION_BASELINE_SQL } from '../task/case-comment-baseline.sql';
+import { WATCH_RESET_BASELINE_SQL } from '../task/case-comment-baseline.sql';
 import type { RiskDashboardThresholds } from '../task/task.types';
 
 interface CountRow extends Record<string, unknown> {
@@ -158,8 +158,10 @@ export class RiskProfileRepository {
             MAX(COALESCE(latest_review.reviewed_at, tracked_case.updated_at))::date
               AS reset_after_date
           FROM selected_students s
+          -- A case follows the student across terms, so the last closed one
+          -- resets the count whichever enrollment it was opened in.
           JOIN cases tracked_case
-            ON tracked_case.student_uuid = s.student_uuid
+            ON tracked_case.person_uuid = s.person_uuid
            AND tracked_case.status = 'RESOLVED'
            AND tracked_case.deleted_at IS NULL
           LEFT JOIN LATERAL (
@@ -262,7 +264,9 @@ export class RiskProfileRepository {
           FROM classroom_student_comments comment
           WHERE comment.concern_level_code IN ('WATCH', 'CONCERN')
         ),
-        -- เฝ้าระวัง comes from the teacher comments a student carries across terms.
+        -- เฝ้าระวัง comes from the teacher comments not yet decided: written after
+        -- the last closed case or closed watch. An undecided comment from an
+        -- earlier term still counts until someone decides it (owner, 2026-10-15).
         teacher_signal_summary AS (
           SELECT
             s.student_uuid,
@@ -270,22 +274,24 @@ export class RiskProfileRepository {
             MAX(signal.created_at) AS latest_signal_at
           FROM selected_students s
           LEFT JOIN LATERAL (
-            ${CASE_COMMENT_COMPLETION_BASELINE_SQL}
-          ) comment_baseline ON TRUE
+            ${WATCH_RESET_BASELINE_SQL}
+          ) watch_reset ON TRUE
           JOIN teacher_signal_events signal ON signal.person_uuid = s.person_uuid
-            AND signal.created_at > COALESCE(comment_baseline.completed_at, '-infinity'::timestamptz)
+            AND signal.created_at > COALESCE(watch_reset.reset_at, '-infinity'::timestamptz)
           GROUP BY s.student_uuid
         ),
+        -- An open case is carried into every later term until it is closed
+        -- (owner, 2026-10-15), so it is matched by person, not enrollment.
         case_summary AS (
           SELECT
-            c.student_uuid,
+            s.student_uuid,
             COUNT(*)::int AS open_case_count,
             (array_agg(c.id ORDER BY c.created_at DESC, c.id DESC))[1] AS latest_open_case_id,
             (array_agg(latest_task.task_id ORDER BY c.created_at DESC, c.id DESC))[1]
               AS latest_open_task_id,
             MAX(c.created_at) AS latest_case_at
           FROM cases c
-          JOIN selected_students s ON s.student_uuid = c.student_uuid
+          JOIN selected_students s ON s.person_uuid = c.person_uuid
           LEFT JOIN LATERAL (
             SELECT t.id AS task_id
             FROM tasks t
@@ -299,7 +305,7 @@ export class RiskProfileRepository {
               'OPEN', 'IN_PROGRESS', 'PENDING_REVIEW', 'STUDENT_NOT_FOUND', 'AWAITING_REFERRAL',
               'AWAITING_REFERRAL_OUTCOME', 'REFERRAL_NOT_SUCCEEDED'
             )
-          GROUP BY c.student_uuid
+          GROUP BY s.student_uuid
         ),
         metrics AS (
           SELECT
@@ -346,8 +352,10 @@ export class RiskProfileRepository {
             ON teacher_signal.student_uuid = s.student_uuid
           LEFT JOIN case_summary cases ON cases.student_uuid = s.student_uuid
         ),
-        -- Three tiers only: ขาดสะสมถึงเกณฑ์ = เสี่ยง, มีความคิดเห็นจากครู =
-        -- เฝ้าระวัง, นอกนั้นปกติ. Absent days are cumulative, not a streak.
+        -- Three tiers only: ขาดสะสมถึงเกณฑ์ หรือมีเคสที่ยังไม่ปิด = เสี่ยง,
+        -- มีความคิดเห็นจากครู = เฝ้าระวัง, นอกนั้นปกติ. Absent days are cumulative,
+        -- not a streak. An open case keeps เสี่ยง into the next term, whose
+        -- absences start from zero, until the case is closed (owner, 2026-10-15).
         -- Which tiers exist and how they order is data in student_risk_tiers;
         -- only the rule that picks one stays here.
         tiered AS (
@@ -355,6 +363,7 @@ export class RiskProfileRepository {
             metrics.*,
             CASE
               WHEN metrics.absent_days_since_case_reset >= $1::int THEN 'HIGH'
+              WHEN metrics.open_case_count > 0 THEN 'HIGH'
               WHEN metrics.teacher_signal_count > 0 THEN 'WATCH'
               ELSE 'NORMAL'
             END AS risk_tier,

@@ -100,13 +100,14 @@ export const NON_PAGE_PERMISSIONS: Array<{ id: string; title: string }> = [
   // (owner, 2026-09-28).
   { id: 'audit-log:all', title: 'บันทึกการใช้งานทั้งหมด' },
   // Acting on a case is separate from reading it: รายงานสถานะนักเรียน (`dashboard`)
-  // lets an account open a case, and only these let it change one — so a menu
-  // group can read cases without assigning or reviewing them (owner, 2026-09-28).
-  { id: 'case:assign', title: 'มอบหมายการติดตามและการช่วยเหลือ' },
-  { id: 'case:review', title: 'พิจารณาเคส' },
+  // reads cases, and this one permission does everything on them — open, assign,
+  // review, refer, and decide a เฝ้าระวัง student. One level, not one per button,
+  // so a group that can act can do every action on the page (owner, 2026-10-15).
+  // Only ผอ. starts with it; any group can be given it.
+  { id: 'case:manage', title: 'จัดการเคส' },
 ];
 
-/** The case-action permissions, which no council default group starts with. */
-export const CASE_ACTION_PERMISSIONS = ['case:assign', 'case:review'] as const;
+/** The case-action permission, which no council default group starts with. */
+export const CASE_ACTION_PERMISSIONS = ['case:manage'] as const;
 
 export const GRANTABLE_PAGE_PERMISSIONS = APP_PAGES;

@@ -137,7 +137,7 @@ async function main() {
       "FirstName","LastName",role,data_scope,must_change_password,data_origin_code)
       VALUES ($1,'NOT_A_LOGIN_CREDENTIAL','ACTIVE',$2::jsonb,'ทดสอบ','แจ้งเตือน',
         'ADMIN',$3::jsonb,FALSE,'AUTOMATED_TEST') RETURNING id`,
-      [`immediate_alert_${suffix}`,JSON.stringify(['attendance','settings','review-cases','case:assign','dashboard']),
+      [`immediate_alert_${suffix}`,JSON.stringify(['attendance','settings','review-cases','case:manage','dashboard']),
         JSON.stringify({global:true})]);
     user = Number(actor.id);
     const [otherSchool] = await db.query('SELECT id FROM schools WHERE id<>$1 ORDER BY id LIMIT 1',[context.school_id]);

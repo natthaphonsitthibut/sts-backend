@@ -613,6 +613,12 @@ const ACTION_DEFINITIONS: Record<string, AuditActionDefinition> = {
     label: 'ยกเลิกเคสอัตโนมัติ',
     detailKeys: [],
   },
+  WATCH_CLOSE: {
+    domain: 'cases',
+    category: 'cases',
+    label: 'ปิดการเฝ้าระวัง',
+    detailKeys: [],
+  },
   CASE_RISK_SIGNAL_DETECTED: {
     domain: 'cases',
     category: 'cases',

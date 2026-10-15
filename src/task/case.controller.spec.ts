@@ -8,10 +8,11 @@ describe('CaseController', () => {
     ['getCase', 'dashboard'],
     ['getCaseTasks', 'dashboard'],
     ['getCaseReviews', 'dashboard'],
-    ['openCase', 'case:assign'],
-    ['sendRoundLine', 'case:assign'],
-    ['cancelCaseAssignment', 'case:assign'],
-    ['reviewCase', 'case:review'],
+    ['openCase', 'case:manage'],
+    ['sendRoundLine', 'case:manage'],
+    ['cancelCaseAssignment', 'case:manage'],
+    ['reviewCase', 'case:manage'],
+    ['closeWatch', 'case:manage'],
   ])('%s requires %s', (methodName, permission) => {
     const handler = Object.getOwnPropertyDescriptor(CaseController.prototype, methodName)
       ?.value as () => unknown;
