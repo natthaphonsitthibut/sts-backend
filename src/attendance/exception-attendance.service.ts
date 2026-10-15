@@ -1,3 +1,4 @@
+import { AttendanceTrendCache } from '../home-dashboard/attendance-trend-cache.service';
 import {
   BadRequestException,
   ForbiddenException,
@@ -45,6 +46,7 @@ export class ExceptionAttendanceService {
     private readonly riskProfiles: RiskProfileService,
     @Inject(FILE_STORAGE_ADAPTER) private readonly storage: FileStorageAdapter,
     private readonly automation: AutomationService,
+    private readonly attendanceTrendCache: AttendanceTrendCache,
   ) {}
 
   private assertActorMatches(
@@ -513,6 +515,8 @@ export class ExceptionAttendanceService {
         changed: true,
       };
     });
+
+    this.attendanceTrendCache.invalidate();
 
     // Attendance is committed before the monitor reads effective daily records.
     // Also retry on an identical submit: a previous post-commit monitor failure

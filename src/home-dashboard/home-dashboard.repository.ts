@@ -1,4 +1,5 @@
 import { Injectable } from '@nestjs/common';
+import { AttendanceTrendCache } from './attendance-trend-cache.service';
 import { DataSource } from 'typeorm';
 import { isUnconfiguredDataScope, normalizeDataScope } from '../auth/auth.types';
 import { buildDataScopeQuery } from '../common/utils/authorization';
@@ -86,7 +87,10 @@ const DEFAULT_RISK_THRESHOLDS = {
 
 @Injectable()
 export class HomeDashboardRepository {
-  constructor(private readonly dataSource: DataSource) {}
+  constructor(
+    private readonly dataSource: DataSource,
+    private readonly attendanceTrendCache: AttendanceTrendCache,
+  ) {}
 
   private async query<T extends Record<string, unknown>>(sql: string, params?: unknown[]) {
     return await queryDataSource<T>(this.dataSource, sql, params);
@@ -539,6 +543,19 @@ export class HomeDashboardRepository {
     endsOn: string,
   ): Promise<HomeDashboardTrendPoint[]> {
     const scope = this.buildStudentScopeQuery(actor, filters, 3);
+    // The key encodes the complete server-authorized SQL scope, never a role
+    // label or client school id alone. Different dates/scopes cannot collide.
+    const key = JSON.stringify([scope.sql, scope.params, startsOn, endsOn]);
+    return this.attendanceTrendCache.read(key, () =>
+      this.loadAttendanceTrend(scope, startsOn, endsOn),
+    );
+  }
+
+  private async loadAttendanceTrend(
+    scope: ScopeQuery,
+    startsOn: string,
+    endsOn: string,
+  ): Promise<HomeDashboardTrendPoint[]> {
     const whereSql = [scope.sql].filter(Boolean).join(' AND ');
     const result = await this.query<{
       key: string;
@@ -548,22 +565,45 @@ export class HomeDashboardRepository {
       total: number | string;
     }>(
       `
+        WITH current_enrollment_snapshot AS MATERIALIZED (
+          -- Evaluate the canonical resolution once, without a parameter per day.
+          SELECT selected_student_uuid, resolution_state
+          FROM student_current_enrollment_resolution
+        ), scoped_students AS NOT MATERIALIZED (
+          SELECT s.student_uuid
+          FROM student_term s
+          LEFT JOIN schools sc ON sc.id = s."SchoolID_Onec"
+          LEFT JOIN grade_levels gl ON gl.id = s."GradeLevelID_Onec"
+          ${whereSql ? `WHERE ${whereSql}` : ''}
+        ), attendance_by_day AS MATERIALIZED (
+          -- Scope before aggregating; resolve current enrollment afterwards.
+          -- Its low cardinality estimate must not drive one attendance scan
+          -- per student. The fence also prevents repeated daily aggregation.
+          SELECT mark.student_uuid, mark."AttendanceDate",
+            CASE
+              WHEN COUNT(*) FILTER (WHERE mark."AttendanceStatus" <> 4) = 0 THEN 4
+              WHEN COUNT(*) FILTER (WHERE mark."AttendanceStatus" IN (1, 3)) = 0 THEN 2
+              WHEN COUNT(*) FILTER (WHERE mark."AttendanceStatus" = 3) > 0 THEN 3
+              ELSE 1
+            END AS "AttendanceStatus"
+          FROM attendance_effective_records mark
+          JOIN scoped_students scoped ON scoped.student_uuid = mark.student_uuid
+          WHERE mark."AttendanceDate" BETWEEN $1::date AND $2::date
+            AND mark.session_kind = 'SUBJECT'
+          GROUP BY mark.student_uuid, mark."AttendanceDate",
+            mark."AcademicYear_Onec", mark."Semester_Onec"
+        )
         SELECT
           a."AttendanceDate"::text AS key,
-          COUNT(*) FILTER (WHERE a."AttendanceStatus" = 1)::int AS present,
-          COUNT(*) FILTER (WHERE a."AttendanceStatus" = 2)::int AS absent,
-          COUNT(*) FILTER (WHERE a."AttendanceStatus" = 3)::int AS late,
-          COUNT(*)::int AS total
-        -- One row per student per day, derived from that day's periods, so the
-        -- chart and the risk engine answer "came to school" the same way.
-        FROM attendance_day a
-        JOIN student_term s ON s.student_uuid = a.student_uuid
-        ${CURRENT_ENROLLMENT_JOIN}
-        LEFT JOIN schools sc ON sc.id = s."SchoolID_Onec"
-        LEFT JOIN grade_levels gl ON gl.id = s."GradeLevelID_Onec"
-        WHERE a."AttendanceDate" BETWEEN $1::date AND $2::date
-          ${whereSql ? `AND ${whereSql}` : ''}
+          COUNT(*) FILTER (WHERE current_enrollment.resolution_state = 'ACTIVE' AND a."AttendanceStatus" = 1)::int AS present,
+          COUNT(*) FILTER (WHERE current_enrollment.resolution_state = 'ACTIVE' AND a."AttendanceStatus" = 2)::int AS absent,
+          COUNT(*) FILTER (WHERE current_enrollment.resolution_state = 'ACTIVE' AND a."AttendanceStatus" = 3)::int AS late,
+          COUNT(*) FILTER (WHERE current_enrollment.resolution_state = 'ACTIVE')::int AS total
+        FROM attendance_by_day a
+        LEFT JOIN current_enrollment_snapshot current_enrollment
+          ON current_enrollment.selected_student_uuid = a.student_uuid
         GROUP BY a."AttendanceDate"
+        HAVING COUNT(*) FILTER (WHERE current_enrollment.resolution_state = 'ACTIVE') > 0
         ORDER BY a."AttendanceDate" ASC
       `,
       [startsOn, endsOn, ...scope.params],

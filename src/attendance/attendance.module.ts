@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { HomeDashboardCacheModule } from '../home-dashboard/home-dashboard-cache.module';
 import { AutomationModule } from '../automation/automation.module';
 import { TokenEncryptionModule } from '../common/crypto/token-encryption.module';
 import { AttendanceService } from './attendance.service';
@@ -18,6 +19,7 @@ import { AttendanceImportService } from './attendance-import.service';
 
 @Module({
   imports: [
+    HomeDashboardCacheModule,
     AuthModule,
     RiskProfileModule,
     TokenEncryptionModule,
