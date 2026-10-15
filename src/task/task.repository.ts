@@ -3067,10 +3067,10 @@ export class TaskRepository {
             latest_comment.problem_description,
             CASE
               WHEN profile.absence_reset_after_date IS NULL
-                THEN CONCAT('ขาดสะสมทั้งเทอม ', COALESCE(profile.term_absent_days, 0), ' วัน')
+                THEN CONCAT('ขาดเรียนติดต่อกัน ', COALESCE(profile.consecutive_absent_days, 0), ' วัน')
               ELSE CONCAT(
-                'ขาดสะสมทั้งเทอม ', COALESCE(profile.term_absent_days, 0),
-                ' วัน · หลังปิดเคสล่าสุด ', COALESCE(profile.absent_days_since_case_reset, 0), ' วัน'
+                'ขาดเรียนติดต่อกัน ', COALESCE(profile.consecutive_absent_days, 0),
+                ' วัน หลังปิดเคสล่าสุด'
               )
             END
           ) AS teacher_comment,
