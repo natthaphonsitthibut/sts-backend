@@ -512,7 +512,7 @@ describe('TaskRepository', () => {
       { highAbsentDays: 3 },
     );
 
-    // A CONCERN wins over a newer WATCH for the same student. Which levels put
+    // The newest observation is shown, whatever its level. Which levels put
     // a student on the list is no longer baked into the lateral — every level is
     // read so all three can be counted, and the default WATCH/CONCERN pair is
     // applied afterwards as a parameter.
@@ -522,9 +522,8 @@ describe('TaskRepository', () => {
     // No level filter unless one is asked for: the three level counts have to
     // add up to the rows on screen.
     expect(queries[1].sql).not.toContain('concern_level_code =');
-    expect(queries[0].sql).toContain(
-      'concern_level.sort_order DESC, comment.created_at DESC, comment.id DESC',
-    );
+    expect(queries[0].sql).toContain('ORDER BY comment.created_at DESC, comment.id DESC');
+    expect(queries[0].sql).not.toContain('concern_level.sort_order DESC, comment.created_at');
     expect(queries[2].sql).toContain(
       'ORDER BY problem_category_label DESC NULLS LAST, student_name ASC',
     );

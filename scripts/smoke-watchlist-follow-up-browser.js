@@ -272,6 +272,22 @@ async function main() {
     assert(risk.risk_tier==='WATCH','New observation did not start a new watchlist round');
     watched=await watchlist();watchedRow=watched.body.data?.find(row=>row.studentId===student);
     assert(watchedRow?.pendingCommentCount===1 && watchedRow.commentCount===4 && watchedRow.teacherComment==='ข้อสังเกตใหม่หลังปิดเคส','New round counts/prioritized comment are incorrect');
+    assert(watchedRow.lastCaseResolvedAt,'Closed round time missing from watchlist row');
+    // A closed case with a new observation reads as a new round: unopened badge,
+    // counts from this round only, and the old observations labelled as history.
+    await send('Page.navigate',{url});
+    await waitFor(()=>evaluate(`Boolean(document.querySelector('input[placeholder="ค้นหาชื่อนักเรียน"]'))`),'New-round watchlist failed to load');
+    await evaluate(`(()=>{const i=document.querySelector('input[placeholder="ค้นหาชื่อนักเรียน"]');Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(i,${JSON.stringify(suffix)});i.dispatchEvent(new Event('input',{bubbles:true}));})()`);
+    await waitRow();state=await actions();
+    assert(state.text.includes('ยังไม่เปิดเคส') && !state.text.includes('เสร็จสิ้น') && !state.text.includes('รอพิจารณา'),'New round still shows the closed case status');
+    assert(await evaluate(`[...(${fixtureRow}).querySelectorAll('td')].some(cell=>cell.innerText.trim()==='1')`),'Observation count did not reset to this round');
+    await evaluate(`(${fixtureRow}).querySelector('button[aria-label^="ดูข้อสังเกตทั้งหมดของ"]').click()`);
+    await waitFor(()=>evaluate(`(()=>{const d=document.querySelector('[role="dialog"]');if(!d)return false;
+      const current=d.querySelector('[aria-labelledby="observations-current-round"]'),history=d.querySelector('[aria-labelledby="observations-history"]');
+      return Boolean(current&&history)&&d.innerText.includes('ข้อสังเกตหลังปิดเคสล่าสุด')&&d.innerText.includes('ประวัติข้อสังเกตก่อนปิดเคส')
+        &&current.querySelectorAll('li').length===1&&current.innerText.includes('ข้อสังเกตใหม่หลังปิดเคส')&&history.querySelectorAll('li').length===2&&!history.innerText.includes('ข้อสังเกตใหม่หลังปิดเคส');})()`),'Observation dialog did not separate this round from history');
+    await evaluate(`[...document.querySelector('[role="dialog"]').querySelectorAll('button')].find(button=>button.innerText.trim()==='ปิด').click()`);
+    await waitFor(async()=>!await evaluate(`Boolean(document.querySelector('[role="dialog"]'))`),'Observation dialog did not close');
     const [noAuto]=await db.query('SELECT count(*)::int AS total FROM cases WHERE student_uuid=$1 AND deleted_at IS NULL',[student]);
     assert(noAuto.total===1,'New observation unexpectedly auto-opened a case');
     const manual=await api('POST','/cases',{student_id:student,reason:'พิจารณาข้อสังเกตใหม่แล้ว'});

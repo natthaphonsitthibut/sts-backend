@@ -173,6 +173,8 @@ export interface RiskDashboardRow extends QueryResultRow {
   /** Every observation recorded for this student, not just the one shown. */
   comment_count: number | string;
   pending_comment_count?: number | string;
+  /** When the latest case was closed; observations after it start a new round. */
+  last_case_resolved_at?: Date | string | null;
   teacher_comment: string | null;
 }
 

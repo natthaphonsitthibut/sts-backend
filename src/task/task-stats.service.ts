@@ -331,6 +331,9 @@ export class TaskStatsService {
           concernLevelLabel: row.concern_level_label ?? null,
           commentCount: Number(row.comment_count ?? 0),
           pendingCommentCount: Number(row.pending_comment_count ?? 0),
+          lastCaseResolvedAt: row.last_case_resolved_at
+            ? new Date(row.last_case_resolved_at).toISOString()
+            : null,
           // Teacher comments are part of รายงานสถานะนักเรียน for every `dashboard`
           // holder, within scope (owner, 2026-09-29).
           teacherComment: row.teacher_comment ?? null,

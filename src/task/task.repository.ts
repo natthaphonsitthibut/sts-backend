@@ -3001,6 +3001,7 @@ export class TaskRepository {
           latest_comment.concern_level_label,
           COALESCE(comment_totals.comment_count, 0) AS comment_count,
           COALESCE(comment_totals.pending_comment_count, 0) AS pending_comment_count,
+          comment_baseline.completed_at AS last_case_resolved_at,
           COALESCE(
             latest_comment.problem_description,
             CASE
@@ -3067,11 +3068,10 @@ export class TaskRepository {
             ON concern_level.code = comment.concern_level_code
           WHERE comment.classroom_id = s.classroom_id
             AND comment.person_uuid = s.person_uuid
-          -- Prefer this round's observations over completed history. Within
-          -- the round, severity wins and recency breaks ties.
-          ORDER BY
-            (comment.created_at > COALESCE(comment_baseline.completed_at, '-infinity'::timestamptz)) DESC,
-            concern_level.sort_order DESC, comment.created_at DESC, comment.id DESC
+          -- The newest observation is shown, whatever its level, so the table
+          -- reflects how the student is now rather than an older, harsher note
+          -- (owner, 2026-10-14). A new round's note is always the newest.
+          ORDER BY comment.created_at DESC, comment.id DESC
           LIMIT 1
         ) latest_comment ON TRUE
         LEFT JOIN LATERAL (
@@ -3245,6 +3245,7 @@ export class TaskRepository {
           concern_level_label,
           comment_count,
           pending_comment_count,
+          last_case_resolved_at,
           teacher_comment
         FROM filtered
         ORDER BY ${orderBy}
