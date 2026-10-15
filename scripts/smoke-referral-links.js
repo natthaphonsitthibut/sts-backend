@@ -403,7 +403,7 @@ async function main() {
     );
     const report = {
       result_code: 'SUCCEEDED',
-      action_date: new Date().toISOString().slice(0, 10),
+      action_at: new Date().toISOString(),
       result_note: 'หน่วยงานช่วยเหลือเรียบร้อย นักเรียนกลับมาเรียนแล้ว',
     };
     await request('POST', `${linkPath(link.token)}/report`, 401, { body: report });
@@ -540,14 +540,14 @@ async function main() {
     console.log('ok code refresh: auth/scope/no-store, old code/challenges/sessions refused, revision race guarded, migration cycle/default/CHECK');
 
     // 6. One report, never from the future, then the link is spent.
-    const tomorrow = new Date(Date.now() + 36 * 3600_000).toISOString().slice(0, 10);
+    const inAnHour = new Date(Date.now() + 3600_000).toISOString();
     await request('POST', `${linkPath(link.token)}/report`, 400, {
       headers: session,
-      body: { ...report, action_date: tomorrow },
+      body: { ...report, action_at: inAnHour },
     });
     await request('POST', `${linkPath(link.token)}/report`, 400, {
       headers: session,
-      body: { ...report, action_date: '2026-02-31' },
+      body: { ...report, action_at: '2026-02-31T10:00:00+07:00' },
     });
     await request('POST', `${linkPath(link.token)}/report`, 200, {
       headers: session,
@@ -558,7 +558,7 @@ async function main() {
       'agency report did not return the case to review',
     );
     const [stored] = await dataSource.query(
-      `SELECT result.recorded_by_user_id, result.case_referral_link_id, result.action_date::text,
+      `SELECT result.recorded_by_user_id, result.case_referral_link_id, result.action_at,
               result.reporter_identity_provider_code, result.reporter_provider_subject,
               result.reporter_name, referral.status_code, link.status_code AS link_status
        FROM case_referral_results result
@@ -573,7 +573,7 @@ async function main() {
         stored.reporter_identity_provider_code === 'ARAID' &&
         stored.reporter_provider_subject === 'smoke-referral-araid-subject' &&
         stored.reporter_name === REPORTER_NAME &&
-        stored.action_date === report.action_date &&
+        new Date(stored.action_at).getTime() === new Date(report.action_at).getTime() &&
         stored.status_code === 'COMPLETED' &&
         stored.link_status === 'USED',
       `stored report is ${JSON.stringify(stored)}`,
@@ -583,7 +583,7 @@ async function main() {
       ['reporter_identity_provider_code', null],
       ['reporter_provider_subject', null],
       ['reporter_name', null],
-      ['action_date', null],
+      ['action_at', null],
       ['reporter_provider_subject', '   '],
       ['reporter_name', '   '],
     ]) {

@@ -229,7 +229,7 @@ async function main() {
         recordedByUserId: null,
         agencyReport: {
           linkId: latest.link_id,
-          actionDate: new Date().toISOString().slice(0, 10),
+          actionAt: new Date().toISOString(),
           identityProviderCode: 'ARAID',
           providerSubject: 'smoke-outcomes-browser-subject',
           reporterName: 'เจ้าหน้าที่ หน่วยงานทดสอบ',

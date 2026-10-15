@@ -213,9 +213,7 @@ async function main() {
             token,
             {
               result_code: 'SUCCEEDED',
-              action_date: new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Bangkok' }).format(
-                new Date(),
-              ),
+              action_at: new Date().toISOString(),
               result_note:
                 'ประสานครอบครัวและจัดการเดินทางเรียบร้อย นักเรียนกลับมาเรียนต่อเนื่องแล้ว',
             },
@@ -236,7 +234,7 @@ async function main() {
     // do not invent historical AraID verification or attach a new link to old reports.
     const repaired = await db.transaction(async (manager) => {
       const rows = await manager.query(
-        `SELECT x.case_referral_id,x.result_note,x.recorded_by_user_id,x.action_date
+        `SELECT x.case_referral_id,x.result_note,x.recorded_by_user_id,x.action_at
         FROM case_referral_results x JOIN case_referrals r ON r.id=x.case_referral_id JOIN cases c ON c.id=r.case_id
         WHERE (c.school_id=$1 OR $2) AND x.result_note LIKE 'บันทึกย้อนหลังโดยระบบ:%' FOR UPDATE OF x`,
         [SCHOOL, REPAIR_ALL],
@@ -249,7 +247,7 @@ async function main() {
         });
         await manager.query(
           `UPDATE case_referral_results x SET recorded_by_user_id=COALESCE(x.recorded_by_user_id,r.referred_by_user_id,$2),
-          action_date=COALESCE(x.action_date,(x.recorded_at AT TIME ZONE 'Asia/Bangkok')::date),
+          action_at=COALESCE(x.action_at,x.recorded_at),
           result_note=CASE WHEN r.status_code='NOT_SUCCEEDED' THEN 'ประสานครอบครัวแล้ว ยังไม่สามารถจัดความช่วยเหลือได้ ต้องติดตามและประสานหน่วยงานเพิ่มเติม'
             ELSE 'หน่วยงานประสานครอบครัวและจัดความช่วยเหลือเรียบร้อย นักเรียนสามารถกลับมาเรียนต่อได้' END
           FROM case_referrals r JOIN cases c ON c.id=r.case_id

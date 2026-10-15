@@ -167,9 +167,7 @@ async function main() {
         token,
         {
           result_code: succeeded ? 'SUCCEEDED' : 'NOT_SUCCEEDED',
-          action_date: new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Bangkok' }).format(
-            new Date(),
-          ),
+          action_at: new Date().toISOString(),
           result_note: succeeded
             ? `${item.agency.agency_name} แจ้งว่าช่วยเหลือเรียบร้อย นักเรียนกลับมาเรียนตามปกติ`
             : `${item.agency.agency_name} แจ้งว่าติดต่อครอบครัวไม่ได้ ยังช่วยเหลือไม่สำเร็จ`,

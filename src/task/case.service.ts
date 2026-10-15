@@ -293,7 +293,7 @@ export class CaseService {
               note: this.normalizeText(row.result_note),
               recorded_at: row.result_recorded_at,
               recorded_by: this.normalizeText(row.result_recorded_by) || null,
-              action_date: row.result_action_date ?? null,
+              action_at: row.result_action_at ?? null,
               // Who filed it: the agency through its link (named and verified
               // by the identity provider), or the school on its behalf.
               reported_by_agency: row.result_reported_by_agency === true,
@@ -877,7 +877,7 @@ export class CaseService {
     agencyReport?: {
       linkId: string;
       accessCodeRevision?: number;
-      actionDate: string;
+      actionAt: string;
       identityProviderCode: string;
       providerSubject: string;
       reporterName: string;

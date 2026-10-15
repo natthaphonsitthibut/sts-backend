@@ -3664,7 +3664,7 @@ export class TaskRepository {
       /** Set when the agency reported through its link. */
       agencyReport?: {
         linkId: string;
-        actionDate: string;
+        actionAt: string;
         identityProviderCode: string;
         providerSubject: string;
         reporterName: string;
@@ -3677,7 +3677,7 @@ export class TaskRepository {
       `
         INSERT INTO case_referral_results (
           case_referral_id, result_note, recorded_by_user_id, case_referral_link_id,
-          action_date, reporter_identity_provider_code, reporter_provider_subject, reporter_name
+          action_at, reporter_identity_provider_code, reporter_provider_subject, reporter_name
         )
         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
       `,
@@ -3686,7 +3686,7 @@ export class TaskRepository {
         data.note,
         data.recordedByUserId,
         report?.linkId ?? null,
-        report?.actionDate ?? null,
+        report?.actionAt ?? null,
         report?.identityProviderCode ?? null,
         report?.providerSubject ?? null,
         report?.reporterName ?? null,
@@ -4671,7 +4671,7 @@ export class TaskRepository {
             NULLIF(trim(concat_ws(' ', recorder."FirstName", recorder."LastName")), ''),
             recorder.username
           ) AS result_recorded_by,
-          result.action_date AS result_action_date,
+          result.action_at AS result_action_at,
           result.case_referral_link_id IS NOT NULL AS result_reported_by_agency,
           result.reporter_name AS result_reporter_name,
           provider.label_th AS result_reporter_identity_provider,
