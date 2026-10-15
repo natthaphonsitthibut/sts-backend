@@ -1,5 +1,5 @@
 import type { MigrationInterface, QueryRunner } from 'typeorm';
-import { RESET_SQL } from './20261015130000-ResetBuraphaPresentationData';
+import { runBuraphaReset } from '../burapha-presentation-reset';
 
 /**
  * Runs the Burapha presentation reset again (owner, 2026-10-15). The first run
@@ -14,24 +14,7 @@ export class ReapplyBuraphaPresentationData20261015140000 implements MigrationIn
   name = 'ReapplyBuraphaPresentationData20261015140000';
 
   public async up(queryRunner: QueryRunner): Promise<void> {
-    const ready = (await queryRunner.query(`
-      SELECT 1
-      FROM school_terms term
-      JOIN users director ON director.username = 'burapha.director'
-      JOIN users admin ON admin.username = 'burapha.admin'
-      WHERE term.school_id = 10010004 AND term.status = 'ACTIVE' AND term.deleted_at IS NULL
-    `)) as unknown[];
-    if (ready.length !== 1) return;
-    await queryRunner.query('SAVEPOINT reapply_burapha_presentation');
-    try {
-      await queryRunner.query(RESET_SQL);
-      await queryRunner.query('RELEASE SAVEPOINT reapply_burapha_presentation');
-    } catch (error) {
-      await queryRunner.query('ROLLBACK TO SAVEPOINT reapply_burapha_presentation');
-      console.error(
-        `ReapplyBuraphaPresentationData skipped: ${error instanceof Error ? error.message : String(error)}`,
-      );
-    }
+    await runBuraphaReset(queryRunner, 'ReapplyBuraphaPresentationData');
   }
 
   public async down(): Promise<void> {
