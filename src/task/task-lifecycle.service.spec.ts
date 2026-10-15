@@ -17,7 +17,7 @@ function buildActor(): AuthenticatedRequestUser {
     id: 7,
     username: 'case-admin',
     roles: ['ADMIN'],
-    permissions: ['dashboard', 'case:assign'],
+    permissions: ['dashboard', 'case:manage'],
     data_scope: { school_ids: [10010002] },
   };
 }
@@ -410,7 +410,7 @@ describe('TaskLifecycleService', () => {
       expect(taskRepository.createTask).not.toHaveBeenCalled();
     });
 
-    it('requires case:assign before opening the transaction', async () => {
+    it('requires case:manage before opening the transaction', async () => {
       await expect(
         service.createTask(
           { ...buildActor(), permissions: ['dashboard'] },
@@ -554,7 +554,7 @@ describe('TaskLifecycleService', () => {
     it('returns 409 when another request opens the first case after the automatic lookup', async () => {
       taskRepository.findStudentTermMetadata.mockResolvedValue({ SchoolID_Onec: 10010002 });
       taskRepository.createCase.mockRejectedValueOnce({
-        driverError: { code: '23505', constraint: 'uq_cases_active_student_uuid' },
+        driverError: { code: '23505', constraint: 'uq_cases_active_person_uuid' },
       });
       await expect(
         service.createTask(

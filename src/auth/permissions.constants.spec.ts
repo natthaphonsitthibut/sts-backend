@@ -57,10 +57,13 @@ describe('hasPermission', () => {
     );
   });
 
-  it('gives the case actions to ผอ. only, and the whole log to admins only', () => {
+  it('gives case:manage to ผอ. only, and the whole log to admins only', () => {
     expect(DIRECTOR_DEFAULT_PERMISSIONS).toEqual(
-      expect.arrayContaining(['dashboard', 'case:assign', 'case:review']),
+      expect.arrayContaining(['dashboard', 'case:manage']),
     );
+    const catalog = PERMISSION_CATALOG.map((permission) => permission.id);
+    expect(catalog).not.toContain('case:assign');
+    expect(catalog).not.toContain('case:review');
     expect(DIRECTOR_DEFAULT_PERMISSIONS).not.toContain('audit-log:all');
     expect(SCHOOL_ADMIN_DEFAULT_PERMISSIONS).toEqual(
       expect.arrayContaining(['dashboard', 'audit-log:all']),
@@ -70,8 +73,7 @@ describe('hasPermission', () => {
       AREA_ADMIN_DEFAULT_PERMISSIONS,
       EXECUTIVE_DEFAULT_PERMISSIONS,
     ]) {
-      expect(defaults).not.toContain('case:assign');
-      expect(defaults).not.toContain('case:review');
+      expect(defaults).not.toContain('case:manage');
     }
   });
 

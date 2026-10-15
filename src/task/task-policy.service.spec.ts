@@ -34,7 +34,7 @@ describe('TaskPolicyService data scope policy', () => {
           id: 7,
           username: 'case-reviewer',
           roles: ['ADMIN'],
-          permissions: ['dashboard', 'case:assign'],
+          permissions: ['dashboard', 'case:manage'],
           data_scope: { school_ids: [10010002] },
         },
         {
@@ -52,7 +52,7 @@ describe('TaskPolicyService data scope policy', () => {
           id: 9,
           username: 'own-case-reviewer',
           roles: ['ADMIN'],
-          permissions: ['dashboard', 'case:assign'],
+          permissions: ['dashboard', 'case:manage'],
           data_scope: { own_only: true },
         },
         {
@@ -71,7 +71,7 @@ describe('TaskPolicyService data scope policy', () => {
           id: 9,
           username: 'own-case-reviewer',
           roles: ['ADMIN'],
-          permissions: ['dashboard', 'case:assign'],
+          permissions: ['dashboard', 'case:manage'],
           data_scope: { own_only: true },
         },
         {
@@ -83,7 +83,7 @@ describe('TaskPolicyService data scope policy', () => {
     ).toBe(false);
   });
 
-  it('lets รายงานสถานะนักเรียน read a link but only case:assign change it', () => {
+  it('lets รายงานสถานะนักเรียน read a link but only case:manage change it', () => {
     const dashboardOnly = {
       id: 8,
       username: 'dashboard-only',
@@ -111,7 +111,7 @@ describe('TaskPolicyService data scope policy', () => {
             id: 9,
             username: 'case-reviewer',
             roles: ['ADMIN'],
-            permissions: ['dashboard', 'case:assign'],
+            permissions: ['dashboard', 'case:manage'],
             data_scope: dataScope,
           },
           { task_type: 'ASSIST', target_school_id: school, case_created_by: creator },

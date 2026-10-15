@@ -1018,7 +1018,7 @@ export class HomeDashboardRepository {
           AND tl.deleted_at IS NULL
           AND t.deleted_at IS NULL
           AND c.deleted_at IS NULL
-          AND c.student_uuid = s.student_uuid
+          AND c.person_uuid = s.person_uuid
           AND (
             ts.follow_up_problem_category_code IS NOT NULL
             OR ts.absence_reason_category_code IS NOT NULL

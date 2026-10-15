@@ -10,6 +10,10 @@ const { AuditLogService } = require('../dist/audit-log/audit-log.service');
 const APPLY = process.argv.includes('--apply');
 const NORMALIZE_REASONS = process.argv.includes('--normalize-reasons');
 const USE_RECORDED_CAUSES = process.argv.includes('--use-recorded-causes');
+// A case's reason is what was seen before it was opened (owner, 2026-10-15).
+// --use-recorded-causes wrote a home-visit finding there, which reads as an
+// outcome rather than a reason.
+const USE_OPENING_REASONS = process.argv.includes('--use-opening-reasons');
 const ROSTER_CASE_IDS = Array.from({length:21},(_,index)=>3354+index);
 const SCHOOL = Number((process.argv.find(a=>a.startsWith('--school=')) || '--school=10010004').split('=')[1]);
 const PREFIX = 'ติดตามการมาเรียนและประสานครอบครัว รอบตุลาคม 2569';
@@ -21,6 +25,22 @@ const SCENARIOS = {
   AWAITING_REFERRAL: ['CONCERN','EMOTIONAL','พบความเครียดและการถอนตัวจากกิจกรรมในห้องเรียน โรงเรียนพิจารณาประสานหน่วยงานที่ดูแลด้านสุขภาพและครอบครัว'],
   AWAITING_REFERRAL_OUTCOME: ['CONCERN','HEALTH','นักเรียนมีข้อจำกัดด้านสุขภาพที่กระทบการมาเรียน โรงเรียนส่งต่อให้หน่วยงานที่รับผิดชอบและกำลังรอผลการดูแล'],
   RESOLVED: ['NOTE','ATTENDANCE','ครูติดตามร่วมกับผู้ปกครองและประสานความช่วยเหลือแล้ว นักเรียนกลับมาเรียนสม่ำเสมอ เก็บผลการติดตามไว้ในประวัติ'],
+};
+// What a teacher saw that led to each roster case, written before any visit.
+const OPENING_REASONS = {
+  OPEN: 'ขาดเรียนบ่อยและติดต่อครูไม่ได้ ควรประสานครอบครัวเพื่อทราบสาเหตุ',
+  IN_PROGRESS: 'ส่งงานไม่ครบและขาดเรียนบางช่วง ควรติดตามที่บ้านร่วมกับผู้ปกครอง',
+  STUDENT_NOT_FOUND: 'ขาดเรียนต่อเนื่องและติดต่อผู้ปกครองไม่ได้ ควรเยี่ยมบ้านเพื่อยืนยันความปลอดภัย',
+  PENDING_REVIEW: 'มาเรียนไม่สม่ำเสมอ ครูสังเกตว่าครอบครัวอาจมีปัญหาค่าเดินทาง ควรเยี่ยมบ้าน',
+  AWAITING_REFERRAL: 'เก็บตัวและไม่ร่วมกิจกรรมในห้องเรียน ควรติดตามเรื่องความเครียด',
+  AWAITING_REFERRAL_OUTCOME: 'ขาดเรียนบ่อยจากอาการเจ็บป่วย ควรประสานครอบครัวเรื่องการดูแลสุขภาพ',
+  RESOLVED: 'ขาดเรียนบ่อย ควรประสานผู้ปกครองเพื่อติดตามการมาเรียน',
+};
+// Roster cases come in threes per original status, in SCENARIOS order; a case
+// may have moved on since, so its opening reason follows its roster group.
+const openingReasonFor=(row)=>{
+  const index=ROSTER_CASE_IDS.indexOf(Number(row.id));
+  return index<0?undefined:OPENING_REASONS[Object.keys(SCENARIOS)[Math.floor(index/3)]];
 };
 async function main() {
   if (process.env.NODE_ENV === 'production' || process.env.DB_NAME !== 'sts') throw new Error('Only local DB_NAME=sts is allowed');
@@ -62,9 +82,12 @@ async function main() {
           ORDER BY latest.created_at DESC,latest.id DESC LIMIT 1)
       ORDER BY c.id`,[SCHOOL,`${PREFIX}%`,ROSTER_CASE_IDS]);
     const counts={};for(const row of rows)counts[row.status]=(counts[row.status] || 0)+1;
-    if(Object.keys(SCENARIOS).some(status=>(counts[status] || 0)<3)) throw new Error('Existing real workflow roster must contain three current cases per status with valid homeroom FKs');
+    if(USE_OPENING_REASONS){
+      if(rows.length!==ROSTER_CASE_IDS.length || rows.some(row=>!openingReasonFor(row)))throw new Error('A case status has no opening reason');
+    }else if(Object.keys(SCENARIOS).some(status=>(counts[status] || 0)<3)) throw new Error('Existing real workflow roster must contain three current cases per status with valid homeroom FKs');
     if(USE_RECORDED_CAUSES && rows.some(row=>!row.recorded_cause))throw new Error('A case has no recorded cause; correction stopped');
-    const reasonsToNormalize=USE_RECORDED_CAUSES?rows.filter(row=>row.reason_flagged!==row.recorded_cause):
+    const reasonsToNormalize=USE_OPENING_REASONS?rows.filter(row=>row.reason_flagged!==openingReasonFor(row)):
+      USE_RECORDED_CAUSES?rows.filter(row=>row.reason_flagged!==row.recorded_cause):
       NORMALIZE_REASONS?rows.filter(row=>row.reason_flagged.startsWith(`${PREFIX} — `) &&
         / — (รอมอบหมาย|รอติดตาม|ไม่พบนักเรียน|รอพิจารณา|รอส่งต่อ|รอผลการส่งต่อ|เสร็จสิ้น) [123]$/.test(row.reason_flagged)):[];
     if(APPLY && reasonsToNormalize.length){
@@ -73,7 +96,7 @@ async function main() {
       if(!actor)throw new Error('Need a real administrator for the correction audit');
       await db.transaction(async manager=>{
         for(const row of reasonsToNormalize){
-          const reason=USE_RECORDED_CAUSES?row.recorded_cause:PREFIX;
+          const reason=USE_OPENING_REASONS?openingReasonFor(row):USE_RECORDED_CAUSES?row.recorded_cause:PREFIX;
           const changed=await manager.query(`WITH corrected AS (
             UPDATE cases SET reason_flagged=$1,updated_at=NOW()
             WHERE id=$2 AND school_id=$3 AND reason_flagged=$4 RETURNING id
@@ -86,7 +109,8 @@ async function main() {
       });
     }
     let planned=0,kept=0;const commentIds=[];
-    for(const row of rows){
+    // Rewriting reasons only: observations stay as they are.
+    for(const row of USE_OPENING_REASONS?[]:rows){
       const [level,category,text]=SCENARIOS[row.status] || [];
       if(!text)continue;
       const [existing]=await db.query(`SELECT comment.id FROM classroom_student_comments comment
@@ -119,4 +143,7 @@ async function main() {
 main().catch(error=>{console.error('Watchlist local preparation failed:',error.code || error.name,
   error.message==='Need a real administrator for the correction audit'?'Missing real administrator':
   error.message==='Case reason changed concurrently'?'Case reason changed concurrently':
-  error.message==='Existing case statuses changed during preparation'?'Case status changed':'');process.exitCode=1;});
+  error.message==='Existing case statuses changed during preparation'?'Case status changed':
+  error.message==='A case status has no opening reason'?'Missing opening reason':
+  error.message==='Existing real workflow roster must contain three current cases per status with valid homeroom FKs'?'Roster incomplete':
+  error.message==='Only local DB_NAME=sts is allowed' || error.message==='Only local database hosts are allowed'?'Local sts database only':'');process.exitCode=1;});

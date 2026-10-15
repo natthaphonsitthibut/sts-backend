@@ -8,7 +8,10 @@ import { buildDataScopeQuery } from '../common/utils/authorization';
 import { escapeLikePattern, normalizeScalar } from '../common/utils/helpers';
 import { TokenEncryptionService } from '../common/crypto/token-encryption.service';
 import { encodeMediaVersion } from '../common/utils/media-version.util';
-import { CASE_COMMENT_COMPLETION_BASELINE_SQL } from './case-comment-baseline.sql';
+import {
+  CASE_COMMENT_COMPLETION_BASELINE_SQL,
+  WATCH_RESET_BASELINE_SQL,
+} from './case-comment-baseline.sql';
 import type {
   ActorContext,
   DataScope,
@@ -941,7 +944,8 @@ export class TaskRepository {
       `
       SELECT c.id
       FROM cases c
-      WHERE c.student_uuid = $1
+      -- One active case per student across terms, matching uq_cases_active_person_uuid.
+      WHERE c.person_uuid = (SELECT st.person_uuid FROM student_term st WHERE st.student_uuid = $1)
         AND c.status IN (
           'OPEN', 'IN_PROGRESS', 'PENDING_REVIEW', 'STUDENT_NOT_FOUND', 'AWAITING_REFERRAL',
           'AWAITING_REFERRAL_OUTCOME', 'REFERRAL_NOT_SUCCEEDED'
@@ -953,6 +957,40 @@ export class TaskRepository {
       [studentUuid, ...scopeQuery.params],
     );
     return result.rows[0] || null;
+  }
+
+  /** Teacher observations not yet decided by a closed case or a closed watch. */
+  async countUndecidedWatchComments(studentUuid: string, executor: QueryExecutor): Promise<number> {
+    const result = await executor.query<{ count: number | string }>(
+      `
+      SELECT COUNT(*)::int AS count
+      FROM student_term s
+      LEFT JOIN LATERAL (
+        ${WATCH_RESET_BASELINE_SQL}
+      ) watch_reset ON TRUE
+      JOIN classroom_student_comments comment
+        ON comment.person_uuid = s.person_uuid
+       AND comment.created_at > COALESCE(watch_reset.reset_at, '-infinity'::timestamptz)
+      WHERE s.student_uuid = $1
+      `,
+      [studentUuid],
+    );
+    return Number(result.rows[0]?.count ?? 0);
+  }
+
+  async createWatchClosure(
+    data: { studentUuid: string; note: string | null; closedByUserId: number },
+    executor: QueryExecutor,
+  ): Promise<{ id: number; closed_at: Date }> {
+    const result = await executor.query<{ id: number; closed_at: Date }>(
+      `
+      INSERT INTO student_watch_closures (student_uuid, note, closed_by_user_id)
+      VALUES ($1, $2, $3)
+      RETURNING id, closed_at
+      `,
+      [data.studentUuid, data.note, data.closedByUserId],
+    );
+    return result.rows[0];
   }
 
   async createCase(data: CreateCaseInput, executor?: QueryExecutor): Promise<number> {
@@ -2958,7 +2996,15 @@ export class TaskRepository {
       filters.studentGroup === 'RISK'
         ? [...conditions, 'latest_case.id IS NOT NULL', 'NOT latest_case.in_referral_flow']
         : filters.studentGroup === 'WATCHLIST'
-          ? [...conditions, 'latest_comment.id IS NOT NULL']
+          ? [
+              ...conditions,
+              'latest_comment.id IS NOT NULL',
+              // A closed watch leaves the list until a teacher writes again.
+              `NOT (
+                latest_closure.closed_at IS NOT NULL
+                AND latest_closure.closed_at >= latest_comment.created_at
+              )`,
+            ]
           : conditions;
     const whereSql =
       studentGroupConditions.length > 0 ? `WHERE ${studentGroupConditions.join(' AND ')}` : '';
@@ -2993,14 +3039,30 @@ export class TaskRepository {
           latest_case.id AS latest_case_id,
           latest_case.status AS latest_case_status,
           latest_case.updated_at AS latest_case_at,
+          -- อัปเดตล่าสุด is the student's newest activity, case or observation:
+          -- a student observed but never given a case still has one.
+          GREATEST(latest_case.updated_at, latest_comment.created_at) AS latest_activity_at,
+          latest_case.created_at AS latest_case_opened_at,
           latest_case_link.token_encrypted AS latest_case_link_token_encrypted,
           latest_case_assignment.had_assignment AS latest_case_had_assignment,
           latest_comment.id AS latest_comment_id,
-          latest_comment.problem_category_label,
+          -- No observation means the row is only the absence summary below, so
+          -- it reads under the การมาเรียน category (owner, 2026-10-15).
+          COALESCE(
+            latest_comment.problem_category_label,
+            attendance_category.label_th
+          ) AS problem_category_label,
           latest_comment.concern_level_code,
           latest_comment.concern_level_label,
           COALESCE(comment_totals.comment_count, 0) AS comment_count,
           COALESCE(comment_totals.pending_comment_count, 0) AS pending_comment_count,
+          comment_baseline.completed_at AS last_case_resolved_at,
+          latest_closure.closed_at AS last_watch_closed_at,
+          (
+            latest_comment.id IS NOT NULL
+            AND latest_comment.classroom_id IS DISTINCT FROM s.classroom_id
+            AND (latest_case.id IS NULL OR latest_case.status = 'RESOLVED')
+          ) AS pending_from_previous_term,
           COALESCE(
             latest_comment.problem_description,
             CASE
@@ -3018,14 +3080,28 @@ export class TaskRepository {
         LEFT JOIN grade_levels gl ON s."GradeLevelID_Onec" = gl.id
         LEFT JOIN schools sc ON s."SchoolID_Onec" = sc.id
         LEFT JOIN student_risk_profiles profile ON profile.student_uuid = s.student_uuid
+        LEFT JOIN classroom_student_problem_categories attendance_category
+          ON attendance_category.code = 'ATTENDANCE'
         LEFT JOIN LATERAL (
           ${CASE_COMMENT_COMPLETION_BASELINE_SQL}
         ) comment_baseline ON TRUE
         LEFT JOIN LATERAL (
-          SELECT c.id, c.status, c.updated_at, c.reason_flagged,
+          ${WATCH_RESET_BASELINE_SQL}
+        ) watch_reset ON TRUE
+        LEFT JOIN LATERAL (
+          SELECT MAX(closure.closed_at) AS closed_at
+          FROM student_watch_closures closure
+          JOIN student_term closed_student ON closed_student.student_uuid = closure.student_uuid
+          WHERE closed_student.person_uuid = s.person_uuid
+        ) latest_closure ON TRUE
+        LEFT JOIN LATERAL (
+          SELECT c.id, c.status, c.created_at, c.updated_at, c.reason_flagged,
             ${CASE_IN_REFERRAL_FLOW_SQL} AS in_referral_flow
           FROM cases c
-          WHERE c.student_uuid = s.student_uuid
+          -- This enrollment's own cases, plus any still-open case carried in
+          -- from an earlier term (owner, 2026-10-15).
+          WHERE c.person_uuid = s.person_uuid
+            AND (c.student_uuid = s.student_uuid OR c.status <> 'RESOLVED')
             AND c.deleted_at IS NULL
           ORDER BY c.created_at DESC, c.id DESC
           LIMIT 1
@@ -3056,6 +3132,8 @@ export class TaskRepository {
         LEFT JOIN LATERAL (
           SELECT
             comment.id,
+            comment.classroom_id,
+            comment.created_at,
             category.label_th AS problem_category_label,
             comment.problem_description,
             concern_level.code AS concern_level_code,
@@ -3065,23 +3143,32 @@ export class TaskRepository {
             ON category.code = comment.problem_category_code
           JOIN classroom_student_comment_concern_levels concern_level
             ON concern_level.code = comment.concern_level_code
-          WHERE comment.classroom_id = s.classroom_id
-            AND comment.person_uuid = s.person_uuid
-          -- Prefer this round's observations over completed history. Within
-          -- the round, severity wins and recency breaks ties.
-          ORDER BY
-            (comment.created_at > COALESCE(comment_baseline.completed_at, '-infinity'::timestamptz)) DESC,
-            concern_level.sort_order DESC, comment.created_at DESC, comment.id DESC
+          -- This term's observations, plus any from an earlier term that nobody
+          -- has decided yet (written after the last closed case or watch): a
+          -- เฝ้าระวัง student must be decided, not dropped at term change
+          -- (owner, 2026-10-15).
+          WHERE comment.person_uuid = s.person_uuid
+            AND (
+              comment.classroom_id = s.classroom_id
+              OR comment.created_at > COALESCE(watch_reset.reset_at, '-infinity'::timestamptz)
+            )
+          -- The newest observation is shown, whatever its level, so the table
+          -- reflects how the student is now rather than an older, harsher note
+          -- (owner, 2026-10-14). A new round's note is always the newest.
+          ORDER BY comment.created_at DESC, comment.id DESC
           LIMIT 1
         ) latest_comment ON TRUE
         LEFT JOIN LATERAL (
           SELECT COUNT(*)::int AS comment_count,
             COUNT(*) FILTER (
-              WHERE comment.created_at > COALESCE(comment_baseline.completed_at, '-infinity'::timestamptz)
+              WHERE comment.created_at > COALESCE(watch_reset.reset_at, '-infinity'::timestamptz)
             )::int AS pending_comment_count
           FROM classroom_student_comments comment
-          WHERE comment.classroom_id = s.classroom_id
-            AND comment.person_uuid = s.person_uuid
+          WHERE comment.person_uuid = s.person_uuid
+            AND (
+              comment.classroom_id = s.classroom_id
+              OR comment.created_at > COALESCE(watch_reset.reset_at, '-infinity'::timestamptz)
+            )
         ) comment_totals ON TRUE
         ${whereSql}
       )
@@ -3103,9 +3190,22 @@ export class TaskRepository {
     const scopedCte = `${baseCte}, risk_scoped AS (SELECT * FROM base_students ${riskWhere})`;
     const filteredParams = [...scopedParams];
     const filteredConditions: string[] = [];
-    if (filters.caseStatus) {
+    // The เฝ้าระวัง status badge, not the raw case status: "ยังไม่เปิดเคส" is a
+    // row with no case, or a closed one with observations written since; a
+    // row carried from an earlier term shows its own badge instead.
+    const awaitingNewCaseSql = `(latest_case_status IS NULL OR (latest_case_status = 'RESOLVED' AND pending_comment_count > 0))`;
+    if (filters.caseStatus === 'NOT_OPENED') {
+      filteredConditions.push(
+        filters.studentGroup === 'WATCHLIST'
+          ? `${awaitingNewCaseSql} AND NOT pending_from_previous_term`
+          : 'FALSE',
+      );
+    } else if (filters.caseStatus) {
       filteredParams.push(filters.caseStatus);
       filteredConditions.push(`latest_case_status = $${filteredParams.length}`);
+      if (filters.studentGroup === 'WATCHLIST' && filters.caseStatus === 'RESOLVED') {
+        filteredConditions.push(`NOT ${awaitingNewCaseSql}`);
+      }
     }
     // No default level filter: the watchlist is every student a teacher has
     // written about, and the three level cards partition exactly that set. A
@@ -3188,8 +3288,12 @@ export class TaskRepository {
     const offsetPlaceholder = rowParams.length;
 
     const sortDirection = filters.sortDirection === 'asc' ? 'ASC' : 'DESC';
+    // Watchlist students left undecided from an earlier term come first.
+    const carriedFirst =
+      filters.studentGroup === 'WATCHLIST' ? 'pending_from_previous_term DESC, ' : '';
     const orderBy =
-      filters.sortBy === 'name'
+      carriedFirst +
+      (filters.sortBy === 'name'
         ? `student_name ${sortDirection}, school_name ASC NULLS LAST, grade ASC, room ASC`
         : filters.sortBy === 'school'
           ? `school_name ${sortDirection} NULLS LAST, grade ASC, room ASC, student_name ASC`
@@ -3202,10 +3306,17 @@ export class TaskRepository {
                 : filters.sortBy === 'openCases'
                   ? `open_case_count ${sortDirection}, risk_severity DESC, risk_score DESC, student_name ASC`
                   : filters.sortBy === 'updatedAt'
-                    ? `latest_case_at ${sortDirection} NULLS LAST, student_name ASC`
-                    : filters.sortBy === 'problemCategory'
-                      ? `problem_category_label ${sortDirection} NULLS LAST, student_name ASC`
-                      : `risk_severity ${sortDirection}, risk_score ${sortDirection}, student_name ASC`;
+                    ? `latest_activity_at ${sortDirection} NULLS LAST, student_name ASC`
+                    : filters.sortBy === 'priority'
+                      ? // The default order has no direction: newest case first on
+                        // กลุ่มเสี่ยง, newest อัปเดตล่าสุด first on เฝ้าระวัง —
+                        // time only, no grouping (owner, 2026-10-15).
+                        filters.studentGroup === 'WATCHLIST'
+                        ? 'latest_activity_at DESC NULLS LAST, student_name ASC'
+                        : 'latest_case_opened_at DESC NULLS LAST, student_name ASC'
+                      : filters.sortBy === 'problemCategory'
+                        ? `problem_category_label ${sortDirection} NULLS LAST, student_name ASC`
+                        : `risk_severity ${sortDirection}, risk_score ${sortDirection}, student_name ASC`);
 
     const rowsResult = await this.query<RiskDashboardRow>(
       `
@@ -3238,6 +3349,7 @@ export class TaskRepository {
           latest_case_id,
           latest_case_status,
           latest_case_at,
+          latest_activity_at,
           latest_case_link_token_encrypted,
           latest_case_had_assignment,
           problem_category_label,
@@ -3245,6 +3357,9 @@ export class TaskRepository {
           concern_level_label,
           comment_count,
           pending_comment_count,
+          last_case_resolved_at,
+          last_watch_closed_at,
+          pending_from_previous_term,
           teacher_comment
         FROM filtered
         ORDER BY ${orderBy}
@@ -4245,6 +4360,19 @@ export class TaskRepository {
    * scope (which it can only narrow). Pushes its values onto `params`.
    */
   private buildCaseAreaFilterSql(filters: FollowUpAreaFilters, params: unknown[]): string {
+    return this.buildCaseAreaFilter(filters, params).sql;
+  }
+
+  /**
+   * Also returns `enrollmentSql`, the one enrollment a case is shown under: its
+   * own, or — while the case is still open — the person's latest one (within
+   * the selected term, if any). The grade/room filter reads the same row, so a
+   * row filtered as ม.2 is also displayed and sorted as ม.2.
+   */
+  private buildCaseAreaFilter(
+    filters: FollowUpAreaFilters,
+    params: unknown[],
+  ): { sql: string; enrollmentSql: string } {
     const conditions: string[] = [];
     const areaColumns: Array<[string | undefined, string]> = [
       [filters.province, 'province'],
@@ -4262,26 +4390,47 @@ export class TaskRepository {
       params.push(filters.schoolId);
       conditions.push(`c.school_id = $${params.length}`);
     }
-    const enrollmentConditions = ['class_student.student_uuid = c.student_uuid'];
+    const enrollmentConditions = [
+      `class_student.person_uuid = c.person_uuid`,
+      `(class_student.student_uuid = c.student_uuid OR (c.status <> 'RESOLVED' AND class_student.deleted_at IS NULL))`,
+    ];
     for (const [column, value] of [
-      ['class_grade.label', filters.grade],
-      ['class_student."RoomID_Onec"::text', filters.room],
       ['class_student."AcademicYear_Onec"', filters.academicYear],
       ['class_student."Semester_Onec"', filters.semester],
     ] as const) {
-      if (value !== undefined && value !== '') {
+      if (value !== undefined) {
         params.push(value);
         enrollmentConditions.push(`${column} = $${params.length}`);
       }
     }
-    if (enrollmentConditions.length > 1) {
-      conditions.push(`EXISTS (
-        SELECT 1 FROM student_term class_student
+    const enrollmentSql = `
+        SELECT class_student.student_uuid, class_student.person_uuid,
+          class_student."RoomID_Onec", class_student."AcademicYear_Onec",
+          class_student."Semester_Onec", class_grade.label AS grade_label
+        FROM student_term class_student
         LEFT JOIN grade_levels class_grade ON class_grade.id = class_student."GradeLevelID_Onec"
         WHERE ${enrollmentConditions.join(' AND ')}
-      )`);
+        ORDER BY class_student."AcademicYear_Onec" DESC, class_student."Semester_Onec" DESC,
+          class_student.student_uuid DESC
+        LIMIT 1`;
+    const classConditions: string[] = [];
+    for (const [column, value] of [
+      ['case_enrollment.grade_label', filters.grade],
+      ['case_enrollment."RoomID_Onec"::text', filters.room],
+    ] as const) {
+      if (value !== undefined && value !== '') {
+        params.push(value);
+        classConditions.push(`${column} = $${params.length}`);
+      }
     }
-    return conditions.map((condition) => ` AND ${condition}`).join('');
+    if (enrollmentConditions.length > 2 || classConditions.length > 0) {
+      conditions.push(
+        `EXISTS (SELECT 1 FROM (${enrollmentSql}) case_enrollment` +
+          (classConditions.length ? ` WHERE ${classConditions.join(' AND ')}` : '') +
+          ')',
+      );
+    }
+    return { sql: conditions.map((condition) => ` AND ${condition}`).join(''), enrollmentSql };
   }
 
   async getFollowUpOutcomeAggregate(
@@ -4421,8 +4570,8 @@ export class TaskRepository {
     const offset = (page - 1) * limit;
     const scope = this.buildCaseScopeQuery(actor, 1);
     const filterParams: unknown[] = [...scope.params];
-    let whereSql =
-      (scope.sql ? ` AND ${scope.sql}` : '') + this.buildCaseAreaFilterSql(filters, filterParams);
+    const areaFilter = this.buildCaseAreaFilter(filters, filterParams);
+    let whereSql = (scope.sql ? ` AND ${scope.sql}` : '') + areaFilter.sql;
     if (filters.statusCode) {
       filterParams.push(filters.statusCode);
       whereSql += ` AND referral.status_code = $${filterParams.length}`;
@@ -4440,14 +4589,28 @@ export class TaskRepository {
         JOIN cases c ON c.id = referral.case_id AND c.deleted_at IS NULL
         WHERE 1=1${whereSql}`;
     const rowParams = [...filterParams, limit, offset];
+    // Whitelisted columns only. Default: newest วันที่ส่งต่อ first — a row still
+    // waiting to be sent dates from when it started waiting (owner, 2026-10-15).
+    const sortDirection = filters.sortDirection === 'asc' ? 'ASC' : 'DESC';
+    const referralOrderBy =
+      filters.sortBy === 'name'
+        ? `c.student_name ${sortDirection}, referral.referred_at DESC`
+        : filters.sortBy === 'grade'
+          ? `student.grade_label ${sortDirection} NULLS LAST, student."RoomID_Onec" ASC, c.student_name ASC`
+          : filters.sortBy === 'room'
+            ? `student."RoomID_Onec" ${sortDirection} NULLS LAST, student.grade_label ASC, c.student_name ASC`
+            : filters.sortBy === 'agency'
+              ? `agency.agency_name ${sortDirection} NULLS LAST, referral.referred_at DESC`
+              : `referral.referred_at ${filters.sortBy === 'referredAt' ? sortDirection : 'DESC'}`;
     const [rows, count] = await Promise.all([
       this.query<QueryResultRow>(
         `
         SELECT referral.id, referral.case_id, c.student_uuid::text AS student_id,
           c.student_name, c.school_id,
-          school.name AS school_name, grade.label AS grade,
+          school.name AS school_name, student.grade_label AS grade,
           student."RoomID_Onec"::text AS room,
-          student."AcademicYear_Onec" AS academic_year, student."Semester_Onec" AS semester,
+          opened_enrollment."AcademicYear_Onec" AS academic_year,
+          opened_enrollment."Semester_Onec" AS semester,
           person.photo_storage_key, person.updated_at AS photo_updated_at,
           referral.status_code, referral.referred_at,
           ${REFERRAL_STAGE_SQL} AS stage_code,
@@ -4458,9 +4621,9 @@ export class TaskRepository {
         FROM ${REFERRAL_REGISTER_SOURCE_SQL}
         JOIN cases c ON c.id = referral.case_id AND c.deleted_at IS NULL
         LEFT JOIN schools school ON school.id = c.school_id
-        LEFT JOIN student_term student ON student.student_uuid = c.student_uuid
-        LEFT JOIN grade_levels grade ON grade.id = student."GradeLevelID_Onec"
-        LEFT JOIN student_person person ON person.person_uuid = student.person_uuid
+        LEFT JOIN LATERAL (${areaFilter.enrollmentSql}) student ON true
+        LEFT JOIN student_term opened_enrollment ON opened_enrollment.student_uuid = c.student_uuid
+        LEFT JOIN student_person person ON person.person_uuid = c.person_uuid
         LEFT JOIN referral_agencies agency ON agency.id = referral.referral_agency_id
         LEFT JOIN referral_agency_kinds kind ON kind.code = agency.agency_kind_code
         LEFT JOIN LATERAL (
@@ -4472,7 +4635,7 @@ export class TaskRepository {
           LIMIT 1
         ) latest_link ON true
         WHERE 1=1${whereSql}
-        ORDER BY referral.referred_at DESC, referral.id DESC
+        ORDER BY ${referralOrderBy}, referral.id DESC NULLS FIRST
         LIMIT $${rowParams.length - 1} OFFSET $${rowParams.length}
         `,
         rowParams,

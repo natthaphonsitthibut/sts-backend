@@ -219,13 +219,13 @@ async function seedNotifications(dataSource, userId) {
      FROM student_term enrollment
      INNER JOIN schools school ON school.id = enrollment."SchoolID_Onec"
      WHERE enrollment.person_uuid IS NOT NULL
-       -- Only a student with no active case can take one: uq_cases_active_student_uuid
+       -- Only a student with no active case can take one: uq_cases_active_person_uuid
        -- allows a single active case per student, so picking the first enrollment
        -- outright made this seed fail whenever another smoke had left one behind.
        AND NOT EXISTS (
          SELECT 1
          FROM cases active_case
-         WHERE active_case.student_uuid = enrollment.student_uuid
+         WHERE active_case.person_uuid = enrollment.person_uuid
            AND active_case.deleted_at IS NULL
            AND active_case.status IN ('OPEN', 'IN_PROGRESS', 'PENDING_REVIEW', 'STUDENT_NOT_FOUND')
        )

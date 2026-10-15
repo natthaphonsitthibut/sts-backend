@@ -631,7 +631,7 @@ export class ReferralLinkService {
 
   private assertCanManage(actor?: AuthenticatedRequestUser) {
     const currentActor = this.taskPolicyService.ensureActor(actor);
-    if (!this.taskPolicyService.hasPermission(currentActor, 'case:review')) {
+    if (!this.taskPolicyService.hasPermission(currentActor, 'case:manage')) {
       throw new ForbiddenException('ไม่มีสิทธิ์จัดการลิงก์ส่งต่อ');
     }
     return currentActor;

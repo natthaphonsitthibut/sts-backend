@@ -53,6 +53,21 @@ async function main() {
   const clickText = async (text) => {
     await waitFor(()=>evaluate(`(()=>{const b=[...document.querySelectorAll('button')].find(b=>b.getClientRects().length>0 && b.innerText.trim()===${JSON.stringify(text)});if(!b)return false;b.click();return true;})()`),`Missing button: ${text}`);
   };
+  // เปิดเคส and ปิดการเฝ้าระวัง share one พิจารณา button (owner, 2026-10-15):
+  // pick the decision in its dialog, then that decision's own dialog opens.
+  // ยังไม่เปิดเคส is a watchlist status filter (owner, 2026-10-15).
+  const filterStatus = async (value) => {
+    await evaluate(`(()=>{const s=document.querySelector('select[aria-label="สถานะการติดตาม"]');Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype,'value').set.call(s,${JSON.stringify(value)});s.dispatchEvent(new Event('change',{bubbles:true}));})()`);
+    await waitFor(()=>evaluate(`new URLSearchParams(location.search).get('caseStatus')===${JSON.stringify(value||null)}`),`Status filter ${value} not applied`);
+    await delay(800);
+  };
+  const decide = async (rowExpr, choice) => {
+    await evaluate(`(${rowExpr}).querySelector('button[aria-label^="พิจารณานักเรียน"]').click()`);
+    await waitFor(()=>evaluate(`Boolean(document.querySelector('#watch-decision-title'))`),'Decision dialog missing');
+    await waitFor(()=>evaluate(`(()=>{const l=[...document.querySelectorAll('[role="dialog"] label')].find(l=>l.innerText.trim()===${JSON.stringify(choice)});if(!l)return false;l.click();return true;})()`),`Missing decision: ${choice}`);
+    await clickText('ถัดไป');
+    await waitFor(()=>evaluate(`!document.querySelector('#watch-decision-title')`),'Decision dialog did not hand over');
+  };
   try {
     await app.init();
     const [context]=await db.query(`SELECT c.id::int AS classroom_id,c.school_id,c.grade_level_id,
@@ -70,7 +85,7 @@ async function main() {
       "SchoolID_Onec","GradeLevelID_Onec","RoomID_Onec","AcademicYear_Onec","Semester_Onec","StudentStatusID_Onec",student_status_code)
       VALUES ($1,$2,$3,'ทดสอบ',$4,$5,$6,$7,$8,$9,10,10)`,[student,person,`SMOKE_WATCHLIST_${suffix}`,`เฝ้าระวัง${suffix}`,
       context.school_id,context.grade_level_id,context.legacy_room_number,context.academic_year,context.semester]);
-    const permissions=['dashboard','case:assign','case:review','students','attendance'];
+    const permissions=['dashboard','case:manage','students','attendance'];
     const [actor]=await db.query(`INSERT INTO users(username,password,status,permissions,"FirstName","LastName",
       role,data_scope,must_change_password,data_origin_code)
       VALUES ($1,'NOT_A_LOGIN_CREDENTIAL','ACTIVE',$2::jsonb,'ผู้อำนวยการ','ทดสอบ','ADMIN',$3::jsonb,FALSE,'AUTOMATED_TEST') RETURNING id`,
@@ -145,7 +160,10 @@ async function main() {
     assert(state.text.includes('ยังไม่เปิดเคส'),'Unopened case status missing');
     assert(state.buttons.find(b=>b.name.startsWith('ดูรายละเอียดเคสของ'))?.disabled,'View not disabled before opening');
     assert(state.buttons.find(b=>b.name==='แชร์ลิงก์')?.disabled,'Share not disabled before assignment');
-    assert(state.buttons.find(b=>b.name.startsWith('เปิดเคสติดตามนักเรียน'))?.disabled===false,'Manual open unavailable');
+    assert(state.buttons.find(b=>b.name.startsWith('พิจารณานักเรียน'))?.disabled===false,'Manual open unavailable');
+    assert(await evaluate(`[...document.querySelector('select[aria-label="สถานะการติดตาม"]').options].some(o=>o.value==='NOT_OPENED' && o.textContent.trim()==='ยังไม่เปิดเคส')`),'Watchlist status filter does not offer ยังไม่เปิดเคส');
+    await filterStatus('NOT_OPENED');await waitRow();
+    await filterStatus('');await waitRow();
     const readObservations=async()=>{
       await evaluate(`(${fixtureRow}).querySelector('button[aria-label^="ดูข้อสังเกตทั้งหมดของ"]').click()`);
       await waitFor(()=>evaluate(`location.pathname==='/student-risk-report/watchlist' && ['NOTE','WATCH','CONCERN'].every(level=>document.querySelector('[role="dialog"]')?.innerText.includes('ทดสอบติดตามเฝ้าระวัง '+level))`),'Full observations did not render on watchlist');
@@ -172,12 +190,14 @@ async function main() {
     await readObservations();
     const [caseCountAfterRead]=await db.query('SELECT count(*)::int AS total FROM cases WHERE student_uuid=$1 AND deleted_at IS NULL',[student]);
     assert(caseCountAfterRead.total===0,'Reading observations unexpectedly opened a case');
-    await evaluate(`(${fixtureRow}).querySelector('button[aria-label^="เปิดเคสติดตามนักเรียน"]').click()`);
+    await decide(fixtureRow,'เปิดเคสติดตาม');
     await waitFor(()=>evaluate(`Boolean(document.querySelector('#open-case-reason'))`),'Shared open-case dialog missing');
     await waitFor(()=>evaluate(`Boolean(document.querySelector('#open-case-reason')?.value.trim())`),'Open-case reason did not initialize');
     await clickText('เปิดเคส');
     await waitFor(()=>evaluate(`location.pathname.startsWith('/cases/')`),async()=> 'Manual opening did not navigate to case: '+JSON.stringify(await evaluate(`(()=>{const d=document.querySelector('[role="dialog"]');return {path:location.pathname,reasonLength:document.querySelector('#open-case-reason')?.value.length,errors:[...(d?.querySelectorAll('[role="alert"], [data-slot="form-message"]') || [])].map(e=>e.innerText),buttons:[...(d?.querySelectorAll('button') || [])].map(b=>({text:b.innerText,disabled:b.disabled}))};})()`)));
     caseId=Number(await evaluate('location.pathname.split("/").pop()'));
+    // The case page lists the same observations, read-only (owner, 2026-10-15).
+    await waitFor(()=>evaluate(`(()=>{const card=[...document.querySelectorAll('h2')].find(h=>h.innerText.trim()==='ข้อสังเกตจากครู')?.closest('div');return Boolean(card) && ['NOTE','WATCH','CONCERN'].every(level=>card.innerText.includes('ทดสอบติดตามเฝ้าระวัง '+level));})()`),'Case page did not list the teacher observations');
     const assignees=await api('GET',`/tasks/visit-assignees/${student}`);
     const homeroom=assignees.body.data?.find(teacher=>teacher.isHomeroom);
     assert(homeroom,'Homeroom default missing');
@@ -197,8 +217,11 @@ async function main() {
     await evaluate(`(()=>{const i=document.querySelector('input[placeholder="ค้นหาชื่อนักเรียน"]');Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(i,${JSON.stringify(suffix)});i.dispatchEvent(new Event('input',{bubbles:true}));})()`);
     await waitRow();state=await actions();
     assert(state.viewLinks===1 && state.text.includes('รอติดตาม'),'Assigned watchlist case did not show tracking state');
+    await filterStatus('NOT_OPENED');
+    await waitFor(()=>evaluate(`!(${fixtureRow})`),'ยังไม่เปิดเคส filter kept a student a case now follows');
+    await filterStatus('');await waitRow();state=await actions();
     assert(state.buttons.find(b=>b.name==='แชร์ลิงก์')?.disabled===false,'Share remained disabled after assignment');
-    assert(state.buttons.find(b=>b.name.startsWith('เปิดเคสติดตามนักเรียน'))?.disabled,'Duplicate opening remained enabled');
+    assert(state.buttons.find(b=>b.name.startsWith('พิจารณานักเรียน'))?.disabled,'Duplicate opening remained enabled');
     assert(await evaluate(`(()=>{const cell=(${fixtureRow}).lastElementChild;const bounds=cell.getBoundingClientRect();return [...cell.querySelectorAll('button,a')].filter(element=>element.getClientRects().length).every(element=>{const box=element.getBoundingClientRect();return box.left>=bounds.left && box.right<=bounds.right;});})()`),'Watchlist actions overflow their desktop cell');
     await evaluate(`(${fixtureRow}).querySelector('button[aria-label="แชร์ลิงก์"]').click()`);
     await waitFor(()=>evaluate(`Boolean(document.querySelector('[role="dialog"]'))`),'Shared link dialog did not open');
@@ -209,7 +232,7 @@ async function main() {
     await send('Emulation.setDeviceMetricsOverride',{width:390,height:844,deviceScaleFactor:1,mobile:true});
     await waitRow();state=await actions();
     assert(state.viewLinks===1 && state.buttons.find(b=>b.name==='แชร์ลิงก์')?.disabled===false,'Mobile actions differ from desktop');
-    assert(state.buttons.find(b=>b.name.startsWith('เปิดเคสติดตามนักเรียน'))?.disabled,'Mobile allows duplicate opening');
+    assert(state.buttons.find(b=>b.name.startsWith('พิจารณานักเรียน'))?.disabled,'Mobile allows duplicate opening');
     await readObservations();
     await evaluate(`(${fixtureRow}).scrollIntoView({block:'center'})`);
     await delay(200);
@@ -264,7 +287,7 @@ async function main() {
     await waitFor(()=>evaluate(`Boolean(document.querySelector('input[placeholder="ค้นหาชื่อนักเรียน"]'))`),'Completed watchlist failed to load');
     await evaluate(`(()=>{const i=document.querySelector('input[placeholder="ค้นหาชื่อนักเรียน"]');Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(i,${JSON.stringify(suffix)});i.dispatchEvent(new Event('input',{bubbles:true}));})()`);
     await waitRow();state=await actions();
-    assert(state.buttons.find(button=>button.name.startsWith('เปิดเคสติดตามนักเรียน'))?.disabled,'Completed observations remained reopenable');
+    assert(state.buttons.find(button=>button.name.startsWith('พิจารณานักเรียน'))?.disabled,'Completed observations remained reopenable');
     const fresh=await api('POST',`/school-structure/classrooms/${context.classroom_id}/students/${student}/comments`,
       {problemCategory:category,concernLevelCode:'WATCH',problemDescription:'ข้อสังเกตใหม่หลังปิดเคส'});
     assert(fresh.status===201,'New observation failed');commentIds.push(fresh.body.data.id);
@@ -272,6 +295,22 @@ async function main() {
     assert(risk.risk_tier==='WATCH','New observation did not start a new watchlist round');
     watched=await watchlist();watchedRow=watched.body.data?.find(row=>row.studentId===student);
     assert(watchedRow?.pendingCommentCount===1 && watchedRow.commentCount===4 && watchedRow.teacherComment==='ข้อสังเกตใหม่หลังปิดเคส','New round counts/prioritized comment are incorrect');
+    assert(watchedRow.lastCaseResolvedAt,'Closed round time missing from watchlist row');
+    // A closed case with a new observation reads as a new round: unopened badge,
+    // counts from this round only, and the old observations labelled as history.
+    await send('Page.navigate',{url});
+    await waitFor(()=>evaluate(`Boolean(document.querySelector('input[placeholder="ค้นหาชื่อนักเรียน"]'))`),'New-round watchlist failed to load');
+    await evaluate(`(()=>{const i=document.querySelector('input[placeholder="ค้นหาชื่อนักเรียน"]');Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(i,${JSON.stringify(suffix)});i.dispatchEvent(new Event('input',{bubbles:true}));})()`);
+    await waitRow();state=await actions();
+    assert(state.text.includes('ยังไม่เปิดเคส') && !state.text.includes('เสร็จสิ้น') && !state.text.includes('รอพิจารณา'),'New round still shows the closed case status');
+    assert(await evaluate(`[...(${fixtureRow}).querySelectorAll('td')].some(cell=>cell.innerText.trim()==='1')`),'Observation count did not reset to this round');
+    await evaluate(`(${fixtureRow}).querySelector('button[aria-label^="ดูข้อสังเกตทั้งหมดของ"]').click()`);
+    await waitFor(()=>evaluate(`(()=>{const d=document.querySelector('[role="dialog"]');if(!d)return false;
+      const current=d.querySelector('[aria-labelledby$="-current"]'),history=d.querySelector('[aria-labelledby$="-history"]');
+      return Boolean(current&&history)&&d.innerText.includes('ข้อสังเกตหลังปิดเคสล่าสุด')&&d.innerText.includes('ประวัติข้อสังเกตก่อนปิดเคส')
+        &&current.querySelectorAll('li').length===1&&current.innerText.includes('ข้อสังเกตใหม่หลังปิดเคส')&&history.querySelectorAll('li').length===2&&!history.innerText.includes('ข้อสังเกตใหม่หลังปิดเคส');})()`),'Observation dialog did not separate this round from history');
+    await evaluate(`[...document.querySelector('[role="dialog"]').querySelectorAll('button')].find(button=>button.innerText.trim()==='ปิด').click()`);
+    await waitFor(async()=>!await evaluate(`Boolean(document.querySelector('[role="dialog"]'))`),'Observation dialog did not close');
     const [noAuto]=await db.query('SELECT count(*)::int AS total FROM cases WHERE student_uuid=$1 AND deleted_at IS NULL',[student]);
     assert(noAuto.total===1,'New observation unexpectedly auto-opened a case');
     const manual=await api('POST','/cases',{student_id:student,reason:'พิจารณาข้อสังเกตใหม่แล้ว'});
@@ -322,7 +361,27 @@ async function main() {
       fs.writeFileSync(`/tmp/sts-student-cases-${width===390?'mobile':'desktop'}.png`,Buffer.from(caseShot.data,'base64'));
       await clickText('ปิด');
     }
-    console.log('PASS watchlist browser: no auto-case/manual/homeroom/share/scope, desktop/mobile actions and observation/case dialogs, aligned three-tab cards/search, latest-step scroll all seven statuses');
+    // ปิดการเฝ้าระวัง (owner, 2026-10-15): with the case closed and a new
+    // observation waiting, the director closes the watch without a case; the
+    // row leaves the watchlist and the decision is stored.
+    await send('Emulation.setDeviceMetricsOverride',{width:1440,height:1000,deviceScaleFactor:1,mobile:false});
+    const another=await api('POST',`/school-structure/classrooms/${context.classroom_id}/students/${student}/comments`,
+      {problemCategory:category,concernLevelCode:'WATCH',problemDescription:'ข้อสังเกตก่อนปิดการเฝ้าระวัง'});
+    assert(another.status===201,'Observation before closing the watch failed');commentIds.push(another.body.data.id);
+    await send('Page.navigate',{url});
+    await waitFor(()=>evaluate(`Boolean(document.querySelector('input[placeholder="ค้นหาชื่อนักเรียน"]'))`),'Watchlist before closing failed to load');
+    await evaluate(`(()=>{const i=document.querySelector('input[placeholder="ค้นหาชื่อนักเรียน"]');Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(i,${JSON.stringify(suffix)});i.dispatchEvent(new Event('input',{bubbles:true}));})()`);
+    await waitRow();state=await actions();
+    assert(state.buttons.find(b=>b.name.startsWith('พิจารณานักเรียน'))?.disabled===false,'Close-watch button unavailable with a new observation');
+    await decide(fixtureRow,'ปิดการเฝ้าระวัง');
+    await waitFor(()=>evaluate(`Boolean(document.querySelector('#close-watch-note'))`),'Close-watch dialog missing');
+    await clickText('ปิดการเฝ้าระวัง');
+    await waitFor(()=>evaluate(`!document.querySelector('#close-watch-note') && !(${fixtureRow})`),'Closed watch stayed on the watchlist');
+    const [closedWatch]=await db.query('SELECT count(*)::int AS total, max(note) AS note FROM student_watch_closures WHERE student_uuid=$1',[student]);
+    assert(closedWatch.total===1 && closedWatch.note===null,'Watch closure was not stored once without a note');
+    await recalculate();[risk]=await db.query('SELECT risk_tier FROM student_risk_profiles WHERE student_uuid=$1',[student]);
+    assert(risk.risk_tier==='NORMAL','Closing the watch did not return the student to NORMAL');
+    console.log('PASS watchlist browser: no auto-case/manual/homeroom/share/scope, desktop/mobile actions and observation/case dialogs, aligned three-tab cards/search, latest-step scroll all seven statuses, close watch from the row');
   } finally {
     socket?.close();chrome?.kill('SIGTERM');frontend?.kill('SIGTERM');
     const runner=db.createQueryRunner();await runner.connect();await runner.startTransaction();
@@ -343,6 +402,7 @@ async function main() {
       await runner.query('DELETE FROM student_risk_profiles WHERE student_uuid=$1',[student]);
       await runner.query('DELETE FROM cases WHERE student_uuid=$1',[student]);
       await runner.query('DELETE FROM classroom_student_comments WHERE person_uuid=$1',[person]);
+      await runner.query('DELETE FROM student_watch_closures WHERE student_uuid=$1',[student]);
       await runner.query('DELETE FROM student_term WHERE student_uuid=$1',[student]);
       await runner.query('DELETE FROM student_person WHERE person_uuid=$1',[person]);
       await runner.query('DELETE FROM users WHERE id=ANY($1::int[]) AND data_origin_code=\'AUTOMATED_TEST\'',[ [actorId,deniedId].filter(Boolean) ]);

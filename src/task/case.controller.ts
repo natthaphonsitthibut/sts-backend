@@ -25,6 +25,7 @@ import { ReferralLinkService } from './referral-link.service';
 import {
   CancelCaseAssignmentDto,
   CancelReferralDto,
+  CloseWatchDto,
   OpenCaseDto,
   SendReferralDto,
   ReviewCaseDto,
@@ -42,11 +43,20 @@ export class CaseController {
   ) {}
 
   @UseGuards(AuthGuard, PermissionsGuard)
-  @RequirePermission('case:assign')
+  @RequirePermission('case:manage')
   @Post()
   @HttpCode(HttpStatus.OK)
   async openCase(@Body() body: OpenCaseDto, @CurrentUser() actor?: AuthenticatedRequestUser) {
     return await this.caseService.openCase(body, actor);
+  }
+
+  /** ปิดการเฝ้าระวัง — the เฝ้าระวัง student returns to ปกติ without a case. */
+  @UseGuards(AuthGuard, PermissionsGuard)
+  @RequirePermission('case:manage')
+  @Post('watch-closures')
+  @HttpCode(HttpStatus.OK)
+  async closeWatch(@Body() body: CloseWatchDto, @CurrentUser() actor?: AuthenticatedRequestUser) {
+    return await this.caseService.closeWatch(body, actor);
   }
 
   @UseGuards(AuthGuard, PermissionsGuard)
@@ -68,7 +78,7 @@ export class CaseController {
 
   /** ส่งลิงก์ผ่าน LINE: one round's link, straight to its assigned teacher. */
   @UseGuards(AuthGuard, PermissionsGuard)
-  @RequirePermission('case:assign')
+  @RequirePermission('case:manage')
   @Post(':caseId/rounds/:taskId/send-line')
   @HttpCode(HttpStatus.OK)
   async sendRoundLine(
@@ -81,7 +91,7 @@ export class CaseController {
   }
 
   @UseGuards(AuthGuard, PermissionsGuard)
-  @RequirePermission('case:assign')
+  @RequirePermission('case:manage')
   @Post(':caseId/cancel-assignment')
   @HttpCode(HttpStatus.OK)
   async cancelCaseAssignment(
@@ -93,7 +103,7 @@ export class CaseController {
   }
 
   @UseGuards(AuthGuard, PermissionsGuard)
-  @RequirePermission('case:review')
+  @RequirePermission('case:manage')
   @Post(':caseId/review')
   async reviewCase(
     @Param('caseId', ParseIntPipe) caseId: number,
@@ -117,7 +127,7 @@ export class CaseController {
    * agency's access code is also available to an authorized reviewer.
    */
   @UseGuards(AuthGuard, PermissionsGuard)
-  @RequirePermission('case:review')
+  @RequirePermission('case:manage')
   @Post(':caseId/referrals')
   @Header('Cache-Control', 'private, no-store')
   async sendReferral(
@@ -129,7 +139,7 @@ export class CaseController {
   }
 
   @UseGuards(AuthGuard, PermissionsGuard)
-  @RequirePermission('case:review')
+  @RequirePermission('case:manage')
   @Get(':caseId/referrals/:referralId/access-code')
   @Header('Cache-Control', 'private, no-store')
   async getReferralAccessCode(
@@ -141,7 +151,7 @@ export class CaseController {
   }
 
   @UseGuards(AuthGuard, PermissionsGuard)
-  @RequirePermission('case:review')
+  @RequirePermission('case:manage')
   @Post(':caseId/referrals/:referralId/access-code/refresh')
   @HttpCode(HttpStatus.OK)
   @Header('Cache-Control', 'private, no-store')
@@ -155,7 +165,7 @@ export class CaseController {
 
   /** ยกเลิกการส่งต่อ, like ยกเลิกการมอบหมาย: back to รอส่งต่อ with a reason. */
   @UseGuards(AuthGuard, PermissionsGuard)
-  @RequirePermission('case:review')
+  @RequirePermission('case:manage')
   @Post(':caseId/referrals/:referralId/cancel')
   @HttpCode(HttpStatus.OK)
   async cancelReferral(

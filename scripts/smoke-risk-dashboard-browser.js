@@ -1760,7 +1760,7 @@ async function assertHeaderProfileMenu(client) {
           const menu = document.querySelector('[role="menu"][aria-label="บัญชีผู้ใช้"]');
           return Boolean(
             menu
-            && menu.innerText.includes('ดูข้อมูลส่วนตัว')
+            && menu.innerText.includes('โปรไฟล์ของฉัน')
             && menu.innerText.includes('ออกจากระบบ')
           );
         })()`,
@@ -1782,7 +1782,7 @@ async function assertHeaderProfileMenu(client) {
       evaluate(
         client,
         `document.activeElement?.getAttribute('role') === 'menuitem'
-          && document.activeElement?.innerText.includes('ดูข้อมูลส่วนตัว')`,
+          && document.activeElement?.innerText.includes('โปรไฟล์ของฉัน')`,
       ),
     'ArrowDown did not open the header profile menu and focus its first action',
   );
@@ -2294,13 +2294,15 @@ async function main() {
     }
     await assertVisibleStudentProfileLink(client, 'desktop');
     await assertAvatarOnlyStudentNavigation(client, 'desktop');
-    await assertRiskSortDirection(client, 'descending', 'desktop default');
+    // The default order is the tab's own (newest case first), not a column,
+    // so no header starts sorted and clearing one returns to it.
+    await assertRiskSortCleared(client, 'desktop default');
     await clickRiskSortHeader(client);
-    await assertRiskSortCleared(client, 'desktop first toggle');
+    await assertRiskSortDirection(client, 'ascending', 'desktop first toggle');
     await clickRiskSortHeader(client);
-    await assertRiskSortDirection(client, 'ascending', 'desktop second toggle');
+    await assertRiskSortDirection(client, 'descending', 'desktop second toggle');
     await clickRiskSortHeader(client);
-    await assertRiskSortDirection(client, 'descending', 'desktop third toggle');
+    await assertRiskSortCleared(client, 'desktop third toggle');
     await assertSummaryFilterToggle(client, 'desktop');
     await assertHeaderProfileMenu(client);
     await assertCollapsedGroupAccordion(client);

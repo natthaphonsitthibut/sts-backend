@@ -77,7 +77,7 @@ async function main() {
     );
     assert(agency, 'need one active referral agency');
 
-    const permissions = ['dashboard', 'case:assign', 'case:review'];
+    const permissions = ['dashboard', 'case:manage'];
     const [actor] = await dataSource.query(
       `INSERT INTO users (username, password, "FirstName", "LastName", status, permissions,
          role, data_scope, must_change_password, data_origin_code)
@@ -250,7 +250,7 @@ async function main() {
         },
         (error) =>
           assert(
-            /uq_cases_active_student_uuid/.test(error.message),
+            /uq_cases_active_person_uuid/.test(error.message),
             `unexpected insert error: ${error.message}`,
           ),
       );

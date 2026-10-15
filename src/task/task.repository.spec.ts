@@ -15,7 +15,7 @@ describe('TaskRepository', () => {
       id: 7,
       username: 'reviewer',
       roles: ['ADMIN'],
-      permissions: ['case:assign'],
+      permissions: ['case:manage'],
       data_scope: { school_ids: [10010002] },
     };
     await expect(
@@ -45,7 +45,7 @@ describe('TaskRepository', () => {
         id: 7,
         username: 'reviewer',
         roles: ['ADMIN'],
-        permissions: ['case:assign'],
+        permissions: ['case:manage'],
         data_scope: { school_ids: [10010002] },
       },
       'FOLLOW_UP',
@@ -512,7 +512,7 @@ describe('TaskRepository', () => {
       { highAbsentDays: 3 },
     );
 
-    // A CONCERN wins over a newer WATCH for the same student. Which levels put
+    // The newest observation is shown, whatever its level. Which levels put
     // a student on the list is no longer baked into the lateral — every level is
     // read so all three can be counted, and the default WATCH/CONCERN pair is
     // applied afterwards as a parameter.
@@ -522,12 +522,14 @@ describe('TaskRepository', () => {
     // No level filter unless one is asked for: the three level counts have to
     // add up to the rows on screen.
     expect(queries[1].sql).not.toContain('concern_level_code =');
-    expect(queries[0].sql).toContain(
-      'concern_level.sort_order DESC, comment.created_at DESC, comment.id DESC',
-    );
+    expect(queries[0].sql).toContain('ORDER BY comment.created_at DESC, comment.id DESC');
+    expect(queries[0].sql).not.toContain('concern_level.sort_order DESC, comment.created_at');
+    // Undecided observations from an earlier term come first (owner, 2026-10-15).
     expect(queries[2].sql).toContain(
-      'ORDER BY problem_category_label DESC NULLS LAST, student_name ASC',
+      'ORDER BY pending_from_previous_term DESC, problem_category_label DESC NULLS LAST, student_name ASC',
     );
+    // A closed watch leaves the list until a teacher writes again.
+    expect(queries[0].sql).toContain('latest_closure.closed_at >= latest_comment.created_at');
   });
 
   it('builds a valid unfiltered dashboard query and escapes literal search wildcards', async () => {

@@ -151,16 +151,18 @@ describe('TaskRepository referral term filters', () => {
       for (const { sql, params } of queries) {
         expect(sql).toContain('c.school_id = ANY($1::int[])');
         if (selected) {
-          expect(params.slice(0, 5)).toEqual([[101], 'ม.1', '2', 2569, 1]);
+          expect(params.slice(0, 5)).toEqual([[101], 2569, 1, 'ม.1', '2']);
           expect(sql).toContain('class_student.student_uuid = c.student_uuid');
-          expect(sql).toContain('class_grade.label = $2');
-          expect(sql).toContain('class_student."RoomID_Onec"::text = $3');
-          expect(sql).toContain('class_student."AcademicYear_Onec" = $4');
-          expect(sql).toContain('class_student."Semester_Onec" = $5');
+          expect(sql).toContain('class_student."AcademicYear_Onec" = $2');
+          expect(sql).toContain('class_student."Semester_Onec" = $3');
+          // Grade/room read the one enrollment the case is shown under.
+          expect(sql).toContain('case_enrollment.grade_label = $4');
+          expect(sql).toContain('case_enrollment."RoomID_Onec"::text = $5');
         } else {
           expect(params[0]).toEqual([101]);
-          expect(sql).not.toContain('class_student."AcademicYear_Onec"');
-          expect(sql).not.toContain('class_student."Semester_Onec"');
+          expect(sql).not.toContain('class_student."AcademicYear_Onec" = $');
+          expect(sql).not.toContain('class_student."Semester_Onec" = $');
+          expect(sql).not.toContain('case_enrollment.grade_label = $');
         }
       }
     },

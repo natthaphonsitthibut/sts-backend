@@ -58,6 +58,8 @@ describe('CaseService', () => {
       | 'lockCaseReferralForResult'
       | 'recordCaseReferralResult'
       | 'lockReferralLinkForReport'
+      | 'countUndecidedWatchComments'
+      | 'createWatchClosure'
     >
   >;
   let auditLog: jest.Mocked<Pick<AuditLogService, 'record'>>;
@@ -128,6 +130,10 @@ describe('CaseService', () => {
         has_started: true,
         has_not_expired: true,
       }),
+      countUndecidedWatchComments: jest.fn().mockResolvedValue(2),
+      createWatchClosure: jest
+        .fn()
+        .mockResolvedValue({ id: 5, closed_at: new Date('2026-10-15T03:00:00Z') }),
     };
     auditLog = {
       record: jest.fn().mockResolvedValue(undefined),
@@ -150,7 +156,7 @@ describe('CaseService', () => {
               targetStatus: 'AWAITING_REFERRAL',
               requiresResolutionOutcome: false,
               completionOutcomeCode: null,
-              requiredPermission: 'case:review',
+              requiredPermission: 'case:manage',
               availablePhaseCode: null,
               targetWorkflowPhaseCode: null,
             });
@@ -162,7 +168,7 @@ describe('CaseService', () => {
               targetStatus: 'RESOLVED',
               requiresResolutionOutcome: false,
               completionOutcomeCode: 'CLOSED',
-              requiredPermission: 'case:review',
+              requiredPermission: 'case:manage',
               availablePhaseCode: null,
               targetWorkflowPhaseCode: null,
             });
@@ -174,7 +180,7 @@ describe('CaseService', () => {
               targetStatus: 'OPEN',
               requiresResolutionOutcome: false,
               completionOutcomeCode: null,
-              requiredPermission: 'case:review',
+              requiredPermission: 'case:manage',
               availablePhaseCode: null,
               targetWorkflowPhaseCode: 'ASSISTANCE',
             });
@@ -203,7 +209,7 @@ describe('CaseService', () => {
 
   it('opens one scoped case from the authoritative student record', async () => {
     const studentId = '11111111-1111-4111-8111-111111111111';
-    const actor = buildActor(['dashboard', 'case:assign', 'case:review']);
+    const actor = buildActor(['dashboard', 'case:manage']);
 
     const result = await service.openCase(
       { student_id: studentId, reason: '  ต้องติดตามเรื่องการมาเรียน  ' },
@@ -275,7 +281,7 @@ describe('CaseService', () => {
         student_id: '11111111-1111-4111-8111-111111111111',
         reason: 'ติดตามต่อ',
       },
-      buildActor(['dashboard', 'case:assign', 'case:review']),
+      buildActor(['dashboard', 'case:manage']),
     );
 
     expect(result.created).toBe(false);
@@ -427,7 +433,7 @@ describe('CaseService', () => {
           student_id: '11111111-1111-4111-8111-111111111111',
           reason: 'ติดตามต่อ',
         },
-        buildActor(['dashboard', 'case:assign', 'case:review']),
+        buildActor(['dashboard', 'case:manage']),
       ),
     ).rejects.toBeInstanceOf(NotFoundException);
 
@@ -456,7 +462,7 @@ describe('CaseService', () => {
         review_note: 'ส่งต่อหน่วยงาน',
         reviewed_by: 'client-forged-reviewer',
       },
-      buildActor(['dashboard', 'case:assign', 'case:review']),
+      buildActor(['dashboard', 'case:manage']),
     );
 
     // Deciding to refer parks the case in รอส่งต่อ, like ติดตามต่อ parks it
@@ -495,7 +501,7 @@ describe('CaseService', () => {
           review_action: 'REFER_AGENCY',
           review_note: 'ส่งต่อเพื่อดูแลต่อ',
         },
-        buildActor(['dashboard', 'case:assign', 'case:review']),
+        buildActor(['dashboard', 'case:manage']),
       ),
     ).resolves.toEqual(
       expect.objectContaining({ success: true, case_status: 'AWAITING_REFERRAL' }),
@@ -509,7 +515,7 @@ describe('CaseService', () => {
       service.reviewCase(
         10,
         { review_action: 'REFER_AGENCY', review_note: 'ส่งต่อ', referral_agency_id: 12 },
-        buildActor(['dashboard', 'case:assign', 'case:review']),
+        buildActor(['dashboard', 'case:manage']),
       ),
     ).rejects.toBeInstanceOf(BadRequestException);
     expect(taskRepository.insertCaseReview).not.toHaveBeenCalled();
@@ -520,7 +526,7 @@ describe('CaseService', () => {
       service.reviewCase(
         10,
         { review_action: 'REFER_AGENCY', review_note: '' },
-        buildActor(['dashboard', 'case:assign', 'case:review']),
+        buildActor(['dashboard', 'case:manage']),
       ),
     ).rejects.toBeInstanceOf(BadRequestException);
 
@@ -543,7 +549,7 @@ describe('CaseService', () => {
         review_action: 'CLOSE',
         review_note: 'ตรวจรายงานแล้ว ปิดเคสได้',
       },
-      buildActor(['dashboard', 'case:review']),
+      buildActor(['dashboard', 'case:manage']),
     );
 
     expect(result.case_status).toBe('RESOLVED');
@@ -588,7 +594,7 @@ describe('CaseService', () => {
           review_action: 'CLOSE',
           review_note: 'พยายามปิดผลที่ไม่สำเร็จ',
         },
-        buildActor(['dashboard', 'case:review']),
+        buildActor(['dashboard', 'case:manage']),
       ),
     ).rejects.toBeInstanceOf(BadRequestException);
     expect(taskRepository.transitionPendingReviewCase).not.toHaveBeenCalled();
@@ -604,7 +610,7 @@ describe('CaseService', () => {
         review_note: 'ควรให้ทุนการศึกษา',
         assistance_measure_codes: ['SCHOLARSHIP'],
       },
-      buildActor(['dashboard', 'case:assign', 'case:review']),
+      buildActor(['dashboard', 'case:manage']),
     );
 
     expect(result.case_status).toBe('OPEN');
@@ -640,7 +646,7 @@ describe('CaseService', () => {
           review_note: 'ช่วยเหลือรอบสอง',
           assistance_measure_codes: ['SCHOLARSHIP'],
         },
-        buildActor(['dashboard', 'case:assign', 'case:review']),
+        buildActor(['dashboard', 'case:manage']),
       ),
     ).resolves.toMatchObject({ case_status: 'OPEN' });
     expect(taskRepository.transitionPendingReviewCase).toHaveBeenCalledWith(
@@ -670,7 +676,7 @@ describe('CaseService', () => {
           review_note: 'ปิดเคส',
           resolution_outcome: 'RETURNED_TO_SCHOOL',
         },
-        buildActor(['dashboard', 'case:assign', 'case:review']),
+        buildActor(['dashboard', 'case:manage']),
       ),
     ).rejects.toBeInstanceOf(BadRequestException);
 
@@ -691,7 +697,7 @@ describe('CaseService', () => {
       const result = await service.reviewCase(
         10,
         { review_action: 'REFER_AGENCY', review_note: 'ส่งต่อหน่วยงานอื่น' },
-        buildActor(['dashboard', 'case:assign', 'case:review']),
+        buildActor(['dashboard', 'case:manage']),
       );
 
       expect(result.case_status).toBe('AWAITING_REFERRAL');
@@ -706,7 +712,7 @@ describe('CaseService', () => {
         service.reviewCase(
           10,
           { review_action: 'CLOSE', review_note: 'พยายามปิดเคสที่ส่งต่อไม่สำเร็จ' },
-          buildActor(['dashboard', 'case:review']),
+          buildActor(['dashboard', 'case:manage']),
         ),
       ).rejects.toThrow('ปิดเคสได้เมื่อผลการติดตาม ช่วยเหลือ หรือส่งต่อล่าสุดสำเร็จแล้วเท่านั้น');
       expect(taskRepository.lockCaseWithSuccessfulLatestOutcome).not.toHaveBeenCalled();
@@ -743,8 +749,8 @@ describe('CaseService', () => {
     expect(taskRepository.findCaseById).not.toHaveBeenCalled();
   });
 
-  // รายงานสถานะนักเรียน reads cases; acting on one is `case:assign` / `case:review`,
-  // which a ผู้ดูแลระบบ group does not carry by default (owner, 2026-09-28).
+  // รายงานสถานะนักเรียน reads cases; acting on one is `case:manage`, which a
+  // council group does not carry by default (owner, 2026-10-15).
   it('keeps a dashboard-only account from reviewing, opening or withdrawing', async () => {
     const reader = buildActor(['dashboard'], { roles: ['S10010002_BASE_ADMIN'] });
 
@@ -765,12 +771,67 @@ describe('CaseService', () => {
     expect(taskRepository.withTransaction).not.toHaveBeenCalled();
   });
 
+  describe('closeWatch (ปิดการเฝ้าระวัง)', () => {
+    const studentId = '11111111-1111-4111-8111-111111111111';
+
+    it('records the closure with its optional note and audits it', async () => {
+      const result = await service.closeWatch(
+        { student_id: studentId, note: '  ครูยืนยันว่าแก้ไขแล้ว  ' },
+        buildActor(['dashboard', 'case:manage']),
+      );
+
+      expect(taskRepository.createWatchClosure).toHaveBeenCalledWith(
+        { studentUuid: studentId, note: 'ครูยืนยันว่าแก้ไขแล้ว', closedByUserId: 1 },
+        undefined,
+      );
+      expect(auditLog.record).toHaveBeenCalledWith(
+        expect.objectContaining({ action: 'WATCH_CLOSE', targetId: studentId }),
+      );
+      expect(result.data.id).toBe(5);
+    });
+
+    it('accepts no note', async () => {
+      await service.closeWatch({ student_id: studentId }, buildActor(['dashboard', 'case:manage']));
+      expect(taskRepository.createWatchClosure).toHaveBeenCalledWith(
+        expect.objectContaining({ note: null }),
+        undefined,
+      );
+    });
+
+    it('refuses while a case is following the student', async () => {
+      taskRepository.findActiveCaseByStudentUuid.mockResolvedValueOnce({ id: 10 });
+      await expect(
+        service.closeWatch({ student_id: studentId }, buildActor(['dashboard', 'case:manage'])),
+      ).rejects.toBeInstanceOf(ConflictException);
+      expect(taskRepository.createWatchClosure).not.toHaveBeenCalled();
+    });
+
+    it('refuses when no observation is waiting for a decision', async () => {
+      taskRepository.countUndecidedWatchComments.mockResolvedValueOnce(0);
+      await expect(
+        service.closeWatch({ student_id: studentId }, buildActor(['dashboard', 'case:manage'])),
+      ).rejects.toBeInstanceOf(ConflictException);
+      expect(taskRepository.createWatchClosure).not.toHaveBeenCalled();
+    });
+
+    it('refuses a student outside scope and an account without case:manage', async () => {
+      taskRepository.findStudentForCaseCreation.mockResolvedValueOnce(null);
+      await expect(
+        service.closeWatch({ student_id: studentId }, buildActor(['dashboard', 'case:manage'])),
+      ).rejects.toBeInstanceOf(NotFoundException);
+      await expect(
+        service.closeWatch({ student_id: studentId }, buildActor(['dashboard'])),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+      expect(taskRepository.createWatchClosure).not.toHaveBeenCalled();
+    });
+  });
+
   it('rejects the retired FORWARD action before mutating', async () => {
     await expect(
       service.reviewCase(
         10,
         { review_action: 'FORWARD', review_note: 'legacy request' },
-        buildActor(['dashboard', 'case:assign', 'case:review']),
+        buildActor(['dashboard', 'case:manage']),
       ),
     ).rejects.toThrow('การดำเนินการกับเคสไม่ถูกต้อง');
 

@@ -90,18 +90,16 @@ describe('canGrantPages', () => {
     expect(canGrantPages([...schoolAdmin, 'nl_query:use'], ['nl_query:use'])).toBe(true);
   });
 
-  it("lets a school admin hand out the ผอ.'s case actions it does not hold", () => {
-    // The ผอ. group carries case:assign / case:review; its school admin reads cases
-    // only, yet must still create and edit that group (owner, 2026-09-28).
+  it('lets a school admin hand out case:manage even when it does not hold it', () => {
+    // The school admin group does not carry case:manage, yet must still create and
+    // edit the ผอ. group, which does (owner, 2026-09-28; merged 2026-10-15).
     const schoolAdmin = ['home', 'dashboard', 'manage-users-list', 'manage-role-groups'];
-    expect(canGrantPages(schoolAdmin, ['case:assign', 'case:review', 'audit-log:all'])).toBe(true);
-    expect(canGrantPages(['home', 'dashboard'], ['case:assign'])).toBe(false);
+    expect(canGrantPages(schoolAdmin, ['case:manage', 'audit-log:all'])).toBe(true);
+    expect(canGrantPages(['home', 'dashboard'], ['case:manage'])).toBe(false);
+    expect(canGrantPages(schoolAdmin, ['case:assign'])).toBe(false);
     const map = new Map<string, RoleAuthorityDefinition>([
       ['S1_BASE_ADMIN', { default_permissions: schoolAdmin }],
-      [
-        'S1_BASE_DIRECTOR',
-        { default_permissions: ['home', 'dashboard', 'case:assign', 'case:review'] },
-      ],
+      ['S1_BASE_DIRECTOR', { default_permissions: ['home', 'dashboard', 'case:manage'] }],
     ]);
     expect(canManageRole('S1_BASE_ADMIN', 'S1_BASE_DIRECTOR', map)).toBe(true);
   });

@@ -324,6 +324,7 @@ export class TaskStatsService {
           latestCaseId: row.latest_case_id == null ? null : Number(row.latest_case_id),
           latestCaseStatus: row.latest_case_status ?? null,
           latestCaseAt: row.latest_case_at,
+          latestActivityAt: row.latest_activity_at,
           latestCaseMagicLink: row.latest_case_magic_link ?? null,
           latestCaseHadAssignment: Boolean(row.latest_case_had_assignment),
           problemCategoryLabel: row.problem_category_label ?? null,
@@ -331,6 +332,13 @@ export class TaskStatsService {
           concernLevelLabel: row.concern_level_label ?? null,
           commentCount: Number(row.comment_count ?? 0),
           pendingCommentCount: Number(row.pending_comment_count ?? 0),
+          lastCaseResolvedAt: row.last_case_resolved_at
+            ? new Date(row.last_case_resolved_at).toISOString()
+            : null,
+          lastWatchClosedAt: row.last_watch_closed_at
+            ? new Date(row.last_watch_closed_at).toISOString()
+            : null,
+          pendingFromPreviousTerm: Boolean(row.pending_from_previous_term),
           // Teacher comments are part of รายงานสถานะนักเรียน for every `dashboard`
           // holder, within scope (owner, 2026-09-29).
           teacherComment: row.teacher_comment ?? null,

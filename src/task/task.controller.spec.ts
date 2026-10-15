@@ -8,7 +8,7 @@ import { TaskController } from './task.controller';
 
 describe('TaskController', () => {
   // A task is withdrawn through the case (`POST /api/cases/:id/cancel-assignment`,
-  // `case:assign`), never deleted: the old delete routes checked no permission
+  // `case:manage`), never deleted: the old delete routes checked no permission
   // or scope and left the case pointing at a tombstoned round.
   it('exposes no route that deletes a task', () => {
     const routes = Object.getOwnPropertyNames(TaskController.prototype)

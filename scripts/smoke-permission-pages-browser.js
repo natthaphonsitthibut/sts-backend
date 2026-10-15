@@ -81,14 +81,12 @@ const START = {
   settings: ['/settings'],
   'audit-log:all': ['/council/audit-log'],
   'audit-log': [],
-  'case:assign': [],
-  'case:review': [],
+  'case:manage': [],
 };
 // Permissions that only add controls to another page: crawl them with that page.
 const COMPANION = {
   'audit-log': ['students', 'import-data'],
-  'case:assign': ['dashboard'],
-  'case:review': ['dashboard'],
+  'case:manage': ['dashboard'],
 };
 
 const INJECT = `(() => {
