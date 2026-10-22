@@ -1172,7 +1172,7 @@
        "status": "PENDING",
        "expiresAt": null,
        "bindingToken": null,
-       "teacherName": null
+       "teacherName": "สมชาย ใจดี"
       }
      }
     },
@@ -1942,9 +1942,9 @@
         "titleTh": "นาย",
         "givenNameTh": "กิตติ",
         "familyNameTh": "ประสานงาน",
-        "givenNameEn": null,
-        "familyNameEn": null,
-        "provinceName": null,
+        "givenNameEn": "Kitti",
+        "familyNameEn": "Prasanngan",
+        "provinceName": "ชลบุรี",
         "recordStatus": "ACTIVE",
         "updatedAt": "2026-10-15T14:22:48.897Z"
        }
@@ -2127,17 +2127,17 @@
        "titleTh": "นาย",
        "givenNameTh": "กิตติ",
        "familyNameTh": "ประสานงาน",
-       "givenNameEn": null,
-       "familyNameEn": null,
+       "givenNameEn": "Kitti",
+       "familyNameEn": "Prasanngan",
        "dateOfBirth": "2026-10-15",
-       "genderCode": null,
-       "phoneNumber": null,
-       "emailAddress": null,
-       "addressLine": null,
-       "subDistrictName": null,
-       "districtName": null,
-       "provinceName": null,
-       "postalCode": null,
+       "genderCode": "MALE",
+       "phoneNumber": "0800000000",
+       "emailAddress": "achiraya@example.com",
+       "addressLine": "64/8 ถนนลงหาดบางแสน",
+       "subDistrictName": "แสนสุข",
+       "districtName": "เมืองชลบุรี",
+       "provinceName": "ชลบุรี",
+       "postalCode": "20130",
        "recordStatus": "ACTIVE",
        "hasPin": true,
        "createdAt": "2026-10-08T12:02:11.969Z",
@@ -2183,17 +2183,17 @@
     "titleTh": "นาย",
     "givenNameTh": "กิตติ",
     "familyNameTh": "ประสานงาน",
-    "givenNameEn": null,
-    "familyNameEn": null,
+    "givenNameEn": "Kitti",
+    "familyNameEn": "Prasanngan",
     "dateOfBirth": "2026-10-15",
     "genderCode": "MALE",
-    "phoneNumber": null,
-    "emailAddress": null,
-    "addressLine": null,
-    "subDistrictName": null,
-    "districtName": null,
-    "provinceName": null,
-    "postalCode": null,
+    "phoneNumber": "0800000000",
+    "emailAddress": "achiraya@example.com",
+    "addressLine": "64/8 ถนนลงหาดบางแสน",
+    "subDistrictName": "แสนสุข",
+    "districtName": "เมืองชลบุรี",
+    "provinceName": "ชลบุรี",
+    "postalCode": "20130",
     "pin": "482913"
    },
    "captured": false,
@@ -2332,17 +2332,17 @@
        "titleTh": "นาย",
        "givenNameTh": "กิตติ",
        "familyNameTh": "ประสานงาน",
-       "givenNameEn": null,
-       "familyNameEn": null,
-       "dateOfBirth": null,
-       "genderCode": null,
-       "phoneNumber": null,
-       "emailAddress": null,
-       "addressLine": null,
-       "subDistrictName": null,
-       "districtName": null,
-       "provinceName": null,
-       "postalCode": null,
+       "givenNameEn": "Kitti",
+       "familyNameEn": "Prasanngan",
+       "dateOfBirth": "1990-04-18",
+       "genderCode": "MALE",
+       "phoneNumber": "0800000000",
+       "emailAddress": "achiraya@example.com",
+       "addressLine": "64/8 ถนนลงหาดบางแสน",
+       "subDistrictName": "แสนสุข",
+       "districtName": "เมืองชลบุรี",
+       "provinceName": "ชลบุรี",
+       "postalCode": "20130",
        "recordStatus": "ACTIVE",
        "hasPin": true,
        "createdAt": "2026-10-08T12:02:11.969Z",
@@ -2521,17 +2521,17 @@
        "titleTh": "นาย",
        "givenNameTh": "กิตติ",
        "familyNameTh": "ประสานงาน",
-       "givenNameEn": null,
-       "familyNameEn": null,
+       "givenNameEn": "Kitti",
+       "familyNameEn": "Prasanngan",
        "dateOfBirth": "2026-10-15",
-       "genderCode": null,
-       "phoneNumber": null,
-       "emailAddress": null,
-       "addressLine": null,
-       "subDistrictName": null,
-       "districtName": null,
-       "provinceName": null,
-       "postalCode": null,
+       "genderCode": "MALE",
+       "phoneNumber": "0800000000",
+       "emailAddress": "achiraya@example.com",
+       "addressLine": "64/8 ถนนลงหาดบางแสน",
+       "subDistrictName": "แสนสุข",
+       "districtName": "เมืองชลบุรี",
+       "provinceName": "ชลบุรี",
+       "postalCode": "20130",
        "recordStatus": "ACTIVE",
        "hasPin": true,
        "createdAt": "2026-10-08T12:02:11.969Z",
@@ -2585,17 +2585,17 @@
     "titleTh": "นาย",
     "givenNameTh": "กิตติ",
     "familyNameTh": "ประสานงาน",
-    "givenNameEn": null,
-    "familyNameEn": null,
+    "givenNameEn": "Kitti",
+    "familyNameEn": "Prasanngan",
     "dateOfBirth": "2026-10-15",
     "genderCode": "MALE",
-    "phoneNumber": null,
-    "emailAddress": null,
-    "addressLine": null,
-    "subDistrictName": null,
-    "districtName": null,
-    "provinceName": null,
-    "postalCode": null,
+    "phoneNumber": "0800000000",
+    "emailAddress": "achiraya@example.com",
+    "addressLine": "64/8 ถนนลงหาดบางแสน",
+    "subDistrictName": "แสนสุข",
+    "districtName": "เมืองชลบุรี",
+    "provinceName": "ชลบุรี",
+    "postalCode": "20130",
     "pin": "482913"
    },
    "captured": false,
@@ -2736,17 +2736,17 @@
        "titleTh": "นาย",
        "givenNameTh": "กิตติ",
        "familyNameTh": "ประสานงาน",
-       "givenNameEn": null,
-       "familyNameEn": null,
+       "givenNameEn": "Kitti",
+       "familyNameEn": "Prasanngan",
        "dateOfBirth": "2026-10-15",
-       "genderCode": null,
-       "phoneNumber": null,
-       "emailAddress": null,
-       "addressLine": null,
-       "subDistrictName": null,
-       "districtName": null,
-       "provinceName": null,
-       "postalCode": null,
+       "genderCode": "MALE",
+       "phoneNumber": "0800000000",
+       "emailAddress": "achiraya@example.com",
+       "addressLine": "64/8 ถนนลงหาดบางแสน",
+       "subDistrictName": "แสนสุข",
+       "districtName": "เมืองชลบุรี",
+       "provinceName": "ชลบุรี",
+       "postalCode": "20130",
        "recordStatus": "ACTIVE",
        "hasPin": true,
        "createdAt": "2026-10-08T12:02:11.969Z",
@@ -2936,17 +2936,17 @@
        "titleTh": "นาย",
        "givenNameTh": "กิตติ",
        "familyNameTh": "ประสานงาน",
-       "givenNameEn": null,
-       "familyNameEn": null,
+       "givenNameEn": "Kitti",
+       "familyNameEn": "Prasanngan",
        "dateOfBirth": "2026-10-15",
-       "genderCode": null,
-       "phoneNumber": null,
-       "emailAddress": null,
-       "addressLine": null,
-       "subDistrictName": null,
-       "districtName": null,
-       "provinceName": null,
-       "postalCode": null,
+       "genderCode": "MALE",
+       "phoneNumber": "0800000000",
+       "emailAddress": "achiraya@example.com",
+       "addressLine": "64/8 ถนนลงหาดบางแสน",
+       "subDistrictName": "แสนสุข",
+       "districtName": "เมืองชลบุรี",
+       "provinceName": "ชลบุรี",
+       "postalCode": "20130",
        "createdAt": "2026-10-08T12:02:11.969Z",
        "updatedAt": "2026-10-15T14:22:48.897Z",
        "hasPin": true
@@ -3124,17 +3124,17 @@
        "titleTh": "นาย",
        "givenNameTh": "กิตติ",
        "familyNameTh": "ประสานงาน",
-       "givenNameEn": null,
-       "familyNameEn": null,
+       "givenNameEn": "Kitti",
+       "familyNameEn": "Prasanngan",
        "dateOfBirth": "2026-10-15",
-       "genderCode": null,
-       "phoneNumber": null,
-       "emailAddress": null,
-       "addressLine": null,
-       "subDistrictName": null,
-       "districtName": null,
-       "provinceName": null,
-       "postalCode": null,
+       "genderCode": "MALE",
+       "phoneNumber": "0800000000",
+       "emailAddress": "achiraya@example.com",
+       "addressLine": "64/8 ถนนลงหาดบางแสน",
+       "subDistrictName": "แสนสุข",
+       "districtName": "เมืองชลบุรี",
+       "provinceName": "ชลบุรี",
+       "postalCode": "20130",
        "createdAt": "2026-10-08T12:02:11.969Z",
        "updatedAt": "2026-10-15T14:22:48.897Z",
        "hasPin": true
@@ -4530,17 +4530,17 @@
     "task_type": "VISIT",
     "type": "VISIT",
     "assigned_to_name": "เบญจมาศ วงศ์คำ",
-    "assigned_to_first_name": null,
-    "assigned_to_last_name": null,
+    "assigned_to_first_name": "สมชาย",
+    "assigned_to_last_name": "ใจดี",
     "assigned_to_email": "kamonchanok.rungruang.178@school.sts.local",
-    "assigned_to_phone": null,
+    "assigned_to_phone": "0800000001",
     "assigned_teacher_id": 1,
     "assistance_measure_codes": [
      "SCHOLARSHIP",
      "LEARNING_SUPPLIES"
     ],
-    "assistance_measure_detail": null,
-    "expires_unit": null,
+    "assistance_measure_detail": "สนับสนุนค่าเดินทางและอุปกรณ์การเรียนตามความจำเป็น",
+    "expires_unit": "days",
     "opens_at": "2026-10-15T09:30:00.000Z",
     "expires_at": "2026-09-02T04:25:01.723Z",
     "student_name": "ปภาวรินทร์ มณีวงศ์",
@@ -4557,9 +4557,9 @@
     "reason_flagged": "ขาดเรียนหลังปิดเคสล่าสุด 4 วัน",
     "target_grade": "อ.3",
     "target_room": "3",
-    "subject": null,
+    "subject": "การติดตามการมาเรียน",
     "role": "S10010004_BASE_ADMIN",
-    "selected_role": null,
+    "selected_role": "S10010004_BASE_ADMIN",
     "roles": [
      "S10010004_BASE_ADMIN"
     ],
@@ -4849,15 +4849,15 @@
       "target_grade": "อ.3",
       "target_room": "3",
       "student_name": "ปภาวรินทร์ มณีวงศ์",
-      "student_first_name": null,
-      "student_last_name": null,
+      "student_first_name": "อชิรญา",
+      "student_last_name": "นาคเจริญ",
       "student_school": "โรงเรียนบ้านหนองขาม",
-      "student_address": null,
-      "address_line": null,
-      "address_province": null,
-      "address_district": null,
-      "address_sub_district": null,
-      "postal_code": null,
+      "student_address": "64/8 ตำบลแสนสุข อำเภอเมืองชลบุรี จังหวัดชลบุรี 20130",
+      "address_line": "64/8 ถนนลงหาดบางแสน",
+      "address_province": "ชลบุรี",
+      "address_district": "เมืองชลบุรี",
+      "address_sub_district": "แสนสุข",
+      "postal_code": "20130",
       "reason_flagged": "ขาดเรียนหลังปิดเคสล่าสุด 4 วัน",
       "task_status": "COMPLETED",
       "case_status": "OPEN",
@@ -4868,7 +4868,7 @@
        {
         "id": "2bd337c1-b826-4b46-9322-d6037ba2300d",
         "assigned_to_name": "เบญจมาศ วงศ์คำ",
-        "assigned_to_email": null,
+        "assigned_to_email": "teacher@example.com",
         "status": "COMPLETED",
         "created_at": "2026-08-26T04:25:01.723Z",
         "expires_at": "2026-09-02T04:25:01.723Z",
@@ -4884,24 +4884,26 @@
          "parental_status_code": null,
          "parental_status_label": null,
          "guardian_types": [],
-         "guardian_type_detail": null,
-         "residence_environment_detail": null,
+         "guardian_type_detail": "ป้าเป็นผู้ดูแลหลัก",
+         "residence_environment_detail": "ที่พักสะอาด มีพื้นที่อ่านหนังสือ",
          "residence_environments": [],
          "task_execution_outcome_code": "SUCCEEDED",
          "task_execution_outcome_label": "พบนักเรียน",
          "execution_outcome_detail": null,
-         "contact_person_name": null,
+         "contact_person_name": "สมหญิง ใจดี",
          "contact_channel_code": null,
          "contact_channel_detail": null,
          "contact_channel_label": null,
          "non_follow_up_reason_code": null,
          "non_follow_up_reason_label": null,
-         "cause_detail": null,
-         "recommendation": null,
+         "cause_detail": "นักเรียนมีภาระดูแลสมาชิกในครอบครัว",
+         "recommendation": "ประสานผู้ปกครองและติดตามการมาเรียนในสัปดาห์ถัดไป",
          "submitted_at": "2026-08-26T04:25:01.723Z",
-         "visit_lat": null,
-         "visit_lng": null,
-         "photo_paths": null
+         "visit_lat": 13.2857,
+         "visit_lng": 100.9243,
+         "photo_paths": [
+          "/api/uploads/visit-attachments/visit-example.jpg"
+         ]
         }
        }
       ],
@@ -5028,12 +5030,12 @@
     "assisted_at": "2026-10-15T09:30:00.000Z",
     "assistance_detail": null,
     "execution_outcome_detail": null,
-    "contact_person_name": null,
+    "contact_person_name": "สมหญิง ใจดี",
     "contact_channel_code": "IN_PERSON",
     "contact_channel_detail": null,
     "cause_detail": "พบนักเรียนและแม่ที่บ้าน นักเรียนเป็นโรคหอบหืด ช่วงนี้อาการกำเริบบ่อย หายใจลำบากตอนกลางคืนจนมาเรียนไม่ไหว ยาพ่นที่ได้จาก รพ.สต. หมดแล้วและไม่ได้ไปพบแพทย์ต่อเนื่องเพราะครอบครัวไม่มีค่าเดินทางเข้าโรงพยาบาลในเมือง ควรส่งต่อให้โรงพยาบาลตรวจรักษาและวางแผนการรักษาระยะยาว",
-    "notes": null,
-    "recommendation": null,
+    "notes": "ครูประจำชั้นติดตามการมาเรียนร่วมกับผู้ปกครอง",
+    "recommendation": "ประสานผู้ปกครองและติดตามการมาเรียนในสัปดาห์ถัดไป",
     "photo_paths": null,
     "home_visit_exception_code": null,
     "updated_student_address": "2026-10-15",
@@ -6067,7 +6069,7 @@
         "latest_link_status": "COMPLETED",
         "latest_link_assigned_to": "กมลชนก รุ่งเรือง",
         "link_state": "G8YPo4",
-        "student_photo_url": null,
+        "student_photo_url": "https://example.com/assets/student-portrait.jpg",
         "active_link": null
        },
        {
@@ -6103,7 +6105,7 @@
         "latest_link_status": "COMPLETED",
         "latest_link_assigned_to": "จันทร์เพ็ญ สิงห์ทอง",
         "link_state": "G8YPo4",
-        "student_photo_url": null,
+        "student_photo_url": "https://example.com/assets/student-portrait.jpg",
         "active_link": null
        }
       ],
@@ -6352,11 +6354,11 @@
       "data": {
        "id": 3375,
        "student_id": "1eb63b28-f9d7-4b7e-9a87-46c004375e29",
-       "student_photo_url": null,
+       "student_photo_url": "https://example.com/assets/student-portrait.jpg",
        "student_name": "ปภาวรินทร์ มณีวงศ์",
        "student_school": "โรงเรียนบ้านหนองขาม",
        "student_address": "64/8 หมู่ 1 ตรอกพัฒนา 1 ซอยร่วมใจ 4 ถนนดอนเมือง บ้านสวน เมืองชลบุรี ชลบุรี 20000",
-       "student_phone": null,
+       "student_phone": "0800000000",
        "student_lat": 1,
        "student_lng": 1,
        "home_address": "64/8 หมู่ 1 ตรอกพัฒนา 1 ซอยร่วมใจ 4 ถนนดอนเมือง บ้านสวน เมืองชลบุรี ชลบุรี 20000",
@@ -7026,7 +7028,7 @@
         "academicYear": 2569,
         "semester": 1,
         "studentId": "00558a81-22eb-4e91-ba7c-129b4f9343a0",
-        "studentPhotoUrl": null,
+        "studentPhotoUrl": "https://example.com/assets/student-portrait.jpg",
         "grade": "ม.4",
         "room": "2",
         "statusCode": "COMPLETED",
@@ -7049,7 +7051,7 @@
         "academicYear": 2569,
         "semester": 1,
         "studentId": "00558a81-22eb-4e91-ba7c-129b4f9343a0",
-        "studentPhotoUrl": null,
+        "studentPhotoUrl": "https://example.com/assets/student-portrait.jpg",
         "grade": "ม.4",
         "room": "2",
         "statusCode": "NOT_SUCCEEDED",
@@ -7591,7 +7593,7 @@
        {
         "studentId": "0cbd7869-76e1-4d30-99bf-e55d4fa8c574",
         "studentName": "กัญญาณัฐ ใจดี",
-        "studentPhotoUrl": null,
+        "studentPhotoUrl": "https://example.com/assets/student-portrait.jpg",
         "schoolId": 10010002,
         "schoolName": "โรงเรียนบ้านหนองขาม",
         "academicYear": 2569,
@@ -7631,7 +7633,7 @@
        {
         "studentId": "a916a7f5-f1ef-4a48-be17-76e859b2dae8",
         "studentName": "กัญญาวีร์ บุญช่วย",
-        "studentPhotoUrl": null,
+        "studentPhotoUrl": "https://example.com/assets/student-portrait.jpg",
         "schoolId": 10010001,
         "schoolName": "โรงเรียนอนุบาลวัดกลาง",
         "academicYear": 2569,
@@ -7996,18 +7998,18 @@
         "agencyName": "กรมส่งเสริมการเรียนรู้",
         "agencyKindCode": "LEARNING_PROMOTION",
         "agencyKindLabel": "หน่วยงานส่งเสริมการเรียนรู้",
-        "contactPhone": null,
-        "contactEmail": null,
-        "websiteUrl": null
+        "contactPhone": "0800000001",
+        "contactEmail": "contact@example.com",
+        "websiteUrl": "https://example.com/school"
        },
        {
         "id": 2,
         "agencyName": "สถาบันสุขภาพเด็กแห่งชาติมหาราชินี",
         "agencyKindCode": "PUBLIC_HOSPITAL",
         "agencyKindLabel": "โรงพยาบาลรัฐบาล",
-        "contactPhone": null,
-        "contactEmail": null,
-        "websiteUrl": null
+        "contactPhone": "0800000001",
+        "contactEmail": "contact@example.com",
+        "websiteUrl": "https://example.com/school"
        }
       ]
      }
@@ -8986,13 +8988,13 @@
       "data": {
        "id": 3375,
        "student_id": "1eb63b28-f9d7-4b7e-9a87-46c004375e29",
-       "student_photo_url": null,
+       "student_photo_url": "https://example.com/assets/student-portrait.jpg",
        "student_name": "อชิรญา นาคเจริญ",
        "student_school": "โรงเรียนบูรพา",
        "student_address": "64/8 หมู่ 1 ตรอกพัฒนา 1 ซอยร่วมใจ 4 ถนนดอนเมือง บ้านสวน เมืองชลบุรี ชลบุรี 20000",
-       "student_phone": null,
-       "student_lat": null,
-       "student_lng": null,
+       "student_phone": "0800000000",
+       "student_lat": 13.2857,
+       "student_lng": 100.9243,
        "home_address": "64/8 หมู่ 1 ตรอกพัฒนา 1 ซอยร่วมใจ 4 ถนนดอนเมือง บ้านสวน เมืองชลบุรี ชลบุรี 20000",
        "home_province": "ชลบุรี",
        "home_district": "เมืองชลบุรี",
@@ -9020,7 +9022,7 @@
          "task_status": "COMPLETED",
          "task_type": "VISIT",
          "assistance_measures": [],
-         "assistance_measure_detail": null,
+         "assistance_measure_detail": "สนับสนุนค่าเดินทางและอุปกรณ์การเรียนตามความจำเป็น",
          "assisted_at": null,
          "assistance_detail": null,
          "task_execution_outcome_code": "SUCCEEDED",
@@ -9067,7 +9069,7 @@
           }
          ],
          "guardian_type_detail": "น้า (น้องสาวของแม่) อยู่บ้านเดียวกัน ช่วยพานักเรียนไปหาหมอเมื่อแม่ไปทำงาน",
-         "contact_person_name": null,
+         "contact_person_name": "สมหญิง ใจดี",
          "contact_channel_code": "IN_PERSON",
          "contact_channel_label": "พบด้วยตนเอง",
          "contact_channel_detail": null,
@@ -9103,19 +9105,19 @@
           }
          ],
          "cause_detail": "พบนักเรียนและแม่ที่บ้าน นักเรียนเป็นโรคหอบหืด ช่วงนี้อาการกำเริบบ่อย หายใจลำบากตอนกลางคืนจนมาเรียนไม่ไหว ยาพ่นที่ได้จาก รพ.สต. หมดแล้วและไม่ได้ไปพบแพทย์ต่อเนื่องเพราะครอบครัวไม่มีค่าเดินทางเข้าโรงพยาบาลในเมือง ควรส่งต่อให้โรงพยาบาลตรวจรักษาและวางแผนการรักษาระยะยาว",
-         "recommendation": null,
+         "recommendation": "ประสานผู้ปกครองและติดตามการมาเรียนในสัปดาห์ถัดไป",
          "visit_lat": 13.3611,
          "visit_lng": 100.9847,
          "photo_paths": null,
          "address_changed": false,
          "home_visit_exception_code": null,
          "home_visit_exception_label": null,
-         "updated_student_address": null,
-         "updated_address_line": null,
-         "updated_address_province": null,
-         "updated_address_district": null,
-         "updated_address_sub_district": null,
-         "updated_postal_code": null,
+         "updated_student_address": "64/8 ถนนลงหาดบางแสน ตำบลแสนสุข อำเภอเมืองชลบุรี จังหวัดชลบุรี 20130",
+         "updated_address_line": "64/8 ถนนลงหาดบางแสน",
+         "updated_address_province": "ชลบุรี",
+         "updated_address_district": "เมืองชลบุรี",
+         "updated_address_sub_district": "แสนสุข",
+         "updated_postal_code": "20130",
          "updated_lat": null,
          "updated_lng": null,
          "follow_up_decision": "REQUEST_REVIEW",
@@ -9127,7 +9129,7 @@
          "id": "17202c6b-56b0-42e6-b4bb-133b22e72825",
          "review_action": "REFER_AGENCY",
          "review_note": "นักเรียนป่วยเป็นโรคหอบหืดที่ยังไม่ได้รับการรักษาต่อเนื่อง และครอบครัวไม่มีค่าเดินทางไปโรงพยาบาล เกินกำลังที่โรงเรียนช่วยได้ ส่งต่อโรงพยาบาลเพื่อตรวจรักษาและวางแผนการรักษา",
-         "review_summary": null,
+         "review_summary": "นักเรียนกลับมาเรียนแล้ว ให้ครูประจำชั้นติดตามต่อ",
          "proposed_assistance_measures": [],
          "proposed_assistance_measure_detail": null,
          "resolution_outcome": null,
@@ -9181,8 +9183,8 @@
          "submitted_at": "2026-07-31T05:46:21.564Z",
          "assignment_starts_at": "2026-07-31T03:12:00.000Z",
          "assignment_ends_at": "2026-08-07T03:12:00.000Z",
-         "assignment_note": null,
-         "cause_detail": null,
+         "assignment_note": "ติดตามสาเหตุการขาดเรียนและประสานผู้ปกครอง",
+         "cause_detail": "นักเรียนมีภาระดูแลสมาชิกในครอบครัว",
          "follow_up_problem_category_label": "อื่น ๆ",
          "follow_up_problem_category_guidance": "ระบุในคำอธิบาย",
          "exception_label": null
@@ -9512,7 +9514,7 @@
      "SCHOLARSHIP",
      "LEARNING_SUPPLIES"
     ],
-    "assistance_measure_detail": null,
+    "assistance_measure_detail": "สนับสนุนค่าเดินทางและอุปกรณ์การเรียนตามความจำเป็น",
     "resolution_outcome": "RETURNED_TO_SCHOOL",
     "referral_agency_id": 2,
     "reviewed_by": "สุภาพร วงศ์ทอง"
@@ -9959,7 +9961,7 @@
         "task_id": "73727234-830b-47d2-80a4-3b68433e81c1",
         "task_status": "COMPLETED",
         "task_type": "VISIT",
-        "assistance_measure_detail": null,
+        "assistance_measure_detail": "สนับสนุนค่าเดินทางและอุปกรณ์การเรียนตามความจำเป็น",
         "assistance_measures": [],
         "created_at": "2026-10-15T14:17:51.420Z",
         "initial_assignee": "กมลชนก รุ่งเรือง",
@@ -9999,7 +10001,7 @@
          }
         ],
         "guardian_type_detail": "น้า (น้องสาวของแม่) อยู่บ้านเดียวกัน ช่วยพานักเรียนไปหาหมอเมื่อแม่ไปทำงาน",
-        "contact_person_name": null,
+        "contact_person_name": "สมหญิง ใจดี",
         "contact_channel_code": "IN_PERSON",
         "contact_channel_label": "พบด้วยตนเอง",
         "contact_channel_detail": null,
@@ -10035,21 +10037,23 @@
          }
         ],
         "cause_detail": "พบนักเรียนและแม่ที่บ้าน นักเรียนเป็นโรคหอบหืด ช่วงนี้อาการกำเริบบ่อย หายใจลำบากตอนกลางคืนจนมาเรียนไม่ไหว ยาพ่นที่ได้จาก รพ.สต. หมดแล้วและไม่ได้ไปพบแพทย์ต่อเนื่องเพราะครอบครัวไม่มีค่าเดินทางเข้าโรงพยาบาลในเมือง ควรส่งต่อให้โรงพยาบาลตรวจรักษาและวางแผนการรักษาระยะยาว",
-        "recommendation": null,
+        "recommendation": "ประสานผู้ปกครองและติดตามการมาเรียนในสัปดาห์ถัดไป",
         "visit_lat": 13.3611,
         "visit_lng": 100.9847,
-        "photo_paths": null,
+        "photo_paths": [
+         "/api/uploads/visit-attachments/visit-example.jpg"
+        ],
         "address_changed": false,
         "home_visit_exception_code": null,
         "home_visit_exception_label": null,
-        "updated_student_address": null,
-        "updated_address_line": null,
-        "updated_address_province": null,
-        "updated_address_district": null,
-        "updated_address_sub_district": null,
-        "updated_postal_code": null,
-        "updated_lat": null,
-        "updated_lng": null,
+        "updated_student_address": "64/8 ถนนลงหาดบางแสน ตำบลแสนสุข อำเภอเมืองชลบุรี จังหวัดชลบุรี 20130",
+        "updated_address_line": "64/8 ถนนลงหาดบางแสน",
+        "updated_address_province": "ชลบุรี",
+        "updated_address_district": "เมืองชลบุรี",
+        "updated_address_sub_district": "แสนสุข",
+        "updated_postal_code": "20130",
+        "updated_lat": 13.2857,
+        "updated_lng": 100.9243,
         "case_follow_up_decision": "REQUEST_REVIEW",
         "case_resolution_outcome_code": null,
         "assisted_at": null,
@@ -10135,7 +10139,7 @@
         "case_id": 3375,
         "review_action": "REFER_AGENCY",
         "review_note": "นักเรียนป่วยเป็นโรคหอบหืดที่ยังไม่ได้รับการรักษาต่อเนื่อง และครอบครัวไม่มีค่าเดินทางไปโรงพยาบาล เกินกำลังที่โรงเรียนช่วยได้ ส่งต่อโรงพยาบาลเพื่อตรวจรักษาและวางแผนการรักษา",
-        "review_summary": null,
+        "review_summary": "นักเรียนกลับมาเรียนแล้ว ให้ครูประจำชั้นติดตามต่อ",
         "resolution_outcome": null,
         "reviewed_by": "burapha.director",
         "reviewed_at": "2026-10-15T14:20:05.347Z",
@@ -11245,16 +11249,16 @@
        "student_school": "โรงเรียนประชานุกูลประสิทธิ์",
        "student_grade": "ม.4",
        "student_room": "2",
-       "student_photo_url": null,
-       "student_address": null,
-       "address_line": null,
-       "address_province": null,
-       "address_district": null,
-       "address_sub_district": null,
-       "postal_code": null,
-       "student_phone": null,
-       "student_lat": null,
-       "student_lng": null,
+       "student_photo_url": "https://example.com/assets/student-portrait.jpg",
+       "student_address": "64/8 ตำบลแสนสุข อำเภอเมืองชลบุรี จังหวัดชลบุรี 20130",
+       "address_line": "64/8 ถนนลงหาดบางแสน",
+       "address_province": "ชลบุรี",
+       "address_district": "เมืองชลบุรี",
+       "address_sub_district": "แสนสุข",
+       "postal_code": "20130",
+       "student_phone": "0800000000",
+       "student_lat": 13.2857,
+       "student_lng": 100.9243,
        "is_approximate_home_location": false,
        "reason_flagged": "ขาดเรียนหลังปิดเคสล่าสุด 4 วัน",
        "case_display_status_label": "รอผลการส่งต่อ",
@@ -12506,7 +12510,7 @@
         "semester": 1,
         "gradeLabel": "ป.1",
         "roomNumber": 2,
-        "roomName": null
+        "roomName": "1"
        },
        "subjects": [
         {
@@ -12660,7 +12664,7 @@
         "hasPhoto": false,
         "photoVersion": "2026-06-24T12:49:32.951Z",
         "riskTier": "NORMAL",
-        "teacherComment": null
+        "teacherComment": "ครูประจำชั้นประสานผู้ปกครองและติดตามการมาเรียนอย่างต่อเนื่อง"
        },
        {
         "id": "4893f249-4437-44e0-8011-7c15c7b5e997",
@@ -12670,7 +12674,7 @@
         "hasPhoto": false,
         "photoVersion": "2026-06-24T12:49:32.951Z",
         "riskTier": "NORMAL",
-        "teacherComment": null
+        "teacherComment": "ครูประจำชั้นประสานผู้ปกครองและติดตามการมาเรียนอย่างต่อเนื่อง"
        }
       ]
      }
@@ -14722,10 +14726,10 @@
      "example": {
       "lat": 1,
       "lng": 1,
-      "formattedAddress": null,
-      "locationType": null,
-      "placeId": null,
-      "postalCode": null,
+      "formattedAddress": "64/8 ตำบลแสนสุข อำเภอเมืองชลบุรี จังหวัดชลบุรี 20130",
+      "locationType": "APPROXIMATE",
+      "placeId": "DOCUMENTATION_PLACE_ID",
+      "postalCode": "20130",
       "provider": "google"
      }
     },
@@ -14841,10 +14845,10 @@
      "example": {
       "lat": 1,
       "lng": 1,
-      "formattedAddress": null,
-      "locationType": null,
-      "placeId": null,
-      "postalCode": null,
+      "formattedAddress": "64/8 ตำบลแสนสุข อำเภอเมืองชลบุรี จังหวัดชลบุรี 20130",
+      "locationType": "APPROXIMATE",
+      "placeId": "DOCUMENTATION_PLACE_ID",
+      "postalCode": "20130",
       "provider": "google"
      }
     },
@@ -15292,7 +15296,7 @@
         "labels": [
          "ผู้ดูแลระบบ"
         ],
-        "photo_url": null,
+        "photo_url": "https://example.com/assets/student-portrait.jpg",
         "can_manage": true
        },
        {
@@ -15328,7 +15332,7 @@
         "labels": [
          "ผู้ดูแลระบบ"
         ],
-        "photo_url": null,
+        "photo_url": "https://example.com/assets/student-portrait.jpg",
         "can_manage": true
        }
       ],
@@ -15477,16 +15481,16 @@
     "phone": "0812457930",
     "email": "kittipong.s@sts-burapha.ac.th",
     "affiliation": "โรงเรียนบูรพา",
-    "line_id": null,
+    "line_id": "sts_teacher_demo",
     "address_line": "64/8",
-    "address_village_no": null,
-    "address_street": null,
-    "address_soi": null,
-    "address_trok": null,
+    "address_village_no": "2",
+    "address_street": "ลงหาดบางแสน",
+    "address_soi": "3",
+    "address_trok": "1",
     "address_sub_district": "บ้านสวน",
     "address_district": "เมืองชลบุรี",
     "address_province": "ชลบุรี",
-    "address_postal_code": null,
+    "address_postal_code": "20130",
     "address_latitude": 1,
     "address_longitude": 1,
     "status": "ok",
@@ -15950,8 +15954,8 @@
          "district": "เมืองตรัง",
          "sub_district": "บ้านควน",
          "province_code": "20",
-         "district_code": null,
-         "sub_district_code": null
+         "district_code": "2001",
+         "sub_district_code": "200102"
         },
         "user_count": 1
        }
@@ -16163,8 +16167,8 @@
         "district": "เมืองตรัง",
         "sub_district": "บ้านควน",
         "province_code": "20",
-        "district_code": null,
-        "sub_district_code": null
+        "district_code": "2001",
+        "sub_district_code": "200102"
        },
        "user_count": 1
       }
@@ -16410,8 +16414,8 @@
          "district": "เมืองตรัง",
          "sub_district": "บ้านควน",
          "province_code": "20",
-         "district_code": null,
-         "sub_district_code": null
+         "district_code": "2001",
+         "sub_district_code": "200102"
         },
         "user_count": 1
        }
@@ -16623,8 +16627,8 @@
         "district": "เมืองตรัง",
         "sub_district": "บ้านควน",
         "province_code": "20",
-        "district_code": null,
-        "sub_district_code": null
+        "district_code": "2001",
+        "sub_district_code": "200102"
        },
        "user_count": 1
       }
@@ -16842,8 +16846,8 @@
         "district": "เมืองตรัง",
         "sub_district": "บ้านควน",
         "province_code": "20",
-        "district_code": null,
-        "sub_district_code": null
+        "district_code": "2001",
+        "sub_district_code": "200102"
        },
        "user_count": 1
       }
@@ -16907,7 +16911,7 @@
    },
    "captured": false,
    "parameterExamples": {
-    "name": "%E0%B8%AD%E0%B8%8A%E0%B8%B4%E0%B8%A3%E0%B8%8D%E0%B8%B2"
+    "name": "อชิรญา"
    }
   },
   "DELETE /api/users/role-groups/{name}": {
@@ -16974,7 +16978,7 @@
    },
    "captured": false,
    "parameterExamples": {
-    "name": "%E0%B8%AD%E0%B8%8A%E0%B8%B4%E0%B8%A3%E0%B8%8D%E0%B8%B2"
+    "name": "อชิรญา"
    }
   },
   "PUT /api/users/council-role-groups/{name}": {
@@ -17130,8 +17134,8 @@
         "district": "เมืองตรัง",
         "sub_district": "บ้านควน",
         "province_code": "20",
-        "district_code": null,
-        "sub_district_code": null
+        "district_code": "2001",
+        "sub_district_code": "200102"
        },
        "user_count": 1
       }
@@ -17195,7 +17199,7 @@
    },
    "captured": false,
    "parameterExamples": {
-    "name": "%E0%B8%AD%E0%B8%8A%E0%B8%B4%E0%B8%A3%E0%B8%8D%E0%B8%B2"
+    "name": "อชิรญา"
    }
   },
   "DELETE /api/users/council-role-groups/{name}": {
@@ -17254,7 +17258,7 @@
    },
    "captured": false,
    "parameterExamples": {
-    "name": "%E0%B8%AD%E0%B8%8A%E0%B8%B4%E0%B8%A3%E0%B8%8D%E0%B8%B2"
+    "name": "อชิรญา"
    }
   },
   "POST /api/users/me/change-password": {
@@ -17710,19 +17714,19 @@
        "audit-log",
        "classrooms"
       ],
-      "line_id": null,
-      "address_line": null,
-      "address_village_no": null,
-      "address_street": null,
-      "address_soi": null,
-      "address_trok": null,
-      "address_sub_district": null,
-      "address_district": null,
-      "address_province": null,
-      "address_postal_code": null,
-      "address_latitude": null,
-      "address_longitude": null,
-      "photo_url": null,
+      "line_id": "sts_teacher_demo",
+      "address_line": "64/8 ถนนลงหาดบางแสน",
+      "address_village_no": "2",
+      "address_street": "ลงหาดบางแสน",
+      "address_soi": "3",
+      "address_trok": "1",
+      "address_sub_district": "แสนสุข",
+      "address_district": "เมืองชลบุรี",
+      "address_province": "ชลบุรี",
+      "address_postal_code": "20130",
+      "address_latitude": 13.2857,
+      "address_longitude": 100.9243,
+      "photo_url": "https://example.com/assets/student-portrait.jpg",
       "data_scope_labels": {
        "schools": [],
        "gradeLevels": []
@@ -18148,7 +18152,7 @@
       "address_postal_code": "10220",
       "address_latitude": 13.912345,
       "address_longitude": 100.612345,
-      "photo_url": null,
+      "photo_url": "https://example.com/assets/student-portrait.jpg",
       "data_scope_labels": {
        "schools": [],
        "gradeLevels": []
@@ -18597,11 +18601,11 @@
       ]
      },
      "example": {
-      "photo_url": null,
+      "photo_url": "https://example.com/assets/student-portrait.jpg",
       "PersonID_Onec": "3101200456789",
       "phone": "0812457930",
       "email": "kittipong.s@sts-burapha.ac.th",
-      "line_id": null,
+      "line_id": "sts_teacher_demo",
       "data_scope_labels": {
        "schools": [
         {
@@ -18623,14 +18627,14 @@
       "affiliation": "โรงเรียนบูรพา",
       "photo_storage_key": null,
       "address_line": "64/8",
-      "address_village_no": null,
-      "address_street": null,
-      "address_soi": null,
-      "address_trok": null,
+      "address_village_no": "2",
+      "address_street": "ลงหาดบางแสน",
+      "address_soi": "3",
+      "address_trok": "1",
       "address_sub_district": "บ้านสวน",
       "address_district": "เมืองชลบุรี",
       "address_province": "ชลบุรี",
-      "address_postal_code": null,
+      "address_postal_code": "20130",
       "address_latitude": 1,
       "address_longitude": 1,
       "status": "ok",
@@ -19033,8 +19037,8 @@
       "phone": "0800000002",
       "email": "maneerat.d@school.sts.local",
       "affiliation": "เชียงใหม่",
-      "photo_url": null,
-      "line_id": null,
+      "photo_url": "https://example.com/assets/student-portrait.jpg",
+      "line_id": "sts_teacher_demo",
       "role": "A50_BASE_ADMIN",
       "roles": [
        "A50_BASE_ADMIN"
@@ -19433,19 +19437,19 @@
       "labels": [
        "ผู้ดูแลระบบ"
       ],
-      "line_id": null,
-      "address_line": null,
-      "address_village_no": null,
-      "address_street": null,
-      "address_soi": null,
-      "address_trok": null,
-      "address_sub_district": null,
-      "address_district": null,
-      "address_province": null,
-      "address_postal_code": null,
-      "address_latitude": null,
-      "address_longitude": null,
-      "photo_url": null,
+      "line_id": "sts_teacher_demo",
+      "address_line": "64/8 ถนนลงหาดบางแสน",
+      "address_village_no": "2",
+      "address_street": "ลงหาดบางแสน",
+      "address_soi": "3",
+      "address_trok": "1",
+      "address_sub_district": "แสนสุข",
+      "address_district": "เมืองชลบุรี",
+      "address_province": "ชลบุรี",
+      "address_postal_code": "20130",
+      "address_latitude": 13.2857,
+      "address_longitude": 100.9243,
+      "photo_url": "https://example.com/assets/student-portrait.jpg",
       "can_manage": true
      }
     },
@@ -19566,16 +19570,16 @@
     "phone": "0812457930",
     "email": "kittipong.s@sts-burapha.ac.th",
     "affiliation": "โรงเรียนบูรพา",
-    "line_id": null,
+    "line_id": "sts_teacher_demo",
     "address_line": "64/8",
-    "address_village_no": null,
-    "address_street": null,
-    "address_soi": null,
-    "address_trok": null,
+    "address_village_no": "2",
+    "address_street": "ลงหาดบางแสน",
+    "address_soi": "3",
+    "address_trok": "1",
     "address_sub_district": "บ้านสวน",
     "address_district": "เมืองชลบุรี",
     "address_province": "ชลบุรี",
-    "address_postal_code": null,
+    "address_postal_code": "20130",
     "address_latitude": 1,
     "address_longitude": 1,
     "status": "ok",
@@ -20021,7 +20025,7 @@
       "nullable": true
      },
      "example": {
-      "photo_url": null,
+      "photo_url": "https://example.com/assets/student-portrait.jpg",
       "PersonID_Onec": "3101200456789",
       "can_manage": true,
       "id": 3375,
@@ -20031,16 +20035,16 @@
       "phone": "0812457930",
       "email": "kittipong.s@sts-burapha.ac.th",
       "affiliation": "โรงเรียนบูรพา",
-      "line_id": null,
+      "line_id": "sts_teacher_demo",
       "address_line": "64/8",
-      "address_village_no": null,
-      "address_street": null,
-      "address_soi": null,
-      "address_trok": null,
+      "address_village_no": "2",
+      "address_street": "ลงหาดบางแสน",
+      "address_soi": "3",
+      "address_trok": "1",
       "address_sub_district": "บ้านสวน",
       "address_district": "เมืองชลบุรี",
       "address_province": "ชลบุรี",
-      "address_postal_code": null,
+      "address_postal_code": "20130",
       "address_latitude": 1,
       "address_longitude": 1,
       "status": "ok",
@@ -20277,14 +20281,14 @@
      },
      "example": {
       "address_line": "64/8",
-      "address_village_no": null,
-      "address_street": null,
-      "address_soi": null,
-      "address_trok": null,
+      "address_village_no": "2",
+      "address_street": "ลงหาดบางแสน",
+      "address_soi": "3",
+      "address_trok": "1",
       "address_sub_district": "บ้านสวน",
       "address_district": "เมืองชลบุรี",
       "address_province": "ชลบุรี",
-      "address_postal_code": null,
+      "address_postal_code": "20130",
       "address_latitude": 1,
       "address_longitude": 1
      }
@@ -20958,7 +20962,7 @@
        "audit-log",
        "classrooms"
       ],
-      "photo_url": null
+      "photo_url": "https://example.com/assets/student-portrait.jpg"
      }
     },
     "400": {
@@ -21632,9 +21636,9 @@
         "agencyName": "กรมกิจการเด็กและเยาวชน",
         "agencyKindCode": "OTHER",
         "agencyKindLabelTh": "หน่วยงานประเภทอื่น",
-        "contactPhone": null,
-        "contactEmail": null,
-        "websiteUrl": null,
+        "contactPhone": "0800000001",
+        "contactEmail": "contact@example.com",
+        "websiteUrl": "https://example.com/school",
         "isActive": true,
         "usageCount": 3
        },
@@ -21643,9 +21647,9 @@
         "agencyName": "กรมส่งเสริมการเรียนรู้",
         "agencyKindCode": "LEARNING_PROMOTION",
         "agencyKindLabelTh": "หน่วยงานส่งเสริมการเรียนรู้",
-        "contactPhone": null,
-        "contactEmail": null,
-        "websiteUrl": null,
+        "contactPhone": "0800000001",
+        "contactEmail": "contact@example.com",
+        "websiteUrl": "https://example.com/school",
         "isActive": true,
         "usageCount": 18
        }
@@ -21765,9 +21769,9 @@
        "agencyName": "สถาบันสุขภาพเด็กแห่งชาติมหาราชินี",
        "agencyKindCode": "LEARNING_PROMOTION",
        "agencyKindLabelTh": "หน่วยงานประเภทอื่น",
-       "contactPhone": null,
-       "contactEmail": null,
-       "websiteUrl": null,
+       "contactPhone": "0800000001",
+       "contactEmail": "contact@example.com",
+       "websiteUrl": "https://example.com/school",
        "isActive": true,
        "usageCount": 3
       }
@@ -21809,9 +21813,9 @@
    "requestExample": {
     "agencyName": "สถาบันสุขภาพเด็กแห่งชาติมหาราชินี",
     "agencyKindCode": "LEARNING_PROMOTION",
-    "contactPhone": null,
-    "contactEmail": null,
-    "websiteUrl": null
+    "contactPhone": "0800000001",
+    "contactEmail": "contact@example.com",
+    "websiteUrl": "https://example.com/school"
    },
    "captured": false,
    "parameterExamples": {}
@@ -21890,9 +21894,9 @@
        "agencyName": "สถาบันสุขภาพเด็กแห่งชาติมหาราชินี",
        "agencyKindCode": "LEARNING_PROMOTION",
        "agencyKindLabelTh": "หน่วยงานประเภทอื่น",
-       "contactPhone": null,
-       "contactEmail": null,
-       "websiteUrl": null,
+       "contactPhone": "0800000001",
+       "contactEmail": "contact@example.com",
+       "websiteUrl": "https://example.com/school",
        "isActive": true,
        "usageCount": 3
       }
@@ -21934,9 +21938,9 @@
    "requestExample": {
     "agencyName": "สถาบันสุขภาพเด็กแห่งชาติมหาราชินี",
     "agencyKindCode": "LEARNING_PROMOTION",
-    "contactPhone": null,
-    "contactEmail": null,
-    "websiteUrl": null,
+    "contactPhone": "0800000001",
+    "contactEmail": "contact@example.com",
+    "websiteUrl": "https://example.com/school",
     "isActive": true
    },
    "captured": false,
@@ -22018,9 +22022,9 @@
        "agencyName": "สถาบันสุขภาพเด็กแห่งชาติมหาราชินี",
        "agencyKindCode": "LEARNING_PROMOTION",
        "agencyKindLabelTh": "หน่วยงานประเภทอื่น",
-       "contactPhone": null,
-       "contactEmail": null,
-       "websiteUrl": null,
+       "contactPhone": "0800000001",
+       "contactEmail": "contact@example.com",
+       "websiteUrl": "https://example.com/school",
        "isActive": true,
        "usageCount": 3
       }
@@ -22170,7 +22174,7 @@
         "categoryCode": null,
         "categoryLabelTh": null,
         "sourceOnecCode": null,
-        "requiresDetail": null,
+        "requiresDetail": false,
         "usageCount": 7
        },
        {
@@ -22181,7 +22185,7 @@
         "categoryCode": "PERSONAL_FAMILY",
         "categoryLabelTh": "สาเหตุส่วนตัว / ครอบครัว",
         "sourceOnecCode": null,
-        "requiresDetail": null,
+        "requiresDetail": false,
         "usageCount": 17
        }
       ],
@@ -23753,8 +23757,8 @@
       "data": {
        "id": "4a03fdba-b431-4e35-9ec3-3130ab4c9c21",
        "requester_user_id": 2433,
-       "requester_username": null,
-       "requester_name": null,
+       "requester_username": "school_admin_demo",
+       "requester_name": "สมชาย ใจดี",
        "approver_user_id": null,
        "approver_username": null,
        "approver_name": null,
@@ -24667,8 +24671,8 @@
        "download_token": null,
        "id": "3fb31f99-a988-496f-b72c-47a610a98c1e",
        "requester_user_id": 1,
-       "requester_username": null,
-       "requester_name": null,
+       "requester_username": "school_admin_demo",
+       "requester_name": "สมชาย ใจดี",
        "approver_user_id": 1,
        "approver_username": null,
        "approver_name": null,
@@ -24813,22 +24817,22 @@
      "example": {
       "AcademicYear_Onec": 2569,
       "Semester_Onec": 1,
-      "DepartmentID_Onec": null,
+      "DepartmentID_Onec": "01",
       "SchoolID_Onec": 10010004,
       "PersonID_Onec": "•••••••••••••",
       "PassportNumber_Onec": null,
-      "PrefixID_Onec": null,
+      "PrefixID_Onec": "1",
       "FirstName_Onec": "อชิรญา",
-      "MiddleName_Onec": null,
+      "MiddleName_Onec": "กมล",
       "LastName_Onec": "นาคเจริญ",
-      "GenderID_Onec": null,
+      "GenderID_Onec": "2",
       "NationalityID_Onec": 99,
       "VillageNumber_Onec": "1",
       "Street_Onec": "ถนนดอนเมือง",
       "Soi_Onec": "ซอยร่วมใจ 4",
       "Trok_Onec": "ตรอกพัฒนา 1",
-      "SubDistrictID_Onec": null,
-      "SchoolAdmissionYear_Onec": null,
+      "SubDistrictID_Onec": "200102",
+      "SchoolAdmissionYear_Onec": "2567",
       "GradeLevelID_Onec": 11,
       "RoomID_Onec": 1,
       "GPAX_Onec": 3.29,
@@ -24845,8 +24849,8 @@
       "student_uuid": "1eb63b28-f9d7-4b7e-9a87-46c004375e29",
       "PostalCode_Onec": "20000",
       "address_house_no": "64/8",
-      "address_latitude": null,
-      "address_longitude": null,
+      "address_latitude": 13.2857,
+      "address_longitude": 100.9243,
       "student_status_code": 10,
       "school_term_id": "9",
       "classroom_id": "385",
@@ -24863,8 +24867,12 @@
       "homeroom_teacher_name": "ปรียานุช ใจดี, กมลชนก รุ่งเรือง",
       "resolved_home_lat": 13.753084,
       "resolved_home_lng": 100.5026723,
-      "photo_url": null,
-      "contact": null,
+      "photo_url": "https://example.com/assets/student-portrait.jpg",
+      "contact": {
+       "phone": "0800000000",
+       "email": "achiraya@example.com",
+       "line_id": "sts_student_demo"
+      },
       "guardians": [],
       "address": "64/8 หมู่ 1 ตรอกพัฒนา 1 ซอยร่วมใจ 4 ถนนดอนเมือง บ้านสวน เมืองชลบุรี ชลบุรี 20000",
       "is_approximate_home_location": false,
@@ -24916,7 +24924,7 @@
     }
    },
    "requestExample": {
-    "MiddleName_Onec": null,
+    "MiddleName_Onec": "กมล",
     "student_number": "69000012",
     "term_gpa": 1,
     "address_house_no": "64/8",
@@ -24933,18 +24941,18 @@
     "contact": {
      "phone": "0812457930",
      "email": "kittipong.s@sts-burapha.ac.th",
-     "line_id": null
+     "line_id": "sts_teacher_demo"
     },
     "guardians": [
      {
       "relation": "FATHER",
-      "relation_note": null,
-      "first_name": null,
-      "last_name": null,
-      "full_name": null,
+      "relation_note": "ผู้ปกครองที่นักเรียนพักอาศัยอยู่ด้วย",
+      "first_name": "อชิรญา",
+      "last_name": "นาคเจริญ",
+      "full_name": "อชิรญา นาคเจริญ",
       "phone": "0812457930",
       "email": "kittipong.s@sts-burapha.ac.th",
-      "line_id": null,
+      "line_id": "sts_teacher_demo",
       "is_primary": true
      }
     ],
@@ -25074,7 +25082,7 @@
         "student_status_label": "กำลังศึกษา",
         "student_status_category": "STUDYING",
         "student_status_badge_variant": "success",
-        "photo_url": null
+        "photo_url": "https://example.com/assets/student-portrait.jpg"
        },
        {
         "id": "5545016c-419c-4a64-8f3c-0f3fb3876d65",
@@ -25086,7 +25094,7 @@
         "student_status_label": "กำลังศึกษา",
         "student_status_category": "STUDYING",
         "student_status_badge_variant": "success",
-        "photo_url": null
+        "photo_url": "https://example.com/assets/student-portrait.jpg"
        }
       ],
       "meta": {
@@ -25331,7 +25339,7 @@
          "gradeLevelId": 11,
          "gradeLabel": "อ.1",
          "roomCode": "1",
-         "roomName": null
+         "roomName": "1"
         },
         {
          "id": "428",
@@ -25343,7 +25351,7 @@
          "gradeLevelId": 11,
          "gradeLabel": "อ.1",
          "roomCode": "2",
-         "roomName": null
+         "roomName": "1"
         }
        ]
       }
@@ -25479,14 +25487,14 @@
          "labelTh": "เด็กถูกบังคับให้ขายแรงงาน",
          "categoryCode": null,
          "categoryLabelTh": null,
-         "requiresDetail": null
+         "requiresDetail": false
         },
         {
          "code": "SEXUAL_EXPLOITATION",
          "labelTh": "เด็กที่อยู่ในธุรกิจทางเพศ",
          "categoryCode": null,
          "categoryLabelTh": null,
-         "requiresDetail": null
+         "requiresDetail": false
         }
        ],
        "disabilities": [
@@ -25495,14 +25503,14 @@
          "labelTh": "ความพิการทางการมองเห็น",
          "categoryCode": null,
          "categoryLabelTh": null,
-         "requiresDetail": null
+         "requiresDetail": false
         },
         {
          "code": "HEARING",
          "labelTh": "ความพิการทางการได้ยิน",
          "categoryCode": null,
          "categoryLabelTh": null,
-         "requiresDetail": null
+         "requiresDetail": false
         }
        ]
       }
@@ -25596,7 +25604,7 @@
     }
    },
    "parameterExamples": {
-    "name": "%E0%B8%AD%E0%B8%8A%E0%B8%B4%E0%B8%A3%E0%B8%8D%E0%B8%B2"
+    "name": "อชิรญา"
    },
    "captured": true
   },
@@ -25756,12 +25764,12 @@
       {
        "date": "2026-10-14T17:00:00.000Z",
        "status": 2,
-       "period": null
+       "period": 1
       },
       {
        "date": "2026-10-14T17:00:00.000Z",
        "status": 2,
-       "period": null
+       "period": 1
       }
      ]
     },
@@ -26322,22 +26330,22 @@
      "example": {
       "AcademicYear_Onec": 2569,
       "Semester_Onec": 1,
-      "DepartmentID_Onec": null,
+      "DepartmentID_Onec": "01",
       "SchoolID_Onec": 10010004,
       "PersonID_Onec": "•••••••••••••",
       "PassportNumber_Onec": null,
-      "PrefixID_Onec": null,
+      "PrefixID_Onec": "1",
       "FirstName_Onec": "อชิรญา",
-      "MiddleName_Onec": null,
+      "MiddleName_Onec": "กมล",
       "LastName_Onec": "นาคเจริญ",
-      "GenderID_Onec": null,
+      "GenderID_Onec": "2",
       "NationalityID_Onec": 99,
       "VillageNumber_Onec": "1",
       "Street_Onec": "ถนนดอนเมือง",
       "Soi_Onec": "ซอยร่วมใจ 4",
       "Trok_Onec": "ตรอกพัฒนา 1",
-      "SubDistrictID_Onec": null,
-      "SchoolAdmissionYear_Onec": null,
+      "SubDistrictID_Onec": "200102",
+      "SchoolAdmissionYear_Onec": "2567",
       "GradeLevelID_Onec": 11,
       "RoomID_Onec": 1,
       "GPAX_Onec": 3.29,
@@ -26354,8 +26362,8 @@
       "student_uuid": "1eb63b28-f9d7-4b7e-9a87-46c004375e29",
       "PostalCode_Onec": "20000",
       "address_house_no": "64/8",
-      "address_latitude": null,
-      "address_longitude": null,
+      "address_latitude": 13.2857,
+      "address_longitude": 100.9243,
       "student_status_code": 10,
       "school_term_id": "9",
       "classroom_id": "385",
@@ -26372,8 +26380,12 @@
       "homeroom_teacher_name": "ปรียานุช ใจดี, กมลชนก รุ่งเรือง",
       "resolved_home_lat": 13.753084,
       "resolved_home_lng": 100.5026723,
-      "photo_url": null,
-      "contact": null,
+      "photo_url": "https://example.com/assets/student-portrait.jpg",
+      "contact": {
+       "phone": "0800000000",
+       "email": "achiraya@example.com",
+       "line_id": "sts_student_demo"
+      },
       "guardians": [],
       "address": "64/8 หมู่ 1 ตรอกพัฒนา 1 ซอยร่วมใจ 4 ถนนดอนเมือง บ้านสวน เมืองชลบุรี ชลบุรี 20000",
       "is_approximate_home_location": false,
@@ -26438,22 +26450,22 @@
      "example": {
       "AcademicYear_Onec": 2569,
       "Semester_Onec": 1,
-      "DepartmentID_Onec": null,
+      "DepartmentID_Onec": "01",
       "SchoolID_Onec": 10010004,
       "PersonID_Onec": "•••••••••••••",
       "PassportNumber_Onec": null,
-      "PrefixID_Onec": null,
+      "PrefixID_Onec": "1",
       "FirstName_Onec": "อชิรญา",
-      "MiddleName_Onec": null,
+      "MiddleName_Onec": "กมล",
       "LastName_Onec": "นาคเจริญ",
-      "GenderID_Onec": null,
+      "GenderID_Onec": "2",
       "NationalityID_Onec": 99,
       "VillageNumber_Onec": "1",
       "Street_Onec": "ถนนดอนเมือง",
       "Soi_Onec": "ซอยร่วมใจ 4",
       "Trok_Onec": "ตรอกพัฒนา 1",
-      "SubDistrictID_Onec": null,
-      "SchoolAdmissionYear_Onec": null,
+      "SubDistrictID_Onec": "200102",
+      "SchoolAdmissionYear_Onec": "2567",
       "GradeLevelID_Onec": 11,
       "RoomID_Onec": 1,
       "GPAX_Onec": 3.29,
@@ -26470,8 +26482,8 @@
       "student_uuid": "1eb63b28-f9d7-4b7e-9a87-46c004375e29",
       "PostalCode_Onec": "20000",
       "address_house_no": "64/8",
-      "address_latitude": null,
-      "address_longitude": null,
+      "address_latitude": 13.2857,
+      "address_longitude": 100.9243,
       "student_status_code": 10,
       "school_term_id": "9",
       "classroom_id": "385",
@@ -26488,8 +26500,12 @@
       "homeroom_teacher_name": "ปรียานุช ใจดี, กมลชนก รุ่งเรือง",
       "resolved_home_lat": 13.753084,
       "resolved_home_lng": 100.5026723,
-      "photo_url": null,
-      "contact": null,
+      "photo_url": "https://example.com/assets/student-portrait.jpg",
+      "contact": {
+       "phone": "0800000000",
+       "email": "achiraya@example.com",
+       "line_id": "sts_student_demo"
+      },
       "guardians": [],
       "address": "64/8 หมู่ 1 ตรอกพัฒนา 1 ซอยร่วมใจ 4 ถนนดอนเมือง บ้านสวน เมืองชลบุรี ชลบุรี 20000",
       "is_approximate_home_location": false,
@@ -26534,7 +26550,7 @@
    },
    "requestExample": {
     "FirstName_Onec": "อชิรญา",
-    "MiddleName_Onec": null,
+    "MiddleName_Onec": "กมล",
     "LastName_Onec": "นาคเจริญ",
     "student_number": "69000012",
     "student_status_code": 10,
@@ -26553,18 +26569,18 @@
     "contact": {
      "phone": "0812457930",
      "email": "kittipong.s@sts-burapha.ac.th",
-     "line_id": null
+     "line_id": "sts_teacher_demo"
     },
     "guardians": [
      {
       "relation": "FATHER",
-      "relation_note": null,
-      "first_name": null,
-      "last_name": null,
-      "full_name": null,
+      "relation_note": "ผู้ปกครองที่นักเรียนพักอาศัยอยู่ด้วย",
+      "first_name": "อชิรญา",
+      "last_name": "นาคเจริญ",
+      "full_name": "อชิรญา นาคเจริญ",
       "phone": "0812457930",
       "email": "kittipong.s@sts-burapha.ac.th",
-      "line_id": null,
+      "line_id": "sts_teacher_demo",
       "is_primary": true
      }
     ]
@@ -26695,22 +26711,22 @@
      "example": {
       "AcademicYear_Onec": 2569,
       "Semester_Onec": 1,
-      "DepartmentID_Onec": null,
+      "DepartmentID_Onec": "01",
       "SchoolID_Onec": 10010004,
       "PersonID_Onec": "•••••••••••••",
       "PassportNumber_Onec": null,
-      "PrefixID_Onec": null,
+      "PrefixID_Onec": "1",
       "FirstName_Onec": "อชิรญา",
-      "MiddleName_Onec": null,
+      "MiddleName_Onec": "กมล",
       "LastName_Onec": "นาคเจริญ",
-      "GenderID_Onec": null,
+      "GenderID_Onec": "2",
       "NationalityID_Onec": 99,
       "VillageNumber_Onec": "1",
       "Street_Onec": "ถนนดอนเมือง",
       "Soi_Onec": "ซอยร่วมใจ 4",
       "Trok_Onec": "ตรอกพัฒนา 1",
-      "SubDistrictID_Onec": null,
-      "SchoolAdmissionYear_Onec": null,
+      "SubDistrictID_Onec": "200102",
+      "SchoolAdmissionYear_Onec": "2567",
       "GradeLevelID_Onec": 11,
       "RoomID_Onec": 1,
       "GPAX_Onec": 3.29,
@@ -26727,8 +26743,8 @@
       "student_uuid": "1eb63b28-f9d7-4b7e-9a87-46c004375e29",
       "PostalCode_Onec": "20000",
       "address_house_no": "64/8",
-      "address_latitude": null,
-      "address_longitude": null,
+      "address_latitude": 13.2857,
+      "address_longitude": 100.9243,
       "student_status_code": 10,
       "school_term_id": "9",
       "classroom_id": "385",
@@ -26745,8 +26761,12 @@
       "homeroom_teacher_name": "ปรียานุช ใจดี, กมลชนก รุ่งเรือง",
       "resolved_home_lat": 13.753084,
       "resolved_home_lng": 100.5026723,
-      "photo_url": null,
-      "contact": null,
+      "photo_url": "https://example.com/assets/student-portrait.jpg",
+      "contact": {
+       "phone": "0800000000",
+       "email": "achiraya@example.com",
+       "line_id": "sts_student_demo"
+      },
       "guardians": [],
       "address": "64/8 หมู่ 1 ตรอกพัฒนา 1 ซอยร่วมใจ 4 ถนนดอนเมือง บ้านสวน เมืองชลบุรี ชลบุรี 20000",
       "is_approximate_home_location": false,
@@ -26894,22 +26914,22 @@
      "example": {
       "AcademicYear_Onec": 2569,
       "Semester_Onec": 1,
-      "DepartmentID_Onec": null,
+      "DepartmentID_Onec": "01",
       "SchoolID_Onec": 10010004,
       "PersonID_Onec": "•••••••••••••",
       "PassportNumber_Onec": null,
-      "PrefixID_Onec": null,
+      "PrefixID_Onec": "1",
       "FirstName_Onec": "อชิรญา",
-      "MiddleName_Onec": null,
+      "MiddleName_Onec": "กมล",
       "LastName_Onec": "นาคเจริญ",
-      "GenderID_Onec": null,
+      "GenderID_Onec": "2",
       "NationalityID_Onec": 99,
       "VillageNumber_Onec": "1",
       "Street_Onec": "ถนนดอนเมือง",
       "Soi_Onec": "ซอยร่วมใจ 4",
       "Trok_Onec": "ตรอกพัฒนา 1",
-      "SubDistrictID_Onec": null,
-      "SchoolAdmissionYear_Onec": null,
+      "SubDistrictID_Onec": "200102",
+      "SchoolAdmissionYear_Onec": "2567",
       "GradeLevelID_Onec": 11,
       "RoomID_Onec": 1,
       "GPAX_Onec": 3.29,
@@ -26926,8 +26946,8 @@
       "student_uuid": "1eb63b28-f9d7-4b7e-9a87-46c004375e29",
       "PostalCode_Onec": "20000",
       "address_house_no": "64/8",
-      "address_latitude": null,
-      "address_longitude": null,
+      "address_latitude": 13.2857,
+      "address_longitude": 100.9243,
       "student_status_code": 10,
       "school_term_id": "9",
       "classroom_id": "385",
@@ -26944,8 +26964,12 @@
       "homeroom_teacher_name": "ปรียานุช ใจดี, กมลชนก รุ่งเรือง",
       "resolved_home_lat": 13.753084,
       "resolved_home_lng": 100.5026723,
-      "photo_url": null,
-      "contact": null,
+      "photo_url": "https://example.com/assets/student-portrait.jpg",
+      "contact": {
+       "phone": "0800000000",
+       "email": "achiraya@example.com",
+       "line_id": "sts_student_demo"
+      },
       "guardians": [],
       "address": "64/8 หมู่ 1 ตรอกพัฒนา 1 ซอยร่วมใจ 4 ถนนดอนเมือง บ้านสวน เมืองชลบุรี ชลบุรี 20000",
       "is_approximate_home_location": false,
@@ -27021,22 +27045,22 @@
      "example": {
       "AcademicYear_Onec": 2569,
       "Semester_Onec": 1,
-      "DepartmentID_Onec": null,
+      "DepartmentID_Onec": "01",
       "SchoolID_Onec": 10010004,
       "PersonID_Onec": "•••••••••••••",
       "PassportNumber_Onec": null,
-      "PrefixID_Onec": null,
+      "PrefixID_Onec": "1",
       "FirstName_Onec": "อชิรญา",
-      "MiddleName_Onec": null,
+      "MiddleName_Onec": "กมล",
       "LastName_Onec": "นาคเจริญ",
-      "GenderID_Onec": null,
+      "GenderID_Onec": "2",
       "NationalityID_Onec": 99,
       "VillageNumber_Onec": "1",
       "Street_Onec": "ถนนดอนเมือง",
       "Soi_Onec": "ซอยร่วมใจ 4",
       "Trok_Onec": "ตรอกพัฒนา 1",
-      "SubDistrictID_Onec": null,
-      "SchoolAdmissionYear_Onec": null,
+      "SubDistrictID_Onec": "200102",
+      "SchoolAdmissionYear_Onec": "2567",
       "GradeLevelID_Onec": 11,
       "RoomID_Onec": 1,
       "GPAX_Onec": 3.29,
@@ -27053,8 +27077,8 @@
       "student_uuid": "1eb63b28-f9d7-4b7e-9a87-46c004375e29",
       "PostalCode_Onec": "20000",
       "address_house_no": "64/8",
-      "address_latitude": null,
-      "address_longitude": null,
+      "address_latitude": 13.2857,
+      "address_longitude": 100.9243,
       "student_status_code": 10,
       "school_term_id": "9",
       "classroom_id": "385",
@@ -27071,8 +27095,12 @@
       "homeroom_teacher_name": "ปรียานุช ใจดี, กมลชนก รุ่งเรือง",
       "resolved_home_lat": 13.753084,
       "resolved_home_lng": 100.5026723,
-      "photo_url": null,
-      "contact": null,
+      "photo_url": "https://example.com/assets/student-portrait.jpg",
+      "contact": {
+       "phone": "0800000000",
+       "email": "achiraya@example.com",
+       "line_id": "sts_student_demo"
+      },
       "guardians": [],
       "address": "64/8 หมู่ 1 ตรอกพัฒนา 1 ซอยร่วมใจ 4 ถนนดอนเมือง บ้านสวน เมืองชลบุรี ชลบุรี 20000",
       "is_approximate_home_location": false,
@@ -30356,8 +30384,8 @@
       "ATTENDANCE_DELEGATION": [
        {
         "code": "PENDING",
-        "internalCode": null,
-        "shortLabel": null,
+        "internalCode": "PENDING",
+        "shortLabel": "รอเช็กชื่อ",
         "label": "รอเช็กชื่อ",
         "badgeVariant": "default",
         "summaryTone": "info",
@@ -30365,8 +30393,8 @@
        },
        {
         "code": "COMPLETED",
-        "internalCode": null,
-        "shortLabel": null,
+        "internalCode": "COMPLETED",
+        "shortLabel": "เสร็จสิ้น",
         "label": "เสร็จสิ้น",
         "badgeVariant": "success",
         "summaryTone": "success",
@@ -30380,7 +30408,7 @@
         "shortLabel": "มา",
         "label": "มาเรียน",
         "badgeVariant": "success",
-        "summaryTone": null,
+        "summaryTone": "success",
         "sortOrder": 10
        },
        {
@@ -30389,206 +30417,206 @@
         "shortLabel": "ขาด",
         "label": "ขาดเรียน",
         "badgeVariant": "destructive",
-        "summaryTone": null,
+        "summaryTone": "danger",
         "sortOrder": 20
        }
       ],
       "ATTENDANCE_SESSION": [
        {
         "code": "OPEN",
-        "internalCode": null,
-        "shortLabel": null,
+        "internalCode": "OPEN",
+        "shortLabel": "เปิดเช็กชื่อ",
         "label": "เปิดเช็กชื่อ",
         "badgeVariant": "warning",
-        "summaryTone": null,
+        "summaryTone": "warning",
         "sortOrder": 10
        },
        {
         "code": "SUBMITTED",
-        "internalCode": null,
-        "shortLabel": null,
+        "internalCode": "SUBMITTED",
+        "shortLabel": "ส่งแล้ว",
         "label": "ส่งแล้ว",
         "badgeVariant": "success",
-        "summaryTone": null,
+        "summaryTone": "success",
         "sortOrder": 20
        }
       ],
       "CASE_REFERRAL": [
        {
         "code": "REFERRED",
-        "internalCode": null,
-        "shortLabel": null,
+        "internalCode": "REFERRED",
+        "shortLabel": "ส่งต่อแล้ว",
         "label": "ส่งต่อแล้ว",
         "badgeVariant": "secondary",
-        "summaryTone": null,
+        "summaryTone": "info",
         "sortOrder": 10
        },
        {
         "code": "ACCEPTED",
-        "internalCode": null,
-        "shortLabel": null,
+        "internalCode": "ACCEPTED",
+        "shortLabel": "หน่วยงานรับแล้ว",
         "label": "หน่วยงานรับแล้ว",
         "badgeVariant": "default",
-        "summaryTone": null,
+        "summaryTone": "default",
         "sortOrder": 20
        }
       ],
       "CASE_WORKFLOW": [
        {
         "code": "OPEN",
-        "internalCode": null,
-        "shortLabel": null,
+        "internalCode": "OPEN",
+        "shortLabel": "รอมอบหมาย",
         "label": "รอมอบหมาย",
         "badgeVariant": "secondary",
-        "summaryTone": null,
+        "summaryTone": "info",
         "sortOrder": 10
        },
        {
         "code": "PENDING_REVIEW",
-        "internalCode": null,
-        "shortLabel": null,
+        "internalCode": "PENDING_REVIEW",
+        "shortLabel": "รอพิจารณา",
         "label": "รอพิจารณา",
         "badgeVariant": "default",
-        "summaryTone": null,
+        "summaryTone": "default",
         "sortOrder": 20
        }
       ],
       "IMPORT_QUARANTINE_RESOLUTION": [
        {
         "code": "ACTION_REQUIRED",
-        "internalCode": null,
-        "shortLabel": null,
+        "internalCode": "ACTION_REQUIRED",
+        "shortLabel": "ต้องแก้ข้อมูล",
         "label": "ต้องแก้ข้อมูล",
         "badgeVariant": "warning",
-        "summaryTone": null,
+        "summaryTone": "warning",
         "sortOrder": 10
        },
        {
         "code": "DECISION_REQUIRED",
-        "internalCode": null,
-        "shortLabel": null,
+        "internalCode": "DECISION_REQUIRED",
+        "shortLabel": "ต้องตัดสินใจ",
         "label": "ต้องตัดสินใจ",
         "badgeVariant": "default",
-        "summaryTone": null,
+        "summaryTone": "default",
         "sortOrder": 20
        }
       ],
       "IMPORT_QUARANTINE_STATUS": [
        {
         "code": "PENDING",
-        "internalCode": null,
-        "shortLabel": null,
+        "internalCode": "PENDING",
+        "shortLabel": "รอตรวจสอบ",
         "label": "รอตรวจสอบ",
         "badgeVariant": "warning",
-        "summaryTone": null,
+        "summaryTone": "warning",
         "sortOrder": 10
        },
        {
         "code": "RESOLVED",
-        "internalCode": null,
-        "shortLabel": null,
+        "internalCode": "RESOLVED",
+        "shortLabel": "แก้ไขแล้ว",
         "label": "แก้ไขแล้ว",
         "badgeVariant": "success",
-        "summaryTone": null,
+        "summaryTone": "success",
         "sortOrder": 20
        }
       ],
       "LOGIN_LINK_USAGE": [
        {
         "code": "USED",
-        "internalCode": null,
-        "shortLabel": null,
+        "internalCode": "USED",
+        "shortLabel": "เข้าใช้แล้ว",
         "label": "เข้าใช้แล้ว",
         "badgeVariant": "success",
-        "summaryTone": null,
+        "summaryTone": "success",
         "sortOrder": 10
        },
        {
         "code": "UNUSED",
-        "internalCode": null,
-        "shortLabel": null,
+        "internalCode": "UNUSED",
+        "shortLabel": "ยังไม่เข้าใช้",
         "label": "ยังไม่เข้าใช้",
         "badgeVariant": "secondary",
-        "summaryTone": null,
+        "summaryTone": "info",
         "sortOrder": 20
        }
       ],
       "RECORD_ACTIVITY": [
        {
         "code": "ACTIVE",
-        "internalCode": null,
-        "shortLabel": null,
+        "internalCode": "ACTIVE",
+        "shortLabel": "เปิดใช้งาน",
         "label": "เปิดใช้งาน",
         "badgeVariant": "success",
-        "summaryTone": null,
+        "summaryTone": "success",
         "sortOrder": 10
        },
        {
         "code": "INACTIVE",
-        "internalCode": null,
-        "shortLabel": null,
+        "internalCode": "INACTIVE",
+        "shortLabel": "ปิดใช้งาน",
         "label": "ปิดใช้งาน",
         "badgeVariant": "secondary",
-        "summaryTone": null,
+        "summaryTone": "info",
         "sortOrder": 20
        }
       ],
       "ROLE_ORIGIN": [
        {
         "code": "SYSTEM",
-        "internalCode": null,
-        "shortLabel": null,
+        "internalCode": "SYSTEM",
+        "shortLabel": "ระบบ",
         "label": "ระบบ",
         "badgeVariant": "secondary",
-        "summaryTone": null,
+        "summaryTone": "info",
         "sortOrder": 10
        }
       ],
       "SCHOOL_TERM": [
        {
         "code": "DRAFT",
-        "internalCode": null,
-        "shortLabel": null,
+        "internalCode": "DRAFT",
+        "shortLabel": "ร่าง",
         "label": "ร่าง",
         "badgeVariant": "warning",
-        "summaryTone": null,
+        "summaryTone": "warning",
         "sortOrder": 10
        },
        {
         "code": "ACTIVE",
-        "internalCode": null,
-        "shortLabel": null,
+        "internalCode": "ACTIVE",
+        "shortLabel": "เปิดใช้งาน",
         "label": "เปิดใช้งาน",
         "badgeVariant": "success",
-        "summaryTone": null,
+        "summaryTone": "success",
         "sortOrder": 20
        }
       ],
       "STUDENT_IMPORT_BATCH": [
        {
         "code": "RUNNING",
-        "internalCode": null,
-        "shortLabel": null,
+        "internalCode": "RUNNING",
+        "shortLabel": "กำลังนำเข้า",
         "label": "กำลังนำเข้า",
         "badgeVariant": "default",
-        "summaryTone": null,
+        "summaryTone": "default",
         "sortOrder": 10
        },
        {
         "code": "COMPLETED",
-        "internalCode": null,
-        "shortLabel": null,
+        "internalCode": "COMPLETED",
+        "shortLabel": "สำเร็จ",
         "label": "สำเร็จ",
         "badgeVariant": "success",
-        "summaryTone": null,
+        "summaryTone": "success",
         "sortOrder": 20
        }
       ],
       "STUDENT_RISK_TIER": [
        {
         "code": "NORMAL",
-        "internalCode": null,
-        "shortLabel": null,
+        "internalCode": "NORMAL",
+        "shortLabel": "ปกติ",
         "label": "ปกติ",
         "badgeVariant": "secondary",
         "summaryTone": "default",
@@ -30596,8 +30624,8 @@
        },
        {
         "code": "WATCH",
-        "internalCode": null,
-        "shortLabel": null,
+        "internalCode": "WATCH",
+        "shortLabel": "เฝ้าระวัง",
         "label": "เฝ้าระวัง",
         "badgeVariant": "warning",
         "summaryTone": "warning",
@@ -30607,48 +30635,48 @@
       "STUDENT_STATUS_CATEGORY": [
        {
         "code": "STUDYING",
-        "internalCode": null,
-        "shortLabel": null,
+        "internalCode": "STUDYING",
+        "shortLabel": "กำลังศึกษา",
         "label": "กำลังศึกษา",
         "badgeVariant": "secondary",
-        "summaryTone": null,
+        "summaryTone": "info",
         "sortOrder": 10
        },
        {
         "code": "SUSPENDED",
-        "internalCode": null,
-        "shortLabel": null,
+        "internalCode": "SUSPENDED",
+        "shortLabel": "พักการเรียน",
         "label": "พักการเรียน",
         "badgeVariant": "secondary",
-        "summaryTone": null,
+        "summaryTone": "info",
         "sortOrder": 20
        }
       ],
       "STUDENT_STATUS_FLAG": [
        {
         "code": "LOGIN_ALLOWED",
-        "internalCode": null,
-        "shortLabel": null,
+        "internalCode": "LOGIN_ALLOWED",
+        "shortLabel": "นโยบาย: เข้าสู่ระบบได้",
         "label": "นโยบาย: เข้าสู่ระบบได้",
         "badgeVariant": "success",
-        "summaryTone": null,
+        "summaryTone": "success",
         "sortOrder": 10
        },
        {
         "code": "TERMINAL",
-        "internalCode": null,
-        "shortLabel": null,
+        "internalCode": "TERMINAL",
+        "shortLabel": "สิ้นสุด",
         "label": "สิ้นสุด",
         "badgeVariant": "secondary",
-        "summaryTone": null,
+        "summaryTone": "info",
         "sortOrder": 20
        }
       ],
       "TASK_LINK_STATE": [
        {
         "code": "SCHEDULED",
-        "internalCode": null,
-        "shortLabel": null,
+        "internalCode": "SCHEDULED",
+        "shortLabel": "รอเปิด",
         "label": "รอเปิด",
         "badgeVariant": "secondary",
         "summaryTone": "info",
@@ -30656,59 +30684,59 @@
        },
        {
         "code": "ACTIVE",
-        "internalCode": null,
-        "shortLabel": null,
+        "internalCode": "ACTIVE",
+        "shortLabel": "ใช้งาน",
         "label": "ใช้งาน",
         "badgeVariant": "success",
-        "summaryTone": null,
+        "summaryTone": "success",
         "sortOrder": 10
        }
       ],
       "TASK_LINK_STATUS": [
        {
         "code": "ACTIVE",
-        "internalCode": null,
-        "shortLabel": null,
+        "internalCode": "ACTIVE",
+        "shortLabel": "ใช้งาน",
         "label": "ใช้งาน",
         "badgeVariant": "success",
-        "summaryTone": null,
+        "summaryTone": "success",
         "sortOrder": 10
        },
        {
         "code": "EXPIRED",
-        "internalCode": null,
-        "shortLabel": null,
+        "internalCode": "EXPIRED",
+        "shortLabel": "หมดอายุ",
         "label": "หมดอายุ",
         "badgeVariant": "warning",
-        "summaryTone": null,
+        "summaryTone": "warning",
         "sortOrder": 20
        }
       ],
       "TASK_WORKFLOW": [
        {
         "code": "OPEN",
-        "internalCode": null,
-        "shortLabel": null,
+        "internalCode": "OPEN",
+        "shortLabel": "เปิดอยู่",
         "label": "เปิดอยู่",
         "badgeVariant": "secondary",
-        "summaryTone": null,
+        "summaryTone": "info",
         "sortOrder": 10
        },
        {
         "code": "ACTIVE",
-        "internalCode": null,
-        "shortLabel": null,
+        "internalCode": "ACTIVE",
+        "shortLabel": "ใช้งาน",
         "label": "ใช้งาน",
         "badgeVariant": "success",
-        "summaryTone": null,
+        "summaryTone": "success",
         "sortOrder": 20
        }
       ],
       "USER_ACCOUNT_LIFECYCLE": [
        {
         "code": "PENDING_FIRST_LOGIN",
-        "internalCode": null,
-        "shortLabel": null,
+        "internalCode": "PENDING_FIRST_LOGIN",
+        "shortLabel": "รอเปลี่ยนรหัส",
         "label": "รอเปลี่ยนรหัส",
         "badgeVariant": "default",
         "summaryTone": "info",
@@ -30716,8 +30744,8 @@
        },
        {
         "code": "ACTIVE",
-        "internalCode": null,
-        "shortLabel": null,
+        "internalCode": "ACTIVE",
+        "shortLabel": "ใช้งาน",
         "label": "ใช้งาน",
         "badgeVariant": "success",
         "summaryTone": "success",
@@ -30727,20 +30755,20 @@
       "USER_ACCOUNT_STATUS": [
        {
         "code": "ACTIVE",
-        "internalCode": null,
-        "shortLabel": null,
+        "internalCode": "ACTIVE",
+        "shortLabel": "ใช้งาน",
         "label": "ใช้งาน",
         "badgeVariant": "success",
-        "summaryTone": null,
+        "summaryTone": "success",
         "sortOrder": 10
        },
        {
         "code": "DISABLED",
-        "internalCode": null,
-        "shortLabel": null,
+        "internalCode": "DISABLED",
+        "shortLabel": "ปิดใช้งาน",
         "label": "ปิดใช้งาน",
         "badgeVariant": "destructive",
-        "summaryTone": null,
+        "summaryTone": "danger",
         "sortOrder": 20
        }
       ]
@@ -30820,7 +30848,7 @@
        "shortLabel": "มา",
        "label": "มาเรียน",
        "badgeVariant": "success",
-       "summaryTone": null,
+       "summaryTone": "success",
        "sortOrder": 10
       },
       {
@@ -30829,7 +30857,7 @@
        "shortLabel": "ขาด",
        "label": "ขาดเรียน",
        "badgeVariant": "destructive",
-       "summaryTone": null,
+       "summaryTone": "danger",
        "sortOrder": 20
       }
      ]
@@ -31121,7 +31149,7 @@
             "membershipId": 211,
             "teacherId": "183",
             "name": "ดวงกมล ทองอินทร์",
-            "photoUrl": null
+            "photoUrl": "https://example.com/assets/portrait.jpg"
            }
           ]
          },
@@ -31134,7 +31162,7 @@
             "membershipId": 416,
             "teacherId": "175",
             "name": "เกรียงไกร วงศ์คำ",
-            "photoUrl": null
+            "photoUrl": "https://example.com/assets/portrait.jpg"
            }
           ]
          }
@@ -31159,7 +31187,7 @@
             "membershipId": 226,
             "teacherId": "165",
             "name": "นภัสสร อินทร์แก้ว",
-            "photoUrl": null
+            "photoUrl": "https://example.com/assets/portrait.jpg"
            }
           ]
          },
@@ -31172,7 +31200,7 @@
             "membershipId": 422,
             "teacherId": "162",
             "name": "ดวงกมล วงศ์คำ",
-            "photoUrl": null
+            "photoUrl": "https://example.com/assets/portrait.jpg"
            }
           ]
          }
@@ -31374,7 +31402,7 @@
            "membershipId": 211,
            "teacherId": "151",
            "name": "โรงเรียนดรุณศึกษาธิการ",
-           "photoUrl": null
+           "photoUrl": "https://example.com/assets/portrait.jpg"
           }
          ]
         }
@@ -31577,7 +31605,7 @@
            "membershipId": 211,
            "teacherId": "151",
            "name": "โรงเรียนดรุณศึกษาธิการ",
-           "photoUrl": null
+           "photoUrl": "https://example.com/assets/portrait.jpg"
           }
          ]
         }
@@ -31773,7 +31801,7 @@
            "membershipId": 211,
            "teacherId": "151",
            "name": "โรงเรียนดรุณศึกษาธิการ",
-           "photoUrl": null
+           "photoUrl": "https://example.com/assets/portrait.jpg"
           }
          ]
         }
@@ -33221,10 +33249,10 @@
         "gradeLabel": "อ.1",
         "legacyRoomNumber": 1,
         "roomCode": "1",
-        "roomName": null,
+        "roomName": "1",
         "classroomStatus": "ACTIVE",
         "cardCoverColor": "#4F86E8",
-        "coverImageUrl": null,
+        "coverImageUrl": "https://example.com/assets/school-cover.jpg",
         "coverImagePositionX": 50,
         "coverImagePositionY": 50,
         "coverImageScale": 1,
@@ -33256,10 +33284,10 @@
         "gradeLabel": "อ.1",
         "legacyRoomNumber": 2,
         "roomCode": "2",
-        "roomName": null,
+        "roomName": "1",
         "classroomStatus": "ACTIVE",
         "cardCoverColor": "#4F86E8",
-        "coverImageUrl": null,
+        "coverImageUrl": "https://example.com/assets/school-cover.jpg",
         "coverImagePositionX": 50,
         "coverImagePositionY": 50,
         "coverImageScale": 1,
@@ -33489,15 +33517,15 @@
        "gradeLabel": "อ.1",
        "legacyRoomNumber": 1676662200,
        "roomCode": "1676662200",
-       "roomName": null,
+       "roomName": "1",
        "classroomStatus": "ACTIVE",
        "cardCoverColor": "#4F86E8",
-       "coverImageUrl": null,
+       "coverImageUrl": "https://example.com/assets/school-cover.jpg",
        "coverImagePositionX": 50,
        "coverImagePositionY": 50,
        "coverImageScale": 1,
        "isFavorite": false,
-       "homeroomTeacherName": null,
+       "homeroomTeacherName": "สมชาย ใจดี",
        "homeroomTeachers": [],
        "studentCount": 0
       }
@@ -33612,14 +33640,14 @@
         "gradeLevelId": 11,
         "gradeLabel": "อ.1",
         "roomCode": "1",
-        "roomName": null
+        "roomName": "1"
        },
        {
         "id": "386",
         "gradeLevelId": 11,
         "gradeLabel": "อ.1",
         "roomCode": "2",
-        "roomName": null
+        "roomName": "1"
        }
       ]
      }
@@ -33818,10 +33846,10 @@
        "gradeLabel": "อ.3",
        "legacyRoomNumber": 3,
        "roomCode": "3",
-       "roomName": null,
+       "roomName": "1",
        "classroomStatus": "ACTIVE",
        "cardCoverColor": "#4F86E8",
-       "coverImageUrl": null,
+       "coverImageUrl": "https://example.com/assets/school-cover.jpg",
        "coverImagePositionX": 50,
        "coverImagePositionY": 50,
        "coverImageScale": 1,
@@ -34031,12 +34059,12 @@
        "roomName": "ณัฐดนัย ประเสริฐสุข",
        "classroomStatus": "ACTIVE",
        "cardCoverColor": "#4F86E8",
-       "coverImageUrl": null,
+       "coverImageUrl": "https://example.com/assets/school-cover.jpg",
        "coverImagePositionX": 50,
        "coverImagePositionY": 50,
        "coverImageScale": 1,
        "isFavorite": false,
-       "homeroomTeacherName": null,
+       "homeroomTeacherName": "สมชาย ใจดี",
        "homeroomTeachers": [],
        "studentCount": 0
       }
@@ -34413,10 +34441,10 @@
        "gradeLabel": "ป.1",
        "legacyRoomNumber": 1,
        "roomCode": "1",
-       "roomName": null,
+       "roomName": "1",
        "classroomStatus": "ACTIVE",
        "cardCoverColor": "#4F86E8",
-       "coverImageUrl": null,
+       "coverImageUrl": "https://example.com/assets/school-cover.jpg",
        "coverImagePositionX": 50,
        "coverImagePositionY": 50,
        "coverImageScale": 1,
@@ -35817,7 +35845,7 @@
        {
         "studentUuid": "a9094f23-870e-41c5-9a48-538e805ed3f0",
         "studentNumber": "67000123",
-        "photoUrl": null,
+        "photoUrl": "https://example.com/assets/portrait.jpg",
         "riskTier": "HIGH",
         "riskSeverity": 1,
         "teacherComment": "ขาดเรียนติดต่อกัน 5 วัน",
@@ -40180,7 +40208,7 @@
         "phone": "0957601818",
         "email": "kamonchanok.rungruang.178@school.sts.local",
         "lineId": "kamonchanok_r",
-        "photoUrl": null,
+        "photoUrl": "https://example.com/assets/portrait.jpg",
         "teacherStatus": "ACTIVE",
         "membershipId": "73",
         "schoolId": 10010004,
@@ -40201,7 +40229,7 @@
         "phone": "0804314599",
         "email": "kittiphong.rungruang.391@school.sts.local",
         "lineId": "kittiphong_rungruang",
-        "photoUrl": null,
+        "photoUrl": "https://example.com/assets/portrait.jpg",
         "teacherStatus": "ACTIVE",
         "membershipId": "80",
         "schoolId": 10010004,
@@ -40396,7 +40424,7 @@
        "phone": "0812457930",
        "email": "kittipong.s@sts-burapha.ac.th",
        "lineId": "kamonchanok_r",
-       "photoUrl": null,
+       "photoUrl": "https://example.com/assets/portrait.jpg",
        "teacherStatus": "ACTIVE",
        "membershipId": "73",
        "schoolId": 10010004,
@@ -40593,7 +40621,7 @@
        "phone": "0834967705",
        "email": "suphawadi.w@school.sts.local",
        "lineId": "suphawadi73",
-       "photoUrl": null,
+       "photoUrl": "https://example.com/assets/portrait.jpg",
        "teacherStatus": "ACTIVE",
        "membershipId": "1",
        "schoolId": 10010002,
@@ -40767,7 +40795,7 @@
        "phone": "0812457930",
        "email": "kittipong.s@sts-burapha.ac.th",
        "lineId": "kamonchanok_r",
-       "photoUrl": null,
+       "photoUrl": "https://example.com/assets/portrait.jpg",
        "teacherStatus": "ACTIVE",
        "membershipId": "73",
        "schoolId": 10010004,
@@ -41082,7 +41110,7 @@
        "phone": "0812457930",
        "email": "kittipong.s@sts-burapha.ac.th",
        "lineId": "kamonchanok_r",
-       "photoUrl": null,
+       "photoUrl": "https://example.com/assets/portrait.jpg",
        "teacherStatus": "ACTIVE",
        "membershipId": "73",
        "schoolId": 10010004,
@@ -41282,7 +41310,7 @@
         "phone": "0957601818",
         "email": "kamonchanok.rungruang.178@school.sts.local",
         "lineId": "kamonchanok_r",
-        "photoUrl": null,
+        "photoUrl": "https://example.com/assets/portrait.jpg",
         "teacherStatus": "ACTIVE",
         "schoolId": 10010004,
         "schoolName": "โรงเรียนบูรพา",
@@ -41300,7 +41328,7 @@
         "phone": "0804314599",
         "email": "kittiphong.rungruang.391@school.sts.local",
         "lineId": "kittiphong_rungruang",
-        "photoUrl": null,
+        "photoUrl": "https://example.com/assets/portrait.jpg",
         "teacherStatus": "ACTIVE",
         "schoolId": 10010004,
         "schoolName": "โรงเรียนบูรพา",
@@ -41479,7 +41507,7 @@
        "phone": "0834967705",
        "email": "suphawadi.w@school.sts.local",
        "lineId": "suphawadi73",
-       "photoUrl": null,
+       "photoUrl": "https://example.com/assets/portrait.jpg",
        "teacherStatus": "ACTIVE",
        "schoolId": 10010002,
        "schoolName": "โรงเรียนบ้านหนองขาม",
@@ -42251,7 +42279,7 @@
         "teacherMembershipId": 219,
         "teacherId": "360",
         "teacherName": "กมลชนก ชูศรี",
-        "teacherPhotoUrl": null,
+        "teacherPhotoUrl": "https://example.com/assets/teacher-portrait.jpg",
         "classroomCount": 2,
         "classrooms": [
          {
@@ -42280,7 +42308,7 @@
         "teacherMembershipId": 291,
         "teacherId": "332",
         "teacherName": "กมลชนก ธรรมรักษ์",
-        "teacherPhotoUrl": null,
+        "teacherPhotoUrl": "https://example.com/assets/teacher-portrait.jpg",
         "classroomCount": 2,
         "classrooms": [
          {
@@ -42591,7 +42619,7 @@
        "teacherMembershipId": 73,
        "teacherId": "151",
        "teacherName": "ปรียานุช ใจดี",
-       "teacherPhotoUrl": null,
+       "teacherPhotoUrl": "https://example.com/assets/teacher-portrait.jpg",
        "classroomCount": 45,
        "classrooms": [
         {
@@ -44108,7 +44136,7 @@
         "lastUsedAt": null,
         "opensAt": "2026-09-01T08:21:00.000Z",
         "expiresAt": "2026-09-08T08:21:00.000Z",
-        "teacherName": null,
+        "teacherName": "สมชาย ใจดี",
         "classroomLabel": "ป.2/2",
         "subjectName": "การงานอาชีพ",
         "openCount": 0,
@@ -44122,7 +44150,7 @@
         "lastUsedAt": "2026-08-30T05:30:28.546Z",
         "opensAt": "2026-08-30T05:29:00.000Z",
         "expiresAt": "2026-09-30T05:29:00.000Z",
-        "teacherName": null,
+        "teacherName": "สมชาย ใจดี",
         "classroomLabel": "ป.2/2",
         "subjectName": "การงานอาชีพ",
         "openCount": 18,
@@ -45241,7 +45269,7 @@
          "roomName": null,
          "classroomStatus": "ACTIVE",
          "cardCoverColor": "#4F86E8",
-         "coverImageUrl": null,
+         "coverImageUrl": "https://example.com/assets/school-cover.jpg",
          "coverImagePositionX": 50,
          "coverImagePositionY": 50,
          "coverImageScale": 1,
@@ -45267,7 +45295,7 @@
          "roomName": null,
          "classroomStatus": "ACTIVE",
          "cardCoverColor": "#4F86E8",
-         "coverImageUrl": null,
+         "coverImageUrl": "https://example.com/assets/school-cover.jpg",
          "coverImagePositionX": 50,
          "coverImagePositionY": 50,
          "coverImageScale": 1,
@@ -45284,7 +45312,7 @@
         "status": "AUTHENTICATED",
         "provider": "GOOGLE",
         "displayName": "ศิริพร อุดมทรัพย์",
-        "photoUrl": null
+        "photoUrl": "https://example.com/assets/portrait.jpg"
        }
       }
      }
@@ -45644,7 +45672,7 @@
          "roomName": null,
          "classroomStatus": "ACTIVE",
          "cardCoverColor": "#4F86E8",
-         "coverImageUrl": null,
+         "coverImageUrl": "https://example.com/assets/school-cover.jpg",
          "coverImagePositionX": 50,
          "coverImagePositionY": 50,
          "coverImageScale": 1,
@@ -45670,7 +45698,7 @@
          "roomName": null,
          "classroomStatus": "ACTIVE",
          "cardCoverColor": "#4F86E8",
-         "coverImageUrl": null,
+         "coverImageUrl": "https://example.com/assets/school-cover.jpg",
          "coverImagePositionX": 50,
          "coverImagePositionY": 50,
          "coverImageScale": 1,
@@ -45687,7 +45715,7 @@
         "status": "AUTHENTICATED",
         "provider": "GOOGLE",
         "displayName": "ศิริพร อุดมทรัพย์",
-        "photoUrl": null
+        "photoUrl": "https://example.com/assets/portrait.jpg"
        }
       }
      }
@@ -45856,7 +45884,7 @@
         "semester": 1,
         "gradeLabel": "ป.1",
         "roomNumber": 2,
-        "roomName": null
+        "roomName": "1"
        },
        "subjects": [
         {
@@ -46053,7 +46081,7 @@
         "semester": 1,
         "gradeLabel": "ป.1",
         "roomNumber": 2,
-        "roomName": null
+        "roomName": "1"
        },
        "subjects": [
         {
@@ -46917,7 +46945,7 @@
        "teacherMembershipId": 73,
        "teacherId": "151",
        "teacherName": "ปรียานุช ใจดี",
-       "teacherPhotoUrl": null,
+       "teacherPhotoUrl": "https://example.com/assets/teacher-portrait.jpg",
        "classroomCount": 45,
        "classrooms": [
         {
@@ -47249,7 +47277,7 @@
        "teacherMembershipId": 73,
        "teacherId": "151",
        "teacherName": "ปรียานุช ใจดี",
-       "teacherPhotoUrl": null,
+       "teacherPhotoUrl": "https://example.com/assets/teacher-portrait.jpg",
        "classroomCount": 45,
        "classrooms": [
         {
@@ -49839,10 +49867,10 @@
        "gradeLabel": "ป.1",
        "legacyRoomNumber": 1,
        "roomCode": "1",
-       "roomName": null,
+       "roomName": "1",
        "classroomStatus": "ACTIVE",
        "cardCoverColor": "#4F86E8",
-       "coverImageUrl": null,
+       "coverImageUrl": "https://example.com/assets/school-cover.jpg",
        "coverImagePositionX": 50,
        "coverImagePositionY": 50,
        "coverImageScale": 1,
@@ -50065,10 +50093,10 @@
        "gradeLabel": "ป.1",
        "legacyRoomNumber": 1,
        "roomCode": "1",
-       "roomName": null,
+       "roomName": "1",
        "classroomStatus": "ACTIVE",
        "cardCoverColor": "#4F86E8",
-       "coverImageUrl": null,
+       "coverImageUrl": "https://example.com/assets/school-cover.jpg",
        "coverImagePositionX": 50,
        "coverImagePositionY": 50,
        "coverImageScale": 1,
@@ -53253,22 +53281,22 @@
      "example": {
       "AcademicYear_Onec": 2569,
       "Semester_Onec": 1,
-      "DepartmentID_Onec": null,
+      "DepartmentID_Onec": "01",
       "SchoolID_Onec": 10010004,
       "PersonID_Onec": "•••••••••••••",
       "PassportNumber_Onec": null,
-      "PrefixID_Onec": null,
+      "PrefixID_Onec": "1",
       "FirstName_Onec": "อชิรญา",
-      "MiddleName_Onec": null,
+      "MiddleName_Onec": "กมล",
       "LastName_Onec": "นาคเจริญ",
-      "GenderID_Onec": null,
+      "GenderID_Onec": "2",
       "NationalityID_Onec": 99,
       "VillageNumber_Onec": "1",
       "Street_Onec": "ถนนดอนเมือง",
       "Soi_Onec": "ซอยร่วมใจ 4",
       "Trok_Onec": "ตรอกพัฒนา 1",
-      "SubDistrictID_Onec": null,
-      "SchoolAdmissionYear_Onec": null,
+      "SubDistrictID_Onec": "200102",
+      "SchoolAdmissionYear_Onec": "2567",
       "GradeLevelID_Onec": 11,
       "RoomID_Onec": 1,
       "GPAX_Onec": 3.29,
@@ -53285,8 +53313,8 @@
       "student_uuid": "1eb63b28-f9d7-4b7e-9a87-46c004375e29",
       "PostalCode_Onec": "20000",
       "address_house_no": "64/8",
-      "address_latitude": null,
-      "address_longitude": null,
+      "address_latitude": 13.2857,
+      "address_longitude": 100.9243,
       "student_status_code": 10,
       "school_term_id": "9",
       "classroom_id": "385",
@@ -53303,8 +53331,12 @@
       "homeroom_teacher_name": "ปรียานุช ใจดี, กมลชนก รุ่งเรือง",
       "resolved_home_lat": 13.753084,
       "resolved_home_lng": 100.5026723,
-      "photo_url": null,
-      "contact": null,
+      "photo_url": "https://example.com/assets/student-portrait.jpg",
+      "contact": {
+       "phone": "0800000000",
+       "email": "achiraya@example.com",
+       "line_id": "sts_student_demo"
+      },
       "guardians": [],
       "address": "64/8 หมู่ 1 ตรอกพัฒนา 1 ซอยร่วมใจ 4 ถนนดอนเมือง บ้านสวน เมืองชลบุรี ชลบุรี 20000",
       "is_approximate_home_location": false,
@@ -53379,22 +53411,22 @@
      "example": {
       "AcademicYear_Onec": 2569,
       "Semester_Onec": 1,
-      "DepartmentID_Onec": null,
+      "DepartmentID_Onec": "01",
       "SchoolID_Onec": 10010004,
       "PersonID_Onec": "•••••••••••••",
       "PassportNumber_Onec": null,
-      "PrefixID_Onec": null,
+      "PrefixID_Onec": "1",
       "FirstName_Onec": "อชิรญา",
-      "MiddleName_Onec": null,
+      "MiddleName_Onec": "กมล",
       "LastName_Onec": "นาคเจริญ",
-      "GenderID_Onec": null,
+      "GenderID_Onec": "2",
       "NationalityID_Onec": 99,
       "VillageNumber_Onec": "1",
       "Street_Onec": "ถนนดอนเมือง",
       "Soi_Onec": "ซอยร่วมใจ 4",
       "Trok_Onec": "ตรอกพัฒนา 1",
-      "SubDistrictID_Onec": null,
-      "SchoolAdmissionYear_Onec": null,
+      "SubDistrictID_Onec": "200102",
+      "SchoolAdmissionYear_Onec": "2567",
       "GradeLevelID_Onec": 11,
       "RoomID_Onec": 1,
       "GPAX_Onec": 3.29,
@@ -53411,8 +53443,8 @@
       "student_uuid": "1eb63b28-f9d7-4b7e-9a87-46c004375e29",
       "PostalCode_Onec": "20000",
       "address_house_no": "64/8",
-      "address_latitude": null,
-      "address_longitude": null,
+      "address_latitude": 13.2857,
+      "address_longitude": 100.9243,
       "student_status_code": 10,
       "school_term_id": "9",
       "classroom_id": "385",
@@ -53429,8 +53461,12 @@
       "homeroom_teacher_name": "ปรียานุช ใจดี, กมลชนก รุ่งเรือง",
       "resolved_home_lat": 13.753084,
       "resolved_home_lng": 100.5026723,
-      "photo_url": null,
-      "contact": null,
+      "photo_url": "https://example.com/assets/student-portrait.jpg",
+      "contact": {
+       "phone": "0800000000",
+       "email": "achiraya@example.com",
+       "line_id": "sts_student_demo"
+      },
       "guardians": [],
       "address": "64/8 หมู่ 1 ตรอกพัฒนา 1 ซอยร่วมใจ 4 ถนนดอนเมือง บ้านสวน เมืองชลบุรี ชลบุรี 20000",
       "is_approximate_home_location": false,
@@ -54419,11 +54455,11 @@
       "data": {
        "id": 3375,
        "student_id": "1eb63b28-f9d7-4b7e-9a87-46c004375e29",
-       "student_photo_url": null,
+       "student_photo_url": "https://example.com/assets/student-portrait.jpg",
        "student_name": "ปภาวรินทร์ มณีวงศ์",
        "student_school": "โรงเรียนบ้านหนองขาม",
        "student_address": "64/8 หมู่ 1 ตรอกพัฒนา 1 ซอยร่วมใจ 4 ถนนดอนเมือง บ้านสวน เมืองชลบุรี ชลบุรี 20000",
-       "student_phone": null,
+       "student_phone": "0800000000",
        "student_lat": 1,
        "student_lng": 1,
        "home_address": "64/8 หมู่ 1 ตรอกพัฒนา 1 ซอยร่วมใจ 4 ถนนดอนเมือง บ้านสวน เมืองชลบุรี ชลบุรี 20000",
@@ -54796,11 +54832,11 @@
       "data": {
        "id": 3375,
        "student_id": "1eb63b28-f9d7-4b7e-9a87-46c004375e29",
-       "student_photo_url": null,
+       "student_photo_url": "https://example.com/assets/student-portrait.jpg",
        "student_name": "ปภาวรินทร์ มณีวงศ์",
        "student_school": "โรงเรียนบ้านหนองขาม",
        "student_address": "64/8 หมู่ 1 ตรอกพัฒนา 1 ซอยร่วมใจ 4 ถนนดอนเมือง บ้านสวน เมืองชลบุรี ชลบุรี 20000",
-       "student_phone": null,
+       "student_phone": "0800000000",
        "student_lat": 1,
        "student_lng": 1,
        "home_address": "64/8 หมู่ 1 ตรอกพัฒนา 1 ซอยร่วมใจ 4 ถนนดอนเมือง บ้านสวน เมืองชลบุรี ชลบุรี 20000",
