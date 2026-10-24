@@ -16,6 +16,11 @@ export interface AppRuntimeConfig {
    * blanket `true`: that lets clients spoof X-Forwarded-For to dodge throttling.
    */
   trustProxy: number;
+  /**
+   * Serve the Swagger UI at /api/docs. Off in production unless SWAGGER_ENABLED=true,
+   * so the full route map is not published by default.
+   */
+  swaggerEnabled: boolean;
 }
 
 function parsePort(value: string | undefined, fallback: number): number {
@@ -48,6 +53,13 @@ function parseTrustProxy(value: string | undefined): number {
   return Number.isInteger(parsed) && parsed >= 0 ? parsed : 0;
 }
 
+function parseSwaggerEnabled(value: string | undefined, isProduction: boolean): boolean {
+  const normalized = (value || '').trim().toLowerCase();
+  if (normalized === 'true') return true;
+  if (normalized === 'false') return false;
+  return !isProduction;
+}
+
 function resolveUploadsDir(value: string | undefined): string {
   if (!value || value.trim().length === 0) {
     return join(process.cwd(), 'uploads');
@@ -70,6 +82,7 @@ export function getAppConfigFromEnv(): AppRuntimeConfig {
     uploadsPrefix: uploadsPrefix.startsWith('/') ? uploadsPrefix : `/${uploadsPrefix}`,
     frontendBaseUrl: frontendBaseUrl && frontendBaseUrl.length > 0 ? frontendBaseUrl : undefined,
     trustProxy: parseTrustProxy(process.env.TRUST_PROXY),
+    swaggerEnabled: parseSwaggerEnabled(process.env.SWAGGER_ENABLED, nodeEnv === 'production'),
   };
 }
 

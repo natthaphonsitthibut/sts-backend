@@ -8,6 +8,7 @@
   "packageManager": "pnpm@10.33.2",
   "scripts": {
     "build": "nest build",
+    "openapi:generate": "nest build && node dist/scripts/generate_openapi.js openapi/openapi.json",
     "format": "prettier --write \"src/**/*.ts\" \"test/**/*.ts\"",
     "start": "nest start",
     "start:dev": "nest start --watch",
@@ -126,6 +127,7 @@
     "@nestjs/mapped-types": "*",
     "@nestjs/platform-express": "^11.0.1",
     "@nestjs/schedule": "^6.1.1",
+    "@nestjs/swagger": "11.4.7",
     "@nestjs/throttler": "^6.5.0",
     "@nestjs/typeorm": "^11.0.0",
     "@types/nodemailer": "^7.0.11",

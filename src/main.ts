@@ -6,6 +6,13 @@ import { AppModule } from './app.module';
 import { AppExceptionFilter } from './common/filters/app-exception.filter';
 import { createValidationException } from './common/validation/validation-exception.factory';
 import { appConfig } from './config/app.config';
+import { authConfig } from './config/auth.config';
+import { SwaggerModule } from '@nestjs/swagger';
+import {
+  buildOpenApiDocument,
+  OPENAPI_JSON_PATH,
+  OPENAPI_UI_PATH,
+} from './openapi/openapi-document';
 
 async function bootstrap() {
   const app = await NestFactory.create<NestExpressApplication>(AppModule, {
@@ -53,6 +60,13 @@ async function bootstrap() {
     }),
   );
   app.useGlobalFilters(new AppExceptionFilter());
+
+  if (runtimeConfig.swaggerEnabled) {
+    const auth = app.get<ConfigType<typeof authConfig>>(authConfig.KEY);
+    SwaggerModule.setup(OPENAPI_UI_PATH, app, () => buildOpenApiDocument(app, auth.cookieName), {
+      jsonDocumentUrl: OPENAPI_JSON_PATH,
+    });
+  }
 
   await app.listen(runtimeConfig.port);
 }
