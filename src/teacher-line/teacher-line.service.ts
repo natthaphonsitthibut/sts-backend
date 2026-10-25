@@ -726,6 +726,7 @@ export class TeacherLineService {
       reason,
       updatedBy,
       queryRunner,
+      this.line.messagingChannelId,
     );
   }
 

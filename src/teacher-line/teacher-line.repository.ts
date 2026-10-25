@@ -393,6 +393,7 @@ export class TeacherLineRepository {
     reason: string,
     updatedBy: number,
     queryRunner: QueryRunner,
+    channelId: string,
   ): Promise<boolean> {
     const result = await this.executor(queryRunner).query(
       `
@@ -400,10 +401,11 @@ export class TeacherLineRepository {
         SET unlinked_at = now(), unlinked_reason = $2, updated_by = $3
         WHERE teacher_id = $1::bigint
           AND provider = 'LINE'
+          AND provider_channel_id = $4
           AND unlinked_at IS NULL
           AND deleted_at IS NULL
       `,
-      [teacherId, reason, updatedBy],
+      [teacherId, reason, updatedBy, channelId],
     );
     return (result.rowCount ?? 0) > 0;
   }

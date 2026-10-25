@@ -8,9 +8,12 @@ describe('ClassroomAttendanceLinksRepository', () => {
       query: jest.fn().mockResolvedValue({ records, affected: records.length }),
     };
     return {
-      repository: new ClassroomAttendanceLinksRepository({
-        createQueryRunner: jest.fn(() => runner),
-      } as never),
+      repository: new ClassroomAttendanceLinksRepository(
+        {
+          createQueryRunner: jest.fn(() => runner),
+        } as never,
+        { messagingChannelId: 'fixture-channel' } as never,
+      ),
       runner,
     };
   }
@@ -31,7 +34,7 @@ describe('ClassroomAttendanceLinksRepository', () => {
     // The listing is one row per teacher now, so grade and room no longer
     // filter the row itself — the school scope still fails closed, and grade is
     // applied as "teaches that grade" instead.
-    expect(sql).toContain('school.id = ANY($3::int[])');
+    expect(sql).toContain('school.id = ANY($4::int[])');
     expect(sql).toContain('LIMIT $');
     expect(sql).toContain('FROM school_teacher_memberships membership');
     // A closed link stays on record beside its replacement: one row per teacher.
@@ -74,7 +77,7 @@ describe('ClassroomAttendanceLinksRepository', () => {
     });
 
     const calls = runner.query.mock.calls as unknown as Array<[string, unknown[] | undefined]>;
-    expect(calls[0][0]).toContain('classroom.grade_level_id = $4');
+    expect(calls[0][0]).toContain('classroom.grade_level_id = $5');
     expect(calls[0][0]).toContain('link.id IS NULL');
     expect(calls[1][0]).toContain(') link ON TRUE');
   });
@@ -135,7 +138,7 @@ describe('ClassroomAttendanceLinksRepository', () => {
     expect(sql).toContain("school.school_status = 'ACTIVE'");
     expect(sql).toContain("term.status = 'ACTIVE'");
     expect(sql).toContain("classroom.classroom_status = 'ACTIVE'");
-    expect(calls[0][1]).toEqual(['a'.repeat(64)]);
+    expect(calls[0][1]).toEqual(['a'.repeat(64), 'fixture-channel']);
   });
 
   it('matches an external teacher through an active school membership without assignment joins', async () => {
@@ -254,5 +257,48 @@ describe('ClassroomAttendanceLinksRepository', () => {
     expect(sql).toContain('FROM classroom_subject_teachers assignment');
     expect(sql).toContain('COUNT(DISTINCT assignment.classroom_id)');
     expect(sql).toContain('taught.classrooms');
+  });
+  it('rejects a shared teacher binding if an active school falls outside scope', async () => {
+    const { repository, runner } = setup([{ allowed: true }, { allowed: false }]);
+    await expect(
+      repository.isTeacherMessagingInScope('7', { school_ids: [10] }, runner as never),
+    ).resolves.toBe(false);
+    const [sql, params] = runner.query.mock.calls[1] as [string, unknown[]];
+    expect((runner.query.mock.calls[0] as [string, unknown[]])[0]).toContain(
+      'FROM teachers WHERE id = $1::bigint FOR UPDATE',
+    );
+    expect(sql).toContain('school.id = ANY($2::int[])');
+    expect(sql).toContain("membership.membership_status = 'ACTIVE'");
+    expect(sql).toContain('FOR UPDATE OF membership');
+    expect(params).toEqual(['7', [10]]);
+  });
+
+  it.each([{ school_ids: [10, 11] }, { global: true }])(
+    'allows shared teacher unlink when every school is in scope %p',
+    async (scope) => {
+      const { repository, runner } = setup([{ allowed: true }, { allowed: true }]);
+      await expect(repository.isTeacherMessagingInScope('7', scope, runner as never)).resolves.toBe(
+        true,
+      );
+    },
+  );
+
+  it('reads current-channel LINE state for link actions and listings', async () => {
+    const { repository, runner } = setup();
+    await repository.findById('fixture-link');
+    let [sql, params] = runner.query.mock.calls[0] as [string, unknown[]];
+    expect(sql).toContain('account.provider_channel_id = $2');
+    expect(params).toEqual(['fixture-link', 'fixture-channel']);
+    runner.query.mockClear();
+    await repository.list({
+      schoolId: 10,
+      schoolTermId: 20,
+      page: 1,
+      limit: 20,
+      scope: { school_ids: [10] },
+    });
+    [sql, params] = runner.query.mock.calls[0] as [string, unknown[]];
+    expect(sql).toContain('account.provider_channel_id = $3');
+    expect(params[2]).toBe('fixture-channel');
   });
 });

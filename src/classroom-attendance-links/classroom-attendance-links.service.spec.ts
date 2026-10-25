@@ -1,4 +1,10 @@
-import { ForbiddenException, GoneException, UnauthorizedException } from '@nestjs/common';
+import {
+  BadRequestException,
+  NotFoundException,
+  ForbiddenException,
+  GoneException,
+  UnauthorizedException,
+} from '@nestjs/common';
 import type { AuthenticatedRequestUser } from '../auth';
 import { hashToken } from '../common/utils/helpers';
 import { CLASSROOM_LINK_ARAID_SCOPE } from './classroom-attendance-links.constants';
@@ -95,6 +101,7 @@ describe('ClassroomAttendanceLinksService', () => {
       findTeacherByEmail: jest.fn(),
       findTeacherByCitizenId: jest.fn(),
       findActiveMembership: jest.fn(),
+      isTeacherMessagingInScope: jest.fn().mockResolvedValue(true),
       findActiveSchoolInScope: jest.fn(),
       findAssignableSubject: jest.fn(),
       findUsableAssignmentForSubject: jest.fn().mockResolvedValue(null),
@@ -140,6 +147,7 @@ describe('ClassroomAttendanceLinksService', () => {
       getActiveGroupInvitation: jest.fn(),
       updateGroupInvitation: jest.fn(),
       revokeGroupInvitation: jest.fn(),
+      unlinkActiveAccountForTeacher: jest.fn().mockResolvedValue(true),
     };
     return {
       service: new ClassroomAttendanceLinksService(
@@ -168,6 +176,106 @@ describe('ClassroomAttendanceLinksService', () => {
       teacherLine,
     };
   }
+
+  describe('unlinkLine', () => {
+    function unlinkHarness() {
+      const harness = setup();
+      harness.repository.findById.mockResolvedValue(LINK);
+      harness.repository.isLinkInScope.mockResolvedValue(true);
+      harness.repository.findActiveMembership.mockResolvedValue(TEACHER);
+      return harness;
+    }
+
+    it('unlinks the scoped teacher atomically without rotating or deactivating the link', async () => {
+      const { service, repository, teacherLine, audit } = unlinkHarness();
+      const actor = { ...ACTOR, roles: ['CUSTOM_ROLE'] };
+      await expect(service.unlinkLine(LINK.id, actor)).resolves.toEqual({
+        success: true,
+        data: { id: LINK.id, unlinked: true },
+      });
+      expect(repository.isLinkInScope).toHaveBeenCalled();
+      expect(repository.findActiveMembership).toHaveBeenCalledWith(
+        LINK.teacher_membership_id,
+        LINK.school_id,
+      );
+      expect(teacherLine.unlinkActiveAccountForTeacher).toHaveBeenCalledWith(
+        TEACHER.teacher_id,
+        'UNLINKED_BY_ADMIN',
+        actor.id,
+        expect.anything(),
+      );
+      expect(audit.recordAtomic).toHaveBeenCalledWith(
+        expect.objectContaining({
+          action: 'TEACHER_MESSAGING_UNLINK',
+          actorUserId: actor.id,
+          targetId: TEACHER.teacher_id,
+          metadata: { schoolId: LINK.school_id, provider: 'LINE', reason: 'UNLINKED_BY_ADMIN' },
+        }),
+        expect.anything(),
+      );
+      expect(repository.updateToken).not.toHaveBeenCalled();
+      expect(repository.deactivate).not.toHaveBeenCalled();
+    });
+
+    it('rejects a link outside the actor scope before touching LINE', async () => {
+      const { service, repository, teacherLine, audit } = unlinkHarness();
+      repository.isLinkInScope.mockResolvedValue(false);
+      await expect(service.unlinkLine(LINK.id, ACTOR)).rejects.toThrow(NotFoundException);
+      expect(teacherLine.unlinkActiveAccountForTeacher).not.toHaveBeenCalled();
+      expect(audit.recordAtomic).not.toHaveBeenCalled();
+    });
+
+    it('rejects assignment links rather than unlinking their issuer', async () => {
+      const { service, repository, teacherLine } = unlinkHarness();
+      repository.findById.mockResolvedValue({ ...LINK, teacher_membership_id: null });
+      await expect(service.unlinkLine(LINK.id, ACTOR)).rejects.toThrow(BadRequestException);
+      expect(teacherLine.unlinkActiveAccountForTeacher).not.toHaveBeenCalled();
+    });
+
+    it('does not unlink a missing teacher or a deleted membership', async () => {
+      const { service, repository, teacherLine } = unlinkHarness();
+      repository.findActiveMembership.mockResolvedValue({
+        ...TEACHER,
+        membership_deleted_at: new Date(),
+      });
+      await expect(service.unlinkLine(LINK.id, ACTOR)).rejects.toThrow(NotFoundException);
+      expect(teacherLine.unlinkActiveAccountForTeacher).not.toHaveBeenCalled();
+    });
+
+    it('rejects shared-teacher account changes outside actor school scope', async () => {
+      const { service, repository, teacherLine } = unlinkHarness();
+      repository.isTeacherMessagingInScope.mockResolvedValue(false);
+      await expect(service.unlinkLine(LINK.id, ACTOR)).rejects.toThrow(ForbiddenException);
+      expect(teacherLine.unlinkActiveAccountForTeacher).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      { school_ids: [10], grade_levels: [3] },
+      { school_ids: [10], room_ids: ['1'] },
+      { own_only: true },
+    ])('rejects partial teacher scope %p', async (data_scope) => {
+      const { service, teacherLine } = unlinkHarness();
+      await expect(service.unlinkLine(LINK.id, { ...ACTOR, data_scope })).rejects.toThrow(
+        ForbiddenException,
+      );
+      expect(teacherLine.unlinkActiveAccountForTeacher).not.toHaveBeenCalled();
+    });
+
+    it('is idempotent and does not duplicate audit events', async () => {
+      const { service, teacherLine, audit } = unlinkHarness();
+      teacherLine.unlinkActiveAccountForTeacher.mockResolvedValue(false);
+      await expect(service.unlinkLine(LINK.id, ACTOR)).resolves.toMatchObject({
+        data: { unlinked: false },
+      });
+      expect(audit.recordAtomic).not.toHaveBeenCalled();
+    });
+
+    it('propagates audit failure to roll back the unlink transaction', async () => {
+      const { service, audit } = unlinkHarness();
+      audit.recordAtomic.mockRejectedValue(new Error('audit failed'));
+      await expect(service.unlinkLine(LINK.id, ACTOR)).rejects.toThrow('audit failed');
+    });
+  });
 
   it('returns DB-backed lesson identity for usage breadcrumbs and exact register links', async () => {
     const { service, repository } = setup();

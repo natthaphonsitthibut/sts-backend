@@ -14,6 +14,7 @@ import {
 import type { ConfigType } from '@nestjs/config';
 import type { QueryRunner } from 'typeorm';
 import {
+  hasAreaDataScope,
   isUnconfiguredDataScope,
   normalizeDataScope,
   type AuthenticatedRequestUser,
@@ -964,6 +965,63 @@ export class ClassroomAttendanceLinksService {
       success: true,
       data: { id, lineDelivery: result.get(id) ?? this.lineDeliveryPresentation(row) },
     };
+  }
+
+  async unlinkLine(id: string, actor: AuthenticatedRequestUser) {
+    const actorId = this.actorId(actor);
+    const scope = this.actorScope(actor);
+    if (
+      scope.own_only ||
+      (scope.grade_levels?.length ?? 0) > 0 ||
+      (scope.room_ids?.length ?? 0) > 0 ||
+      (scope.global !== true && !hasAreaDataScope(scope))
+    ) {
+      throw new ForbiddenException('ขอบเขตบัญชีไม่อนุญาตให้ยกเลิก LINE ของครูระดับโรงเรียน');
+    }
+    const unlinked = await this.repository.withTransaction(async (runner) => {
+      const row = await this.repository.findById(id, runner, true);
+      if (!row || !(await this.repository.isLinkInScope(id, this.actorScope(actor)))) {
+        throw new NotFoundException('ไม่พบลิงก์ห้องเรียนในขอบเขตของคุณ');
+      }
+      if (!row.teacher_membership_id) {
+        throw new BadRequestException('ลิงก์มอบหมายไม่มีบัญชี LINE ของครูให้ยกเลิก');
+      }
+      const teacher = await this.repository.findActiveMembership(
+        row.teacher_membership_id,
+        row.school_id,
+      );
+      if (!teacher || teacher.teacher_deleted_at || teacher.membership_deleted_at) {
+        throw new NotFoundException('ไม่พบข้อมูลครูในโรงเรียนของลิงก์');
+      }
+      if (!(await this.repository.isTeacherMessagingInScope(teacher.teacher_id, scope, runner))) {
+        throw new ForbiddenException(
+          'ครูมีโรงเรียนที่ใช้งานอยู่นอกขอบเขตของคุณ กรุณาติดต่อผู้ดูแลที่มีสิทธิ์ครบทุกโรงเรียนของครู',
+        );
+      }
+      const reason = 'UNLINKED_BY_ADMIN';
+      const changed = await this.teacherLine.unlinkActiveAccountForTeacher(
+        teacher.teacher_id,
+        reason,
+        actorId,
+        runner,
+      );
+      if (changed) {
+        await this.audit.recordAtomic(
+          {
+            actorUserId: actorId,
+            actorLabel: actor.username,
+            action: 'TEACHER_MESSAGING_UNLINK',
+            targetType: 'teachers',
+            targetId: teacher.teacher_id,
+            metadata: { schoolId: row.school_id, provider: 'LINE', reason },
+            ip: null,
+          },
+          runner,
+        );
+      }
+      return changed;
+    });
+    return { success: true, data: { id, unlinked } };
   }
 
   async deactivate(id: string, actor: AuthenticatedRequestUser) {
