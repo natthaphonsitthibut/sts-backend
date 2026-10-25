@@ -301,6 +301,14 @@ export class ClassroomAttendanceLinksAdminController {
   ) {
     return this.service.deactivate(id, actor);
   }
+
+  @Post(':id/unlink-line')
+  unlinkLine(
+    @Param('id', ParseUUIDPipe) id: string,
+    @CurrentUser() actor: AuthenticatedRequestUser,
+  ) {
+    return this.service.unlinkLine(id, actor);
+  }
 }
 
 @Public()

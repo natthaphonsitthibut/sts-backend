@@ -50,4 +50,21 @@ describe('TeacherLineRepository', () => {
     expect(sql).toContain('membership.school_id = $2::bigint');
     expect(params).toEqual(['7', 10]);
   });
+  it('only unlinks active LINE bindings in the configured channel', async () => {
+    const { repository, runner } = setup();
+    runner.query.mockResolvedValue({ records: [], affected: 1 });
+    await expect(
+      repository.unlinkActiveAccountForTeacher(
+        '7',
+        'UNLINKED_BY_ADMIN',
+        5,
+        runner as never,
+        'fixture-channel',
+      ),
+    ).resolves.toBe(true);
+    const [sql, params] = runner.query.mock.calls[0] as [string, unknown[]];
+    expect(sql).toContain('provider_channel_id = $4');
+    expect(sql).toContain('unlinked_at IS NULL');
+    expect(params).toEqual(['7', 'UNLINKED_BY_ADMIN', 5, 'fixture-channel']);
+  });
 });

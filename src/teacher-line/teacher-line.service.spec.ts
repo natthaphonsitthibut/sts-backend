@@ -139,6 +139,19 @@ function createHarness() {
 }
 
 describe('TeacherLineService', () => {
+  it('uses the configured LINE channel when an admin unlinks a teacher', async () => {
+    const { service, repository } = createHarness();
+    const runner = {} as QueryRunner;
+    await service.unlinkActiveAccountForTeacher('7', 'UNLINKED_BY_ADMIN', 5, runner);
+    expect(repository.unlinkActiveAccountForTeacher).toHaveBeenCalledWith(
+      '7',
+      'UNLINKED_BY_ADMIN',
+      5,
+      runner,
+      '2000000002',
+    );
+  });
+
   it('issues one expiring group link without teacher identity in the URL', async () => {
     const { service } = createHarness();
     const result = await service.issueGroupInvitation({

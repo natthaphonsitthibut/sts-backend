@@ -1,5 +1,7 @@
-import { Injectable } from '@nestjs/common';
+import { Inject, Injectable } from '@nestjs/common';
 import { DataSource, type QueryRunner } from 'typeorm';
+import type { ConfigType } from '@nestjs/config';
+import { lineConfig } from '../config/line.config';
 import type { DataScope } from '../auth';
 import { buildDataScopeQuery } from '../common/utils/authorization';
 import { createSqlQueryExecutor, queryDataSource } from '../database/sql-query';
@@ -18,7 +20,10 @@ const CLASSROOM_ASSIGNMENT_LOCK_NAMESPACE = 4210;
 
 @Injectable()
 export class ClassroomAttendanceLinksRepository {
-  constructor(private readonly dataSource: DataSource) {}
+  constructor(
+    private readonly dataSource: DataSource,
+    @Inject(lineConfig.KEY) private readonly line: ConfigType<typeof lineConfig>,
+  ) {}
 
   /**
    * The signed-in link teacher's own photo. Scoped by the school the link
@@ -59,7 +64,7 @@ export class ClassroomAttendanceLinksRepository {
     }
   }
 
-  private linkSelect(): string {
+  private linkSelect(channelParameter = '$2'): string {
     return `
       SELECT link.id::text, link.school_id, school.name AS school_name,
              link.school_term_id::text, term.academic_year, term.semester,
@@ -134,6 +139,7 @@ export class ClassroomAttendanceLinksRepository {
         FROM teacher_messaging_accounts account
         WHERE account.teacher_id = teacher.id
           AND account.provider = 'LINE'
+          AND account.provider_channel_id = ${channelParameter}
           AND account.unlinked_at IS NULL
           AND account.deleted_at IS NULL
         ORDER BY account.verified_at DESC, account.id DESC
@@ -191,7 +197,7 @@ export class ClassroomAttendanceLinksRepository {
     limit: number;
     scope: DataScope;
   }): Promise<{ rows: ClassroomLinkListRow[]; total: number }> {
-    const params: unknown[] = [input.schoolId, input.schoolTermId];
+    const params: unknown[] = [input.schoolId, input.schoolTermId, this.line.messagingChannelId];
     const conditions = [
       'membership.school_id = $1',
       "membership.membership_status = 'ACTIVE'",
@@ -327,6 +333,7 @@ export class ClassroomAttendanceLinksRepository {
         FROM teacher_messaging_accounts account
         WHERE account.teacher_id = teacher.id
           AND account.provider = 'LINE'
+          AND account.provider_channel_id = $3
           AND account.unlinked_at IS NULL
           AND account.deleted_at IS NULL
         ORDER BY account.verified_at DESC, account.id DESC
@@ -526,11 +533,15 @@ export class ClassroomAttendanceLinksRepository {
     // the term stays on record beside it, and returning it too made re-issuing
     // after a deactivation fail the row-count check.
     const rows = await createSqlQueryExecutor(runner).query<ClassroomLinkRow>(
-      `${this.linkSelect()} WHERE link.teacher_membership_id = ANY($1::bigint[])
+      `${this.linkSelect('$3')} WHERE link.teacher_membership_id = ANY($1::bigint[])
          AND link.school_term_id = $2
          AND link.link_status = 'ACTIVE'
        ORDER BY link.teacher_membership_id`,
-      [inputs.map((input) => input.teacherMembershipId), inputs[0]?.schoolTermId],
+      [
+        inputs.map((input) => input.teacherMembershipId),
+        inputs[0]?.schoolTermId,
+        this.line.messagingChannelId,
+      ],
     );
     return rows.rows;
   }
@@ -1146,7 +1157,7 @@ export class ClassroomAttendanceLinksRepository {
     const id = inserted.rows[0]?.id;
     const rows = await createSqlQueryExecutor(runner).query<ClassroomLinkRow>(
       `${this.linkSelect()} WHERE link.id = $1`,
-      [id],
+      [id, this.line.messagingChannelId],
     );
     const row = rows.rows[0];
     if (!row) throw new Error('assignment link disappeared after insert');
@@ -1162,7 +1173,7 @@ export class ClassroomAttendanceLinksRepository {
         };
     const result = await executor.query<ClassroomLinkRow>(
       `${this.linkSelect()} WHERE link.id = $1 ${lock ? 'FOR UPDATE OF link' : ''}`,
-      [id],
+      [id, this.line.messagingChannelId],
     );
     return result.rows[0] ?? null;
   }
@@ -1177,7 +1188,7 @@ export class ClassroomAttendanceLinksRepository {
          AND link.link_status = 'ACTIVE'
        ORDER BY link.issued_at ASC, link.id ASC
        FOR UPDATE OF link`,
-      [sourceTeacherLinkId],
+      [sourceTeacherLinkId, this.line.messagingChannelId],
     );
     return result.rows;
   }
@@ -1195,7 +1206,7 @@ export class ClassroomAttendanceLinksRepository {
          AND (link.opens_at IS NULL OR link.opens_at <= now())
          AND (link.expires_at IS NULL OR link.expires_at > now())
        LIMIT 1`,
-      [tokenHash],
+      [tokenHash, this.line.messagingChannelId],
     );
     return result.rows[0] ?? null;
   }
@@ -1213,7 +1224,7 @@ export class ClassroomAttendanceLinksRepository {
          AND (link.opens_at IS NULL OR link.opens_at <= now())
          AND (link.expires_at IS NULL OR link.expires_at > now())
        LIMIT 1`,
-      [id],
+      [id, this.line.messagingChannelId],
     );
     return result.rows[0] ?? null;
   }
@@ -1393,6 +1404,38 @@ export class ClassroomAttendanceLinksRepository {
     schoolId: number,
   ): Promise<ExternalTeacherRow | null> {
     return await this.findTeacher(`teacher.citizen_id = $1`, [citizenId, schoolId]);
+  }
+
+  async isTeacherMessagingInScope(
+    teacherId: string,
+    scope: DataScope,
+    runner: QueryRunner,
+  ): Promise<boolean> {
+    // Lock the FK parent first so a concurrent school-membership insert cannot
+    // escape the following scope snapshot. Lock existing inactive memberships
+    // too, because reactivation must not race an account-wide disconnect.
+    const executor = createSqlQueryExecutor(runner);
+    await executor.query('SELECT id FROM teachers WHERE id = $1::bigint FOR UPDATE', [teacherId]);
+    const filter = buildDataScopeQuery(
+      scope,
+      {
+        school_id: 'school.id',
+        province: 'school.province',
+        district: 'school.district',
+        sub_district: 'school.sub_district',
+      },
+      2,
+    );
+    const result = await executor.query<{ allowed: boolean }>(
+      `SELECT CASE WHEN membership.membership_status = 'ACTIVE' AND membership.deleted_at IS NULL
+                    THEN (${filter.sql || 'TRUE'}) ELSE TRUE END AS allowed
+       FROM school_teacher_memberships membership
+       JOIN schools school ON school.id = membership.school_id
+       WHERE membership.teacher_id = $1::bigint
+       FOR UPDATE OF membership`,
+      [teacherId, ...filter.params],
+    );
+    return result.rows.length > 0 && result.rows.every((row) => row.allowed === true);
   }
 
   async findActiveMembership(
